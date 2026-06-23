@@ -206,6 +206,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // --- RECONCILED IN-MEMORY STATE FOR TEAM PRESENTATION ---
   const [patients, setPatients] = useState<PatientRecord[]>([
@@ -356,6 +357,7 @@ export default function App() {
             patients={patients} 
             consultations={consultations}
             inventory={inventory}
+            searchQuery={searchQuery}
             onCreatePatient={createQuickPatient}
             onUpdatePatient={updatePatientRecord}
             onDeletePatient={deletePatientRecord}
@@ -368,6 +370,7 @@ export default function App() {
           <InventoryControlView 
             inventory={inventory} 
             setInventory={setInventory} 
+            searchQuery={searchQuery}
             triggerToast={triggerToast}
           />
         );
@@ -411,7 +414,11 @@ export default function App() {
       />
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        <Header toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+        <Header 
+        toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+      />
         
         <main className="flex-1 overflow-y-auto p-4 sm:p-8">
           <div className="max-w-7xl mx-auto">
@@ -480,7 +487,7 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }: { activeTab: st
   );
 };
 
-const Header = ({ toggleSidebar }: { toggleSidebar: () => void }) => (
+const Header = ({ toggleSidebar, searchQuery, setSearchQuery }: { toggleSidebar: () => void, searchQuery: string, setSearchQuery: (q: string) => void }) => (
   <header className="bg-white border-b border-slate-200 h-20 flex items-center justify-between px-4 sm:px-8 sticky top-0 z-40">
     <div className="flex items-center gap-4">
       <button onClick={toggleSidebar} className="md:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
@@ -498,6 +505,8 @@ const Header = ({ toggleSidebar }: { toggleSidebar: () => void }) => (
         type="text" 
         placeholder="Search patient records or active stock catalog..." 
         className="bg-transparent border-none outline-none w-full text-sm text-slate-700 placeholder-slate-400"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
       />
     </div>
 
@@ -653,6 +662,7 @@ const PatientRecordsView = ({
   patients, 
   consultations,
   inventory,
+  searchQuery,
   onCreatePatient,
   onUpdatePatient,
   onDeletePatient,
@@ -662,6 +672,7 @@ const PatientRecordsView = ({
   patients: PatientRecord[]; 
   consultations: Consultation[];
   inventory: InventoryItem[];
+  searchQuery: string;
   onCreatePatient: (name: string, species: string, breed: string, gender: any, owner: string, contact: string, weight: number, admissionTypes: string[], reason: string, pictures?: string[]) => void;
   onUpdatePatient: (record: PatientRecord) => void;
   onDeletePatient: (id: string) => void;
@@ -811,6 +822,12 @@ const PatientRecordsView = ({
     setPrescribedQuantity(1);
     setSigInstructions('');
   };
+
+  const filteredPatients = patients.filter(p => 
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.ownerName.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="space-y-6 relative">
@@ -1656,7 +1673,7 @@ const PatientRecordsView = ({
           <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <h3 className="text-lg font-bold text-slate-800">Active Patient Directory</h3>
             <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full">
-              {patients.length} Records
+              {filteredPatients.length} Records
             </span>
           </div>
           <div className="overflow-x-auto">
@@ -1669,7 +1686,7 @@ const PatientRecordsView = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {patients.map((pat) => (
+                {filteredPatients.map((pat) => (
                   <tr 
                     key={pat.id} 
                     className="hover:bg-slate-50 transition-colors cursor-pointer group"
@@ -1741,10 +1758,12 @@ const PatientRecordsView = ({
 const InventoryControlView = ({ 
   inventory, 
   setInventory, 
+  searchQuery,
   triggerToast
 }: { 
   inventory: InventoryItem[]; 
   setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>; 
+  searchQuery: string;
   triggerToast: (msg: string) => void;
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -1763,9 +1782,11 @@ const InventoryControlView = ({
   const [editForm, setEditForm] = useState<InventoryItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  const filteredInventory = inventory.filter(item => 
-    selectedCategory === 'All' ? true : item.category === selectedCategory
-  );
+  const filteredInventory = inventory.filter(item => {
+    const matchesCategory = selectedCategory === 'All' ? true : item.category === selectedCategory;
+    const matchesSearch = searchQuery ? (item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) || item.itemCode.toLowerCase().includes(searchQuery.toLowerCase())) : true;
+    return matchesCategory && matchesSearch;
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
