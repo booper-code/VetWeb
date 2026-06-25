@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   PawPrint, 
@@ -36,8 +36,12 @@ import {
 
 // Firebase is loaded dynamically at runtime to avoid requiring the package during static type checks
 
+type GeminiPart = 
+  | { text: string }
+  | { inline_data: { mime_type: string; data: string } };
+
 type GeminiPayload = {
-  contents: { parts: { text: string }[] }[];
+  contents: { parts: GeminiPart[] }[];
   generationConfig?: {
     responseMimeType: string;
     responseSchema: Record<string, unknown>;
@@ -92,42 +96,42 @@ type Consultation = {
 // --- GEMINI API CONFIGURATION ---
 const apiKey = "AQ.Ab8RN6KnlvQMlnLKYkfn8tqWUg48MdsGj9ytMMrmjBnj4Ayvaw"; // API key is injected by the execution environment
 
-// Safeguard for the firebase configuration object
-declare const __firebase_config: string | undefined;
-
 const getFirebaseConfig = () => {
-  try {
-    // Check if the variable exists and is a non-empty string
-    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-      return JSON.parse(__firebase_config);
-    }
-  } catch (e) {
-    console.error("Error parsing __firebase_config:", e);
-  }
-  
-  // Return a fallback or throw a descriptive error if config is missing
-  throw new Error("Firebase configuration is missing or invalid. Ensure __firebase_config is correctly provided by the environment.");
+  return {
+    apiKey: "AIzaSyAvRasTDM9QV79i9V4t5mbxfOPuGQybwIs",
+    authDomain: "vetcloudpro.firebaseapp.com",
+    projectId: "vetcloudpro",
+    storageBucket: "vetcloudpro.firebasestorage.app",
+    messagingSenderId: "2281264630",
+    appId: "1:2281264630:web:24a779ef0a2f2fcceae3d7",
+    measurementId: "G-T381W4YXF3"
+  };
 };
 
-// Initialize only after verifying config. Load Firebase modules dynamically
 let app: any = null;
 let auth: any = null;
 let db: any = null;
+let firestore: any = null;
+let dbRef: any = null;
 
 const initializeFirebase = async () => {
-  if (app) return { app, auth, db };
+  if (app) return { app, auth, db: dbRef, firestore };
   const config = getFirebaseConfig();
   try {
-    // @ts-ignore - dynamic import, dependency may not be installed in every environment
-    const firebaseApp = await import('firebase/app');
-    // @ts-ignore - dynamic import, dependency may not be installed in every environment
-    const firebaseAuth = await import('firebase/auth');
-    // @ts-ignore - dynamic import, dependency may not be installed in every environment
-    const firebaseFirestore = await import('firebase/firestore');
-    app = firebaseApp.initializeApp(config);
-    auth = firebaseAuth.getAuth(app);
-    db = firebaseFirestore.getFirestore(app);
-    return { app, auth, db };
+    console.log('[Firebase] initializing...');
+    // @ts-ignore
+    const { initializeApp } = await import('firebase/app');
+    // @ts-ignore
+    const { getAuth } = await import('firebase/auth');
+    // @ts-ignore
+    const firestoreModule = await import('firebase/firestore');
+    
+    app = initializeApp(config);
+    auth = getAuth(app);
+    dbRef = firestoreModule.getFirestore(app);
+    firestore = firestoreModule;
+    console.log('[Firebase] initialized, project:', config.projectId);
+    return { app, auth, db: dbRef, firestore };
   } catch (e) {
     console.error('Firebase dynamic import failed:', e);
     throw e;
@@ -140,7 +144,7 @@ const callGeminiAPI = async (payload: GeminiPayload, retries = 5) => {
   // We add a 'cors-anywhere' style proxy prefix if needed, 
   // but for the native Gemini API, ensure we are using the official base URL.
   // The 403 often resolves by ensuring the request header is strictly set.
-const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`;
 
   for (let i = 0; i <= retries; i++) {
     try {
@@ -167,17 +171,25 @@ const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-
   }
 };
 
-const generateGeminiText = async (prompt: string) => {
+const generateGeminiText = async (prompt: string, imageData?: { mimeType: string; base64: string }) => {
+  const parts: GeminiPart[] = [{ text: prompt }];
+  if (imageData) {
+    parts.push({ inline_data: { mime_type: imageData.mimeType, data: imageData.base64 } });
+  }
   const payload = {
-    contents: [{ parts: [{ text: prompt }] }]
+    contents: [{ parts }]
   };
   const data = await callGeminiAPI(payload);
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
 };
 
-const generateGeminiJSON = async (prompt: string) => {
+const generateGeminiJSON = async (prompt: string, imageData?: { mimeType: string; base64: string }) => {
+  const parts: GeminiPart[] = [{ text: prompt }];
+  if (imageData) {
+    parts.push({ inline_data: { mime_type: imageData.mimeType, data: imageData.base64 } });
+  }
   const payload = {
-    contents: [{ parts: [{ text: prompt }] }],
+    contents: [{ parts }],
     generationConfig: { 
       responseMimeType: "application/json", 
       responseSchema: { 
@@ -207,6 +219,36 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const loadCloudData = async () => {
+      try {
+        // 1. Open connection and get the database tools
+        const { db, firestore } = await initializeFirebase();
+        if (!db || !firestore) return;
+
+        // 2. Fetch all Patients from the cloud
+        const patSnap = await firestore.getDocs(firestore.collection(db, 'patients'));
+        const loadedPatients = patSnap.docs.map((d: any) => d.data() as PatientRecord);
+        setPatients(loadedPatients);
+
+        // 3. Fetch all Inventory from the cloud
+        const invSnap = await firestore.getDocs(firestore.collection(db, 'inventory'));
+        const loadedInventory = invSnap.docs.map((d: any) => d.data() as InventoryItem);
+        setInventory(loadedInventory);
+
+        // 4. Fetch all Consultations from the cloud
+        const conSnap = await firestore.getDocs(firestore.collection(db, 'consultations'));
+        const loadedConsultations = conSnap.docs.map((d: any) => d.data() as Consultation);
+        setConsultations(loadedConsultations);
+
+      } catch (err) {
+        console.error('Firebase initialization or data fetch failed:', err);
+      }
+    };
+
+    loadCloudData();
+  }, []);
 
   // --- RECONCILED IN-MEMORY STATE FOR TEAM PRESENTATION ---
   const [patients, setPatients] = useState<PatientRecord[]>([
@@ -318,6 +360,71 @@ export default function App() {
     triggerToast(`Record for ${name} added successfully.`);
   };
 
+  // --- ADDITIONAL DATABASE WRITE OPERATIONS ---
+  const createInventoryItem = async (newItem: InventoryItem) => {
+    try {
+      await initializeFirebase();
+    } catch (e) {
+      console.error('[Inventory] init failed', e);
+      return triggerToast('Database initialization failed.');
+    }
+
+    if (!dbRef || !firestore) return triggerToast("Database not connected yet.");
+    try {
+      console.log('[Inventory] creating item', newItem.itemCode, newItem.itemName);
+      const docRef = firestore.doc(dbRef, 'inventory', newItem.itemCode);
+      await firestore.setDoc(docRef, newItem);
+      console.log('[Inventory] create success', newItem.itemCode);
+      setInventory([newItem, ...inventory]);
+      triggerToast(`Product ${newItem.itemName} saved to cloud database.`);
+    } catch (e) {
+      console.error('[Inventory] create failed', e);
+      triggerToast("Failed to save product to cloud.");
+    }
+  };
+
+  const updateInventoryItem = async (updatedItem: InventoryItem) => {
+    try {
+      await initializeFirebase();
+    } catch (e) {
+      console.error('[Inventory] init failed', e);
+      return triggerToast('Database initialization failed.');
+    }
+    if (!dbRef || !firestore) return triggerToast('Database not connected yet');
+    try {
+      console.log('[Inventory] updating item', updatedItem.itemCode);
+      const docRef = firestore.doc(dbRef, 'inventory', updatedItem.itemCode);
+      await firestore.updateDoc(docRef, { ...updatedItem });
+      setInventory(inventory.map(item => item.itemCode === updatedItem.itemCode ? updatedItem : item));
+      console.log('[Inventory] update success', updatedItem.itemCode);
+      triggerToast(`Product ${updatedItem.itemName} updated in cloud.`);
+    } catch (e) {
+      console.error('[Inventory] update failed', e);
+      triggerToast("Failed to update product in cloud.");
+    }
+  };
+
+  const deleteInventoryItem = async (itemCode: string) => {
+    try {
+      await initializeFirebase();
+    } catch (e) {
+      console.error('[Inventory] init failed', e);
+      return triggerToast('Database initialization failed.');
+    }
+    if (!dbRef || !firestore) return triggerToast('Database not connected yet');
+    try {
+      console.log('[Inventory] deleting item', itemCode);
+      const docRef = firestore.doc(dbRef, 'inventory', itemCode);
+      await firestore.deleteDoc(docRef);
+      setInventory(inventory.filter(item => item.itemCode !== itemCode));
+      console.log('[Inventory] delete success', itemCode);
+      triggerToast(`Product removed from cloud database.`);
+    } catch (e) {
+      console.error('[Inventory] delete failed', e);
+      triggerToast("Failed to delete product.");
+    }
+  };
+
   const updatePatientRecord = (updatedRecord: PatientRecord) => {
     setPatients(patients.map(p => p.id === updatedRecord.id ? updatedRecord : p));
     triggerToast(`Patient record for ${updatedRecord.name} updated.`);
@@ -357,7 +464,6 @@ export default function App() {
             patients={patients} 
             consultations={consultations}
             inventory={inventory}
-            searchQuery={searchQuery}
             onCreatePatient={createQuickPatient}
             onUpdatePatient={updatePatientRecord}
             onDeletePatient={deletePatientRecord}
@@ -369,7 +475,9 @@ export default function App() {
         return (
           <InventoryControlView 
             inventory={inventory} 
-            setInventory={setInventory} 
+            onAddInventoryItem={createInventoryItem}
+            onUpdateInventoryItem={updateInventoryItem}
+            onDeleteInventoryItem={deleteInventoryItem}
             searchQuery={searchQuery}
             triggerToast={triggerToast}
           />
@@ -414,11 +522,7 @@ export default function App() {
       />
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        <Header 
-        toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-      />
+        <Header toggleSidebar={() => setSidebarOpen(!sidebarOpen)} searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         
         <main className="flex-1 overflow-y-auto p-4 sm:p-8">
           <div className="max-w-7xl mx-auto">
@@ -487,7 +591,7 @@ const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen }: { activeTab: st
   );
 };
 
-const Header = ({ toggleSidebar, searchQuery, setSearchQuery }: { toggleSidebar: () => void, searchQuery: string, setSearchQuery: (q: string) => void }) => (
+const Header = ({ toggleSidebar, searchQuery, setSearchQuery }: { toggleSidebar: () => void; searchQuery: string; setSearchQuery: React.Dispatch<React.SetStateAction<string>> }) => (
   <header className="bg-white border-b border-slate-200 h-20 flex items-center justify-between px-4 sm:px-8 sticky top-0 z-40">
     <div className="flex items-center gap-4">
       <button onClick={toggleSidebar} className="md:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
@@ -503,10 +607,10 @@ const Header = ({ toggleSidebar, searchQuery, setSearchQuery }: { toggleSidebar:
       <Search className="w-5 h-5 text-slate-400" />
       <input 
         type="text" 
-        placeholder="Search patient records or active stock catalog..." 
-        className="bg-transparent border-none outline-none w-full text-sm text-slate-700 placeholder-slate-400"
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="Search patient records or active stock catalog..." 
+        className="bg-transparent border-none outline-none w-full text-sm text-slate-700 placeholder-slate-400"
       />
     </div>
 
@@ -662,7 +766,6 @@ const PatientRecordsView = ({
   patients, 
   consultations,
   inventory,
-  searchQuery,
   onCreatePatient,
   onUpdatePatient,
   onDeletePatient,
@@ -672,7 +775,6 @@ const PatientRecordsView = ({
   patients: PatientRecord[]; 
   consultations: Consultation[];
   inventory: InventoryItem[];
-  searchQuery: string;
   onCreatePatient: (name: string, species: string, breed: string, gender: any, owner: string, contact: string, weight: number, admissionTypes: string[], reason: string, pictures?: string[]) => void;
   onUpdatePatient: (record: PatientRecord) => void;
   onDeletePatient: (id: string) => void;
@@ -822,12 +924,6 @@ const PatientRecordsView = ({
     setPrescribedQuantity(1);
     setSigInstructions('');
   };
-
-  const filteredPatients = patients.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.ownerName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   return (
     <div className="space-y-6 relative">
@@ -1260,6 +1356,10 @@ const PatientRecordsView = ({
       {/* --- END SLIDE-OUT DRAWER --- */}
 
       {}
+// --- [FIND THIS SECTION AROUND LINE 1215] ---
+// Look for: {/* --- CLINICAL DOSSIER FULL REPORT MODAL --- */}
+// Replace that entire block with the code below, ending before the {/* Title block */}
+
       {/* --- CLINICAL DOSSIER FULL REPORT MODAL --- */}
       {showFullReport && selectedPatient && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-md flex justify-center p-4 md:p-10">
@@ -1270,19 +1370,26 @@ const PatientRecordsView = ({
               <div className="flex items-center gap-3">
                 <Activity className="w-6 h-6 text-teal-400" />
                 <div>
-                  <h2 className="text-xl font-bold tracking-wide">Patient Clinical Dossier</h2>
+                  <h2 className="text-xl font-bold tracking-wide">
+                    {isEditing ? `Editing Dossier: ${selectedPatient.name}` : 'Patient Clinical Dossier'}
+                  </h2>
                   <p className="text-xs text-slate-400">Veterinary SOAP Report • Biñan Animal Practice System</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {!isEditing && (
+                  <button 
+                    onClick={() => window.print()}
+                    className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border border-slate-700"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" /> Print / Export
+                  </button>
+                )}
                 <button 
-                  onClick={() => window.print()}
-                  className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border border-slate-700"
-                >
-                  <FileSpreadsheet className="w-4 h-4" /> Print / Export
-                </button>
-                <button 
-                  onClick={() => setShowFullReport(false)}
+                  onClick={() => {
+                    setShowFullReport(false);
+                    setIsEditing(false); // Ensure editing is turned off when closing
+                  }}
                   className="bg-teal-500 hover:bg-teal-600 text-slate-950 font-bold p-2.5 rounded-full transition-all"
                 >
                   <X className="w-5 h-5" />
@@ -1293,195 +1400,482 @@ const PatientRecordsView = ({
             {/* Dossier Report Body */}
             <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-slate-50 text-slate-800">
               
-              {/* Profile Card & Demographics */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {isEditing && editForm ? (
+                // --- EDIT MODE VIEW ---
                 
-                {/* Primary Patient Card */}
-                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col items-center text-center">
-                  <div className="w-24 h-24 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center overflow-hidden mb-4 shadow-inner">
-                    {selectedPatient.pictures && selectedPatient.pictures[0] ? (
-                      <img src={selectedPatient.pictures[0]} alt={selectedPatient.name} className="w-full h-full object-cover" />
+                <div className="space-y-6 animate-in fade-in duration-300">
+                  
+                  {/* Edit Core Patient Details */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-1 space-y-4">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-2">
+                        <PawPrint className="w-4 h-4 text-slate-400" /> Patient Info
+                      </h4>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Name</label>
+                        <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.name} onChange={e => handleEditChange('name', e.target.value)} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                         <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Species</label>
+                          <select className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.species} onChange={e => handleEditChange('species', e.target.value)}>
+                            <option value="Canine">Canine</option>
+                            <option value="Feline">Feline</option>
+                            <option value="Avian">Avian</option>
+                            <option value="Exotic">Exotic</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Breed</label>
+                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.breed} onChange={e => handleEditChange('breed', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Weight (kg)</label>
+                          <input type="number" step="0.1" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.weight} onChange={e => handleEditChange('weight', parseFloat(e.target.value) || 0)} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Gender</label>
+                          <select className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.gender} onChange={e => handleEditChange('gender', e.target.value)}>
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            <option value="Unknown">Unknown</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Admit Status</label>
+                        <select className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.status} onChange={e => handleEditChange('status', e.target.value)}>
+                          <option value="Waiting">Waiting</option>
+                          <option value="In Treatment">In Treatment</option>
+                          <option value="Confined">Confined</option>
+                          <option value="Ready for Pickup">Ready for Pickup</option>
+                          <option value="Discharged">Discharged</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Edit Owner Details */}
+                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-2 space-y-4">
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-2">
+                        <User className="w-4 h-4 text-slate-400" /> Owner & Contact Info
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Authorized Guardian</label>
+                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerName} onChange={e => handleEditChange('ownerName', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Primary Phone</label>
+                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerContact} onChange={e => handleEditChange('ownerContact', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Email Coordinates</label>
+                          <input type="email" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerEmail || ''} onChange={e => handleEditChange('ownerEmail', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Residence Coordinates</label>
+                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerAddress || ''} onChange={e => handleEditChange('ownerAddress', e.target.value)} />
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center justify-between mt-4">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Ledger Balance (PHP)</span>
+                          <input type="number" step="0.01" className="w-32 p-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-800 outline-none" value={editForm.balance} onChange={e => handleEditChange('balance', parseFloat(e.target.value) || 0)} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Edit Clinical Notes */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+                     <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Stethoscope className="w-4 h-4 text-slate-400" /> Chief Complaint / Remarks
+                      </h4>
+                      <textarea 
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none resize-none h-24" 
+                        value={editForm.reason} 
+                        onChange={e => handleEditChange('reason', e.target.value)} 
+                      />
+                  </div>
+
+                  {/* Edit Photo Gallery */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+                    <h4 className="text-sm font-bold text-slate-800 flex items-center justify-between border-b border-slate-100 pb-3">
+                      <span className="flex items-center gap-2"><Sparkles className="w-5 h-5 text-yellow-500" /> Edit Diagnostic Images</span>
+                      
+                      {/* Upload new photo button */}
+                      <label htmlFor="dossierImageUpload" className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2">
+                         <Plus className="w-4 h-4" /> Add Photo
+                      </label>
+                      <input 
+                        type="file" 
+                        id="dossierImageUpload" 
+                        multiple 
+                        accept="image/*" 
+                        onChange={(e) => {
+                          const files = e.target.files;
+                          if (files) {
+                            Array.from(files).forEach(file => {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                if (typeof reader.result === 'string') {
+                                  handleEditChange('pictures', [...(editForm.pictures || []), reader.result]);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            });
+                          }
+                        }} 
+                        className="hidden" 
+                      />
+                    </h4>
+
+                    {editForm.pictures && editForm.pictures.length > 0 ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        {editForm.pictures.map((pic, idx) => (
+                          <div key={idx} className="group relative rounded-xl border border-slate-200 overflow-hidden bg-slate-900 aspect-video flex items-center justify-center shadow-sm">
+                            <img src={pic} alt={`Diagnostic #${idx}`} className="w-full h-full object-cover" />
+                            {/* Remove button overlaid on image */}
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                const newPics = editForm.pictures?.filter((_, i) => i !== idx);
+                                handleEditChange('pictures', newPics);
+                              }}
+                              className="absolute inset-0 bg-red-600/80 text-white font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-xs"
+                            >
+                              Remove Image
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     ) : (
-                      <PawPrint className="w-12 h-12 text-teal-600" />
+                      <p className="text-sm text-slate-400 text-center py-6">No images attached. Click "Add Photo" to upload.</p>
                     )}
                   </div>
-                  <h3 className="text-2xl font-black text-slate-900">{selectedPatient.name}</h3>
-                  <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">{selectedPatient.species} • {selectedPatient.breed}</span>
-                  
-                  <div className="w-full border-t border-slate-100 my-4" />
-                  
-                  <div className="grid grid-cols-2 gap-4 w-full text-left">
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase block">ID Tag</span>
-                      <span className="text-xs font-black text-slate-800">{selectedPatient.id}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase block">Current Weight</span>
-                      <span className="text-xs font-black text-slate-800">{selectedPatient.weight} kg</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase block">Gender</span>
-                      <span className="text-xs font-black text-slate-800">{selectedPatient.gender}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase block">Admit Status</span>
-                      <span className="inline-block text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded font-bold border border-teal-200 mt-1">{selectedPatient.status}</span>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Owner & Legal Custody Card */}
-                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-2 space-y-4 flex flex-col justify-between">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-3">
-                      <User className="w-4 h-4 text-slate-400" /> Certified Owner & Contact Info
+                  {/* Edit Consultation / Chief Complaint */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+                     <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
+                        <Stethoscope className="w-5 h-5 text-purple-600" /> Clinical Encounter Timeline & Chief Complaint
+                      </h4>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Chief Complaint & Encounter Notes</label>
+                        <textarea 
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none resize-none h-24" 
+                          value={editForm.reason} 
+                          onChange={e => handleEditChange('reason', e.target.value)} 
+                        />
+                      </div>
+                  </div>
+
+                  {/* Edit Lab Results / Bio-findings */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <TestTube className="w-4 h-4 text-slate-400" /> Dynamic Laboratory Panels & Bio-findings
                     </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block">Authorized Guardian</span>
-                        <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerName}</p>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block">Primary Phone</span>
-                        <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerContact}</p>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block">Email Coordinates</span>
-                        <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerEmail || "N/A - Offline Registry Only"}</p>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block">Residence Coordinates</span>
-                        <p className="text-xs font-medium text-slate-700">{selectedPatient.ownerAddress || "Biñan Animal Center Local Jurisdiction"}</p>
-                      </div>
-                    </div>
-                  </div>
+                    {editForm.labResults && editForm.labResults.length > 0 ? (
+                      <div className="space-y-6">
+                        {editForm.labResults.map((result, index) => (
+                          <div key={result.id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                            <div className="bg-slate-200/60 px-4 py-2 flex gap-4 items-center">
+                              <input 
+                                type="text"
+                                className="flex-1 p-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-teal-500"
+                                value={result.testName}
+                                onChange={(e) => {
+                                  const newLabs = [...(editForm.labResults || [])];
+                                  newLabs[index] = { ...newLabs[index], testName: e.target.value };
+                                  handleEditChange('labResults', newLabs);
+                                }}
+                                placeholder="Test/Panel Name"
+                              />
+                              <input 
+                                type="text"
+                                className="w-32 p-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-teal-500 text-right"
+                                value={result.date}
+                                onChange={(e) => {
+                                  const newLabs = [...(editForm.labResults || [])];
+                                  newLabs[index] = { ...newLabs[index], date: e.target.value };
+                                  handleEditChange('labResults', newLabs);
+                                }}
+                                placeholder="MM/DD/YYYY"
+                              />
+                            </div>
 
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center justify-between mt-auto">
-                    <div>
-                      <span className="text-[10px] text-slate-400 font-bold uppercase block">Ledger Balance Summary</span>
-                      <p className="text-lg font-black text-slate-800">PHP {selectedPatient.balance.toFixed(2)}</p>
-                    </div>
-                    <button 
-                      onClick={() => {
-                        const updated = { ...selectedPatient, balance: 0 };
-                        onUpdatePatient(updated);
-                        setSelectedPatient(updated);
-                        triggerToast(`Ledger balance cleared.`);
-                      }}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all"
-                    >
-                      Clear Account Balance
-                    </button>
-                  </div>
-                </div>
+                            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="flex flex-col">
+                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Diagnostic Interpretation</label>
+                                <textarea 
+                                  className="w-full flex-1 p-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 outline-none focus:ring-2 focus:ring-teal-500 resize-none min-h-[80px]"
+                                  value={result.findings}
+                                  onChange={(e) => {
+                                    const newLabs = [...(editForm.labResults || [])];
+                                    newLabs[index] = { ...newLabs[index], findings: e.target.value };
+                                    handleEditChange('labResults', newLabs);
+                                  }}
+                                />
+                              </div>
 
-              </div>
-
-              {/* Patient Admission Gallery / Pictures */}
-              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
-                  <Sparkles className="w-5 h-5 text-yellow-500" />
-                  Clinical & Diagnostic Images Gallery
-                </h4>
-                {selectedPatient.pictures && selectedPatient.pictures.length > 0 ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    {selectedPatient.pictures.map((pic, idx) => (
-                      <div key={idx} className="group relative rounded-xl border border-slate-200 overflow-hidden bg-slate-900 aspect-video flex items-center justify-center shadow-sm">
-                        <img src={pic} alt={`Diagnostic #${idx}`} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-200" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 flex items-end justify-between">
-                          <span className="text-[9px] text-teal-400 font-bold font-mono">IMG-0{idx+1}</span>
-                          <button 
-                            onClick={() => window.open(pic, '_blank')}
-                            className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold px-2 py-0.5 rounded text-[10px]"
-                          >
-                            Enlarge
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-400 text-center py-6">No clinical diagnostic photographs or scans uploaded to this patient profile yet.</p>
-                )}
-              </div>
-
-              {/* Lab Results Metrics Panel */}
-              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
-                  <TestTube className="w-5 h-5 text-teal-600" />
-                  Dynamic Laboratory Panels & Bio-findings
-                </h4>
-                
-                {selectedPatient.labResults && selectedPatient.labResults.length > 0 ? (
-                  <div className="space-y-6">
-                    {selectedPatient.labResults.map((result) => (
-                      <div key={result.id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
-                        <div className="bg-slate-200/60 px-4 py-2 flex justify-between items-center text-xs font-bold text-slate-700">
-                          <span>{result.testName}</span>
-                          <span>Report Date: {result.date}</span>
-                        </div>
-                        <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Diagnostic Interpretation</span>
-                            <p className="text-sm text-slate-700 leading-relaxed font-medium bg-white p-3 rounded-xl border border-slate-100">
-                              {result.findings}
-                            </p>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block mb-2">Panel Analyte Breakdown</span>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              {Object.entries(result.metrics).map(([name, val]) => (
-                                <div key={name} className="bg-white border border-slate-100 px-3 py-1.5 rounded-lg flex justify-between">
-                                  <span className="font-semibold text-slate-500">{name}</span>
-                                  <span className={`font-bold ${val.includes('High') ? 'text-red-600' : val.includes('Low') ? 'text-amber-600' : 'text-slate-800'}`}>
-                                    {val}
-                                  </span>
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-2">Panel Analyte Breakdown (Metrics)</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                  {Object.entries(result.metrics).map(([key, val]) => (
+                                    <div key={key} className="flex items-center gap-2">
+                                      <span className="text-xs font-semibold text-slate-500 w-16 truncate" title={key}>{key}</span>
+                                      <input 
+                                        type="text"
+                                        className="flex-1 p-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-teal-500"
+                                        value={val as string}
+                                        onChange={(e) => {
+                                          const newLabs = [...(editForm.labResults || [])];
+                                          newLabs[index] = {
+                                            ...newLabs[index],
+                                            metrics: { ...newLabs[index].metrics, [key]: e.target.value }
+                                          };
+                                          handleEditChange('labResults', newLabs);
+                                        }}
+                                      />
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                              </div>
                             </div>
                           </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 bg-slate-50/50 rounded-xl border border-slate-200 border-dashed">
+                        <p className="text-sm text-slate-500">No laboratory records attached to this profile.</p>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              ) : (
+                // --- READ-ONLY VIEW (Original Design) ---
+                <>
+                  {/* Profile Card & Demographics */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in duration-300">
+                    
+                    {/* Primary Patient Card */}
+                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col items-center text-center">
+                      <div className="w-24 h-24 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center overflow-hidden mb-4 shadow-inner">
+                        {selectedPatient.pictures && selectedPatient.pictures[0] ? (
+                          <img src={selectedPatient.pictures[0]} alt={selectedPatient.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <PawPrint className="w-12 h-12 text-teal-600" />
+                        )}
+                      </div>
+                      <h3 className="text-2xl font-black text-slate-900">{selectedPatient.name}</h3>
+                      <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">{selectedPatient.species} • {selectedPatient.breed}</span>
+                      
+                      <div className="w-full border-t border-slate-100 my-4" />
+                      
+                      <div className="grid grid-cols-2 gap-4 w-full text-left">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase block">ID Tag</span>
+                          <span className="text-xs font-black text-slate-800">{selectedPatient.id}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Current Weight</span>
+                          <span className="text-xs font-black text-slate-800">{selectedPatient.weight} kg</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Gender</span>
+                          <span className="text-xs font-black text-slate-800">{selectedPatient.gender}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Admit Status</span>
+                          <span className="inline-block text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded font-bold border border-teal-200 mt-1">{selectedPatient.status}</span>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-6 bg-slate-50/50 rounded-xl border border-slate-200 border-dashed">
-                    <p className="text-sm text-slate-500">No laboratory panel files linked. Generate AI Hematology charts or import CSV values via the Portal.</p>
-                  </div>
-                )}
-              </div>
+                    </div>
 
-              {/* Consultation History / Chief Complaint SOAP Notes */}
-              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
-                  <Stethoscope className="w-5 h-5 text-purple-600" />
-                  Clinical Encounter Timeline & Chief Complaint
-                </h4>
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-medium text-sm text-slate-700 space-y-3">
-                  <p className="leading-relaxed">
-                    <span className="font-bold text-slate-800 block mb-1">Chief Complaint:</span>
-                    {selectedPatient.reason}
-                  </p>
-                  <p className="text-xs text-slate-500 italic">Record created dynamically in accordance with practice guidelines.</p>
-                </div>
-              </div>
+                    {/* Owner & Legal Custody Card */}
+                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-2 space-y-4 flex flex-col justify-between">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-3">
+                          <User className="w-4 h-4 text-slate-400" /> Certified Owner & Contact Info
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Authorized Guardian</span>
+                            <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerName}</p>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Primary Phone</span>
+                            <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerContact}</p>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Email Coordinates</span>
+                            <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerEmail || "N/A - Offline Registry Only"}</p>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Residence Coordinates</span>
+                            <p className="text-xs font-medium text-slate-700">{selectedPatient.ownerAddress || "Biñan Animal Center Local Jurisdiction"}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center justify-between mt-auto">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Ledger Balance Summary</span>
+                          <p className="text-lg font-black text-slate-800">PHP {selectedPatient.balance.toFixed(2)}</p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const updated = { ...selectedPatient, balance: 0 };
+                            onUpdatePatient(updated);
+                            setSelectedPatient(updated);
+                            triggerToast(`Ledger balance cleared.`);
+                          }}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all"
+                        >
+                          Clear Account Balance
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Patient Admission Gallery / Pictures */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4 animate-in fade-in duration-300">
+                    <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <Sparkles className="w-5 h-5 text-yellow-500" />
+                      Clinical & Diagnostic Images Gallery
+                    </h4>
+                    {selectedPatient.pictures && selectedPatient.pictures.length > 0 ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        {selectedPatient.pictures.map((pic, idx) => (
+                          <div key={idx} className="group relative rounded-xl border border-slate-200 overflow-hidden bg-slate-900 aspect-video flex items-center justify-center shadow-sm">
+                            <img src={pic} alt={`Diagnostic #${idx}`} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-200" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 flex items-end justify-between">
+                              <span className="text-[9px] text-teal-400 font-bold font-mono">IMG-0{idx+1}</span>
+                              <button 
+                                onClick={() => window.open(pic, '_blank')}
+                                className="bg-teal-500 hover:bg-teal-400 text-slate-900 font-bold px-2 py-0.5 rounded text-[10px]"
+                              >
+                                Enlarge
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-400 text-center py-6">No clinical diagnostic photographs or scans uploaded to this patient profile yet.</p>
+                    )}
+                  </div>
+
+                  {/* Lab Results Metrics Panel */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4 animate-in fade-in duration-300">
+                    <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <TestTube className="w-5 h-5 text-teal-600" />
+                      Dynamic Laboratory Panels & Bio-findings
+                    </h4>
+                    
+                    {selectedPatient.labResults && selectedPatient.labResults.length > 0 ? (
+                      <div className="space-y-6">
+                        {selectedPatient.labResults.map((result) => (
+                          <div key={result.id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+                            <div className="bg-slate-200/60 px-4 py-2 flex justify-between items-center text-xs font-bold text-slate-700">
+                              <span>{result.testName}</span>
+                              <span>Report Date: {result.date}</span>
+                            </div>
+                            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <span className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Diagnostic Interpretation</span>
+                                <p className="text-sm text-slate-700 leading-relaxed font-medium bg-white p-3 rounded-xl border border-slate-100">
+                                  {result.findings}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-400 font-bold uppercase block mb-2">Panel Analyte Breakdown</span>
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  {Object.entries(result.metrics).map(([name, val]) => (
+                                    <div key={name} className="bg-white border border-slate-100 px-3 py-1.5 rounded-lg flex justify-between">
+                                      <span className="font-semibold text-slate-500">{name}</span>
+                                      <span className={`font-bold ${val.includes('High') ? 'text-red-600' : val.includes('Low') ? 'text-amber-600' : 'text-slate-800'}`}>
+                                        {val}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-6 bg-slate-50/50 rounded-xl border border-slate-200 border-dashed">
+                        <p className="text-sm text-slate-500">No laboratory panel files linked. Generate AI Hematology charts or import CSV values via the Portal.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Consultation History / Chief Complaint SOAP Notes */}
+                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4 animate-in fade-in duration-300">
+                    <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <Stethoscope className="w-5 h-5 text-purple-600" />
+                      Clinical Encounter Timeline & Chief Complaint
+                    </h4>
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 font-medium text-sm text-slate-700 space-y-3">
+                      <p className="leading-relaxed">
+                        <span className="font-bold text-slate-800 block mb-1">Chief Complaint:</span>
+                        {selectedPatient.reason}
+                      </p>
+                      <p className="text-xs text-slate-500 italic">Record created dynamically in accordance with practice guidelines.</p>
+                    </div>
+                  </div>
+                </>
+              )}
 
             </div>
 
             {/* Modal Footer */}
-            <div className="p-6 bg-white border-t border-slate-200 flex justify-end">
-              <button 
-                onClick={() => setShowFullReport(false)}
-                className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-md"
-              >
-                Close Clinical Dossier
-              </button>
+            <div className="p-6 bg-white border-t border-slate-200 flex justify-between items-center">
+              
+              {isEditing ? (
+                 <div className="flex w-full gap-4">
+                  <button 
+                    onClick={cancelEditing}
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm"
+                  >
+                    Cancel Editing
+                  </button>
+                  <button 
+                    onClick={saveEdits}
+                    className="flex-1 bg-teal-600 hover:bg-teal-700 text-white font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-md shadow-teal-600/20"
+                  >
+                    Save Changes to Dossier
+                  </button>
+                 </div>
+              ) : (
+                <>
+                  <button 
+                    onClick={startEditing}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm"
+                  >
+                    Edit Dossier Details
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowFullReport(false);
+                      setIsEditing(false);
+                    }}
+                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-md"
+                  >
+                    Close Clinical Dossier
+                  </button>
+                </>
+              )}
+              
             </div>
 
           </div>
         </div>
       )}
-
+// --- END REPLACEMENT BLOCK ---
       {/* Title block */}
       <div>
         <h2 className="text-2xl font-bold text-slate-800">Admission & Patient Records</h2>
@@ -1673,7 +2067,7 @@ const PatientRecordsView = ({
           <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <h3 className="text-lg font-bold text-slate-800">Active Patient Directory</h3>
             <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full">
-              {filteredPatients.length} Records
+              {patients.length} Records
             </span>
           </div>
           <div className="overflow-x-auto">
@@ -1686,7 +2080,7 @@ const PatientRecordsView = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredPatients.map((pat) => (
+                {patients.map((pat) => (
                   <tr 
                     key={pat.id} 
                     className="hover:bg-slate-50 transition-colors cursor-pointer group"
@@ -1757,12 +2151,16 @@ const PatientRecordsView = ({
 
 const InventoryControlView = ({ 
   inventory, 
-  setInventory, 
+  onAddInventoryItem,
+  onUpdateInventoryItem,
+  onDeleteInventoryItem,
   searchQuery,
   triggerToast
 }: { 
   inventory: InventoryItem[]; 
-  setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>; 
+  onAddInventoryItem: (item: InventoryItem) => Promise<void>;
+  onUpdateInventoryItem: (item: InventoryItem) => Promise<void>;
+  onDeleteInventoryItem: (itemCode: string) => Promise<void>;
   searchQuery: string;
   triggerToast: (msg: string) => void;
 }) => {
@@ -1782,13 +2180,13 @@ const InventoryControlView = ({
   const [editForm, setEditForm] = useState<InventoryItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  const filteredInventory = inventory.filter(item => {
+const filteredInventory = inventory.filter(item => {
     const matchesCategory = selectedCategory === 'All' ? true : item.category === selectedCategory;
-    const matchesSearch = searchQuery ? (item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) || item.itemCode.toLowerCase().includes(searchQuery.toLowerCase())) : true;
+    const matchesSearch = searchQuery.trim().length === 0 ? true : item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) || item.itemCode.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!itemName || !buyingPrice || !sellingPrice) return;
 
@@ -1808,8 +2206,8 @@ const InventoryControlView = ({
       threshold: finalThreshold
     };
 
-    setInventory([newItem, ...inventory]);
-    triggerToast(`Added ${itemName} successfully to directory.`);
+    console.log('[UI] submitting new inventory', newItem.itemCode);
+    await onAddInventoryItem(newItem);
 
     // Reset Form
     setItemName('');
@@ -1819,21 +2217,21 @@ const InventoryControlView = ({
     setThreshold('');
   };
 
-  const handleSaveEdits = () => {
+  const handleSaveEdits = async () => {
     if (!editForm) return;
-    setInventory(inventory.map(item => item.itemCode === editForm.itemCode ? editForm : item));
+    console.log('[UI] saving edits for', editForm.itemCode);
+    await onUpdateInventoryItem(editForm);
     setSelectedItem(editForm);
     setIsEditing(false);
-    triggerToast(`Inventory item "${editForm.itemName}" updated.`);
   };
 
-  const handleDeleteItem = () => {
+  const handleDeleteItem = async () => {
     if (!selectedItem) return;
-    setInventory(inventory.filter(item => item.itemCode !== selectedItem.itemCode));
+    console.log('[UI] deleting', selectedItem.itemCode);
+    await onDeleteInventoryItem(selectedItem.itemCode);
     setSelectedItem(null);
     setIsEditing(false);
     setShowDeleteConfirm(false);
-    triggerToast(`Inventory item has been permanently deleted.`);
   };
 
   return (
@@ -2270,14 +2668,26 @@ const AILaboratoryView = () => {
   const [inputText, setInputText] = useState("");
   const [analysisResult, setAnalysisResult] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+
+  const handleAttachImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAttachedImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleAnalyze = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() && !attachedImage) return;
     setIsAnalyzing(true);
     setAnalysisResult("");
     
     const prompt = `You are a highly advanced veterinary clinical decision support AI. 
-    Analyze the following raw laboratory results or clinical notes. 
+    Analyze the following raw laboratory results, clinical notes, or diagnostic images. 
     Provide: 
     1. A brief summary of abnormalities.
     2. A bulleted list of 3 potential differential diagnoses based on these findings.
@@ -2285,10 +2695,17 @@ const AILaboratoryView = () => {
     Format the response clearly using spacing and bullet points. Do not use bold markdown formatting, just plain text with clear spacing.
     
     Data to analyze:
-    ${inputText}`;
+    ${inputText || "(Analyzing attached diagnostic image)"}`;
 
     try {
-      const result = await generateGeminiText(prompt);
+      let imageData = undefined;
+      if (attachedImage) {
+        const base64String = attachedImage.split(',')[1];
+        const mimeType = attachedImage.split(':')[1]?.split(';')[0] || 'image/jpeg';
+        imageData = { mimeType, base64: base64String };
+      }
+      
+      const result = await generateGeminiText(prompt, imageData);
       setAnalysisResult(result);
     } catch (error) {
       setAnalysisResult("An error occurred while communicating with the AI. Please try again.");
@@ -2317,14 +2734,48 @@ const AILaboratoryView = () => {
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
           />
-          <button 
-            onClick={handleAnalyze}
-            disabled={isAnalyzing || !inputText.trim()}
-            className="mt-4 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-teal-500 to-emerald-500 text-white px-4 py-3 rounded-xl font-bold shadow-md hover:shadow-lg disabled:opacity-50 transition-all"
-          >
-            {isAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5 text-yellow-300" />}
-            {isAnalyzing ? "Processing..." : "✨ Get Clinical Summary"}
-          </button>
+          
+          {/* Image Preview Area */}
+          {attachedImage && (
+            <div className="relative mt-4 w-32 h-32 rounded-xl border border-slate-200 overflow-hidden group shadow-sm">
+              <img src={attachedImage} alt="Attached Lab Scan" className="w-full h-full object-cover" />
+              <button 
+                onClick={() => setAttachedImage(null)}
+                className="absolute inset-0 bg-red-600/80 text-white font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-xs backdrop-blur-sm"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+
+          {/* Action Toolbar */}
+          <div className="mt-4 flex flex-col sm:flex-row items-center gap-3">
+            <div className="w-full sm:w-auto">
+              <input 
+                type="file" 
+                id="labImageUpload" 
+                accept="image/*" 
+                className="hidden" 
+                onChange={handleAttachImage}
+              />
+              <label 
+                htmlFor="labImageUpload" 
+                className="cursor-pointer w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-all border border-slate-200"
+              >
+                <PlusCircle className="w-4 h-4 text-slate-500" />
+                Attach Scan/X-Ray
+              </label>
+            </div>
+
+            <button 
+              onClick={handleAnalyze}
+              disabled={isAnalyzing || (!inputText.trim() && !attachedImage)}
+              className="w-full flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-teal-500 to-emerald-500 text-white px-4 py-3 rounded-xl font-bold shadow-md hover:shadow-lg disabled:opacity-50 transition-all"
+            >
+              {isAnalyzing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5 text-yellow-300" />}
+              {isAnalyzing ? "Processing..." : "✨ Get Clinical Summary"}
+            </button>
+          </div>
         </div>
 
         {/* Output Insights Panel */}
