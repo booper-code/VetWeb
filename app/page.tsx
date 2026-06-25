@@ -117,23 +117,32 @@ let dbRef: any = null;
 const initializeFirebase = async () => {
   if (app) return { app, auth, db: dbRef, firestore };
   const config = getFirebaseConfig();
+  
   try {
-    console.log('[Firebase] initializing...');
+    console.log('[Firebase] initializing connection...');
     // @ts-ignore
-    const { initializeApp } = await import('firebase/app');
+    const { initializeApp, getApps, getApp } = await import('firebase/app');
     // @ts-ignore
     const { getAuth } = await import('firebase/auth');
     // @ts-ignore
     const firestoreModule = await import('firebase/firestore');
     
-    app = initializeApp(config);
+    // THE FIX: Check if Firebase is already running to prevent the React double-render crash
+    if (getApps().length === 0) {
+      app = initializeApp(config);
+    } else {
+      app = getApp();
+    }
+    
     auth = getAuth(app);
     dbRef = firestoreModule.getFirestore(app);
     firestore = firestoreModule;
-    console.log('[Firebase] initialized, project:', config.projectId);
+    
+    console.log('[Firebase] successfully connected to:', config.projectId);
     return { app, auth, db: dbRef, firestore };
+    
   } catch (e) {
-    console.error('Firebase dynamic import failed:', e);
+    console.error('Firebase initialization failed:', e);
     throw e;
   }
 };
@@ -221,33 +230,43 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    const loadCloudData = async () => {
+    const syncCloudData = async () => {
       try {
-        // 1. Open connection and get the database tools
-        const { db, firestore } = await initializeFirebase();
-        if (!db || !firestore) return;
+        console.log('[Firebase] Initiating automatic handshake sequence...');
+        const { db, firestore: fs } = await initializeFirebase();
 
-        // 2. Fetch all Patients from the cloud
-        const patSnap = await firestore.getDocs(firestore.collection(db, 'patients'));
-        const loadedPatients = patSnap.docs.map((d: any) => d.data() as PatientRecord);
+        if (!db || !fs) {
+          console.error('[Firebase] Handshake failed: Database reference or Firestore module is undefined.');
+          triggerToast('Cloud connection failed. Check console.');
+          return;
+        }
+
+        console.log('[Firebase] Handshake successful! Syncing datasets...');
+
+        console.log('[Firebase] Reading patient list from cloud...');
+        const patientSnapshot = await fs.getDocs(fs.collection(db, 'patients'));
+        const loadedPatients = patientSnapshot.docs.map((docItem: any) => docItem.data() as PatientRecord);
+        console.log(`[Firebase] Successfully loaded ${loadedPatients.length} patient records.`);
         setPatients(loadedPatients);
 
-        // 3. Fetch all Inventory from the cloud
-        const invSnap = await firestore.getDocs(firestore.collection(db, 'inventory'));
-        const loadedInventory = invSnap.docs.map((d: any) => d.data() as InventoryItem);
+        console.log('[Firebase] Reading inventory database from cloud...');
+        const inventorySnapshot = await fs.getDocs(fs.collection(db, 'inventory'));
+        const loadedInventory = inventorySnapshot.docs.map((docItem: any) => docItem.data() as InventoryItem);
+        console.log(`[Firebase] Successfully loaded ${loadedInventory.length} inventory items.`);
         setInventory(loadedInventory);
 
-        // 4. Fetch all Consultations from the cloud
-        const conSnap = await firestore.getDocs(firestore.collection(db, 'consultations'));
-        const loadedConsultations = conSnap.docs.map((d: any) => d.data() as Consultation);
+        console.log('[Firebase] Reading consultation ledger from cloud...');
+        const consultationsSnapshot = await fs.getDocs(fs.collection(db, 'consultations'));
+        const loadedConsultations = consultationsSnapshot.docs.map((docItem: any) => docItem.data() as Consultation);
+        console.log(`[Firebase] Successfully loaded ${loadedConsultations.length} consultation entries.`);
         setConsultations(loadedConsultations);
-
       } catch (err) {
-        console.error('Firebase initialization or data fetch failed:', err);
+        console.error('[Firebase Error] Failed to synchronize datasets on load:', err);
+        triggerToast('Failed to load clinic records from the cloud database.');
       }
     };
 
-    loadCloudData();
+    syncCloudData();
   }, []);
 
   // --- RECONCILED IN-MEMORY STATE FOR TEAM PRESENTATION ---
@@ -327,7 +346,7 @@ export default function App() {
     }, 4000);
   };
 
-  const createQuickPatient = (
+  const createQuickPatient = async (
     name: string, 
     species: string, 
     breed: string, 
@@ -356,8 +375,34 @@ export default function App() {
       pictures,
       labResults: []
     };
-    setPatients([newPat, ...patients]);
-    triggerToast(`Record for ${name} added successfully.`);
+
+    try {
+      await initializeFirebase();
+    } catch (e) {
+      console.error('[Firebase Error] Write aborted: Database initialization failed.', e);
+      setPatients(prev => [newPat, ...prev]);
+      triggerToast('Cloud sync failed. Patient saved locally.');
+      return;
+    }
+
+    if (!dbRef || !firestore) {
+      console.error('[Firebase Error] Write aborted: Database is offline.');
+      triggerToast('Offline mode: Record only saved to browser memory.');
+      setPatients(prev => [newPat, ...prev]);
+      return;
+    }
+
+    try {
+      console.log(`[Firebase] Pushing new patient document ${newPat.id} to cloud...`);
+      await firestore.setDoc(firestore.doc(dbRef, 'patients', newPat.id), newPat);
+      console.log(`[Firebase] Successfully committed patient record ${newPat.id} to cloud!`);
+      setPatients(prev => [newPat, ...prev]);
+      triggerToast(`Successfully admitted ${newPat.name} to the clinic queue.`);
+    } catch (e) {
+      console.error('[Firebase Error] Failed to write patient document:', e);
+      triggerToast('Cloud synchronization failed. Retrying offline...');
+      setPatients(prev => [newPat, ...prev]);
+    }
   };
 
   // --- ADDITIONAL DATABASE WRITE OPERATIONS ---
@@ -425,14 +470,40 @@ export default function App() {
     }
   };
 
-  const updatePatientRecord = (updatedRecord: PatientRecord) => {
-    setPatients(patients.map(p => p.id === updatedRecord.id ? updatedRecord : p));
-    triggerToast(`Patient record for ${updatedRecord.name} updated.`);
+  const updatePatientRecord = async (updatedRecord: PatientRecord) => {
+    if (!dbRef || !firestore) {
+      setPatients(prev => prev.map(p => p.id === updatedRecord.id ? updatedRecord : p));
+      return;
+    }
+
+    try {
+      console.log(`[Firebase] Overwriting patient document ${updatedRecord.id} in cloud...`);
+      await firestore.setDoc(firestore.doc(dbRef, 'patients', updatedRecord.id), updatedRecord);
+      console.log(`[Firebase] Successfully updated patient record ${updatedRecord.id} in cloud.`);
+      setPatients(prev => prev.map(p => p.id === updatedRecord.id ? updatedRecord : p));
+      triggerToast(`Clinical record updated successfully.`);
+    } catch (e) {
+      console.error('[Firebase Error] Failed to update patient document:', e);
+      triggerToast('Failed to save edit modifications to cloud storage.');
+    }
   };
 
-  const deletePatientRecord = (id: string) => {
-    setPatients(patients.filter(p => p.id !== id));
-    triggerToast(`Patient record has been permanently deleted.`);
+  const deletePatientRecord = async (id: string) => {
+    if (!dbRef || !firestore) {
+      setPatients(prev => prev.filter(p => p.id !== id));
+      return;
+    }
+
+    try {
+      console.log(`[Firebase] Deleting patient document ${id} from cloud...`);
+      await firestore.deleteDoc(firestore.doc(dbRef, 'patients', id));
+      console.log(`[Firebase] Successfully deleted patient record ${id} from cloud.`);
+      setPatients(prev => prev.filter(p => p.id !== id));
+      triggerToast('Clinical record purged from system ledger.');
+    } catch (e) {
+      console.error('[Firebase Error] Failed to delete patient document:', e);
+      triggerToast('Failed to complete purge request from cloud server.');
+    }
   };
 
   const toggleConsultationStatus = (id: string) => {
@@ -793,6 +864,7 @@ const PatientRecordsView = ({
   const [selectedAdmissions, setSelectedAdmissions] = useState<string[]>(['Medical Checkup']);
   
   const [formPictures, setFormPictures] = useState<string[]>([]);
+  const [newPatientImage, setNewPatientImage] = useState<string | null>(null);
   const [showFullReport, setShowFullReport] = useState(false);
 
   const admissionOptions = ['Grooming', 'Medical Checkup', 'Surgery', 'Confinement'];
@@ -824,6 +896,19 @@ const PatientRecordsView = ({
     }
   };
 
+  const handleNewPatientImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setNewPatientImage(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleQuickInsertPreset = (url: string) => {
     setFormPictures(prev => [...prev, url]);
     triggerToast("Quick diagnostic preview preset attached.");
@@ -837,11 +922,12 @@ const PatientRecordsView = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !breed || !owner || !contact || !weight || selectedAdmissions.length === 0) return;
     
-    onCreatePatient(name, species, breed, gender, owner, contact, Number(weight), selectedAdmissions, reason, formPictures);
+    const pictures = newPatientImage ? [newPatientImage, ...formPictures] : formPictures;
+    await onCreatePatient(name, species, breed, gender, owner, contact, Number(weight), selectedAdmissions, reason, pictures);
     
     // Reset form
     setName(''); 
@@ -852,6 +938,7 @@ const PatientRecordsView = ({
     setReason(''); 
     setSelectedAdmissions(['Medical Checkup']);
     setFormPictures([]);
+    setNewPatientImage(null);
   };
 
   const startEditing = () => {
@@ -1951,7 +2038,42 @@ const PatientRecordsView = ({
 
             <div className="h-px bg-slate-100 w-full" />
 
-            {}
+            {/* Optional Patient Photo Upload */}
+            <div className="flex flex-col space-y-2 mb-4">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Patient Photo (Optional)
+              </label>
+              
+              <div className="flex items-center gap-4">
+                {newPatientImage ? (
+                  <div className="relative w-16 h-16 rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <img src={newPatientImage} alt="Preview" className="w-full h-full object-cover" />
+                    <button 
+                      type="button"
+                      onClick={() => setNewPatientImage(null)}
+                      className="absolute inset-0 bg-red-600/80 text-white font-bold opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity text-[10px]"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div className="w-16 h-16 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center">
+                    <PawPrint className="w-6 h-6 text-slate-300" />
+                  </div>
+                )}
+
+                <label className="cursor-pointer bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm">
+                  Browse Image...
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={handleNewPatientImageUpload} 
+                    className="hidden" 
+                  />
+                </label>
+              </div>
+            </div>
+
             {/* Clinical Photo Attachments Block */}
             <div className="space-y-4">
               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
