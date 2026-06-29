@@ -70,6 +70,17 @@ type LabResult = {
   metrics?: Record<string, string>;
 };
 
+type PatientBillableItem = {
+  id: string;
+  itemCode: string;
+  itemName: string;
+  category: 'Medicine' | 'Supplies' | 'Service' | 'Grooming';
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  date: string;
+};
+
 type PatientRecord = {
   id: string;
   name: string;
@@ -91,6 +102,7 @@ type PatientRecord = {
   tags?: string[];
   notes?: string;
   aiLabSummary?: string;
+  billableItems?: PatientBillableItem[];
 };
 
 type Consultation = {
@@ -235,6 +247,7 @@ const generateGeminiJSON = async (prompt: string, imageData?: { mimeType: string
 
 const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => void }) => {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [clinicName, setClinicName] = useState('');
   const [email, setEmail] = useState('admin@binanvet.com');
   const [password, setPassword] = useState('admin123');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -248,6 +261,11 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
 
     setTimeout(async () => {
       try {
+        if (authMode === 'signup' && clinicName.trim() === '') {
+          setError("Clinic name is required.");
+          setIsLoading(false);
+          return;
+        }
         if (authMode === 'signup' && password !== confirmPassword) {
           setError("Passwords do not match.");
           setIsLoading(false);
@@ -262,7 +280,7 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
 
         // Academic demo bypass for live defense / offline presentation safety
         if (authMode === 'login' && email === 'admin@binanvet.com' && password === 'admin123') {
-          onLoginSuccess(email);
+          onLoginSuccess(`Demo Clinic (${email})`);
           setIsLoading(false);
           return;
         }
@@ -273,10 +291,10 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
 
           if (authMode === 'login') {
             await signInWithEmailAndPassword(auth, email, password);
-            onLoginSuccess(email);
+            onLoginSuccess(`${clinicName || 'Clinic'} (${email})`);
           } else {
             await createUserWithEmailAndPassword(auth, email, password);
-            onLoginSuccess(email);
+            onLoginSuccess(`${clinicName || 'Clinic'} (${email})`);
           }
         } catch (fbErr: any) {
           if (authMode === 'login') {
@@ -333,9 +351,6 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
                 <h1 className="text-xl font-black tracking-wide">
                   VetCloud<span className="text-teal-300">Pro</span>
                 </h1>
-                <p className="text-xs text-slate-400 font-medium">
-                  Biñan Animal Center
-                </p>
               </div>
             </div>
 
@@ -383,9 +398,6 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
                 <h1 className="text-xl font-black text-slate-900">
                   VetCloud<span className="text-teal-600">Pro</span>
                 </h1>
-                <p className="text-xs text-slate-500 font-medium">
-                  Biñan Animal Center
-                </p>
               </div>
             </div>
 
@@ -410,11 +422,26 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
                 <p>{error}</p>
               </div>
             )}
-
+            
             <form onSubmit={handleAuth} className="space-y-5">
+              {authMode === 'signup' && (
+                <div>
+                  <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+                    Clinic Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none transition-all"
+                    placeholder="e.g. Biñan Animal Clinic"
+                    value={clinicName}
+                    onChange={(e) => setClinicName(e.target.value)}
+                  />
+                </div>
+              )}
               <div>
                 <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
-                  Staff Email
+                  Clinic Email
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -733,7 +760,11 @@ export default function App() {
       const docRef = firestore.doc(dbRef, 'inventory', newItem.itemCode);
       await firestore.setDoc(docRef, newItem);
       console.log('[Inventory] create success', newItem.itemCode);
-      setInventory([newItem, ...inventory]);
+      setInventory(prev => [
+        newItem,
+        ...prev.filter(item => item.itemCode !== newItem.itemCode)
+      ]);
+
       triggerToast(`Product ${newItem.itemName} saved to cloud database.`);
     } catch (e) {
       console.error('[Inventory] create failed', e);
@@ -851,6 +882,7 @@ export default function App() {
             searchQuery={searchQuery}
             onCreatePatient={createQuickPatient}
             onUpdatePatient={updatePatientRecord}
+            onUpdateInventoryItem={updateInventoryItem}
             onDeletePatient={deletePatientRecord}
             onToggleStatus={toggleConsultationStatus}
             triggerToast={triggerToast}
@@ -870,7 +902,14 @@ export default function App() {
       case 'laboratory':
         return <AILaboratoryView triggerToast={triggerToast} />;
       case 'settings':
-        return <SystemSettingsView inventory={inventory} setInventory={setInventory} triggerToast={triggerToast} />;
+        return (
+          <SystemSettingsView
+            inventory={inventory}
+            setInventory={setInventory}
+            onAddInventoryItem={createInventoryItem}
+            triggerToast={triggerToast}
+          />
+        );
       default:
         return <DashboardHome 
           patients={patients} 
@@ -885,7 +924,10 @@ export default function App() {
       setCurrentUser(null);
       triggerToast("Securely logged out of the system.");
     };
-
+    const handleUpdateCurrentUser = (updatedUser: string) => {
+      setCurrentUser(updatedUser);
+      triggerToast("Clinic account details updated.");
+    };
     if (!isAuthenticated) {
     return (
       <LoginScreen
@@ -922,10 +964,16 @@ export default function App() {
         setIsOpen={setSidebarOpen}
         currentUser={currentUser}
         onLogout={handleLogout}
+        onUpdateCurrentUser={handleUpdateCurrentUser}
       />
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        <Header toggleSidebar={() => setSidebarOpen(!sidebarOpen)} searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+        <Header
+          toggleSidebar={() => setSidebarOpen(!sidebarOpen)} 
+          searchQuery={searchQuery} 
+          setSearchQuery={setSearchQuery}
+          currentUser={currentUser}
+        />
         
         <main className="flex-1 overflow-y-auto p-4 sm:p-8">
           <div className="max-w-7xl mx-auto">
@@ -937,8 +985,34 @@ export default function App() {
   );
 }
 
-const Sidebar = ({ activeTab, setActiveTab, isOpen, setIsOpen, currentUser, onLogout }: { activeTab: string; setActiveTab: (tab: string) => void; isOpen: boolean; setIsOpen: (open: boolean) => void; currentUser: string | null; onLogout: () => void; }) => {
-const navItems = [
+const Sidebar = ({
+  activeTab,
+  setActiveTab,
+  isOpen,
+  setIsOpen,
+  currentUser,
+  onLogout,
+  onUpdateCurrentUser
+}: {
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
+  isOpen: boolean;
+  setIsOpen: (open: boolean) => void;
+  currentUser: string | null;
+  onLogout: () => void;
+  onUpdateCurrentUser: (updatedUser: string) => void;
+}) => {
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+
+  const [clinicNameDraft, setClinicNameDraft] = useState(
+    currentUser?.split(' (')[0] || 'Clinic Account'
+  );
+
+  const [accountActionLoading, setAccountActionLoading] = useState(false);
+
+  const currentEmail = currentUser?.match(/\((.*?)\)/)?.[1] || '';
+
+  const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'patients', label: 'Admission & Medical', icon: PawPrint },
     { id: 'inventory', label: 'Inventory Control', icon: Package },
@@ -980,55 +1054,204 @@ const navItems = [
       </div>
 
       <div className="p-4 border-t border-slate-800">
-      <div className="flex items-center gap-3 px-3 py-2">
-        <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center overflow-hidden">
-          <User className="w-6 h-6 text-slate-400" />
+  <button
+    type="button"
+    onClick={() => {
+      setClinicNameDraft(currentUser?.split(' (')[0] || 'Clinic Account');
+      setShowAccountSettings(true);
+    }}
+    className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-800 transition-all text-left"
+  >
+    <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center overflow-hidden">
+      <User className="w-6 h-6 text-slate-400" />
+    </div>
+
+    <div className="flex flex-col text-left min-w-0">
+      <span className="text-sm font-medium text-white truncate">
+        {currentUser?.split(' (')[0] || 'Clinic Account'}
+      </span>
+      <span className="text-xs text-slate-500 truncate">
+        {currentUser || 'Active Session'}
+      </span>
+    </div>
+  </button>
+
+  <button
+    type="button"
+    onClick={onLogout}
+    className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200 border border-red-500/20 transition-all text-xs font-bold"
+  >
+    <Lock className="w-4 h-4" />
+    Logout
+  </button>
+</div>
+
+{showAccountSettings && (
+  <div className="fixed inset-0 z-[999] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
+      <div className="bg-slate-900 px-6 py-5 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-black text-white">
+            Clinic Account Settings
+          </h2>
+          <p className="text-xs text-slate-400 mt-1">
+            Manage clinic name and basic account actions.
+          </p>
         </div>
 
-        <div className="flex flex-col text-left min-w-0">
-          <span className="text-sm font-medium text-white truncate">
-            Dr. R. Capitan
-          </span>
-          <span className="text-xs text-slate-500 truncate">
-            {currentUser || 'Clinic Director'}
-          </span>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowAccountSettings(false)}
+          className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300"
+        >
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
-      <button
-        type="button"
-        onClick={onLogout}
-        className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200 border border-red-500/20 transition-all text-xs font-bold"
-      >
-        <Lock className="w-4 h-4" />
-        Logout
-      </button>
+      <div className="p-6 space-y-5">
+        <div>
+          <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+            Clinic Name
+          </label>
+          <input
+            type="text"
+            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-teal-500"
+            value={clinicNameDraft}
+            onChange={(e) => setClinicNameDraft(e.target.value)}
+            placeholder="e.g. Biñan Animal Clinic"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+            Login Email
+          </label>
+          <div className="w-full p-3 bg-slate-100 border border-slate-200 rounded-xl text-sm font-bold text-slate-500">
+            {currentEmail || 'No email detected'}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (!clinicNameDraft.trim()) {
+              alert("Clinic name cannot be empty.");
+              return;
+            }
+
+            const emailPart = currentEmail ? ` (${currentEmail})` : '';
+            onUpdateCurrentUser(`${clinicNameDraft.trim()}${emailPart}`);
+            setShowAccountSettings(false);
+          }}
+          className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 rounded-xl text-sm transition-all"
+        >
+          Save Clinic Name
+        </button>
+
+        <button
+          type="button"
+          disabled={!currentEmail || accountActionLoading}
+          onClick={async () => {
+            if (!currentEmail) {
+              alert("No account email detected.");
+              return;
+            }
+
+            setAccountActionLoading(true);
+
+            try {
+              const { getAuth, sendPasswordResetEmail } = await import('firebase/auth');
+              const auth = getAuth();
+
+              await sendPasswordResetEmail(auth, currentEmail);
+              alert(`Password reset email sent to ${currentEmail}.`);
+            } catch (error: any) {
+              alert(error?.message || "Failed to send password reset email.");
+            } finally {
+              setAccountActionLoading(false);
+            }
+          }}
+          className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-3 rounded-xl text-sm transition-all border border-slate-200 disabled:opacity-50"
+        >
+          Send Password Reset Email
+        </button>
+
+        <div className="border-t border-slate-200 pt-5">
+          <p className="text-xs text-red-600 font-bold mb-3">
+            Danger Zone
+          </p>
+
+          <button
+            type="button"
+            disabled={accountActionLoading}
+            onClick={async () => {
+              const confirmed = window.confirm(
+                "Are you sure you want to permanently delete this clinic account? This action cannot be undone."
+              );
+
+              if (!confirmed) return;
+
+              setAccountActionLoading(true);
+
+              try {
+                const { getAuth, deleteUser } = await import('firebase/auth');
+                const auth = getAuth();
+
+                if (!auth.currentUser) {
+                  alert("No Firebase user is currently signed in.");
+                  return;
+                }
+
+                await deleteUser(auth.currentUser);
+
+                alert("Clinic account deleted successfully.");
+                setShowAccountSettings(false);
+                onLogout();
+              } catch (error: any) {
+                alert(
+                  error?.message ||
+                  "Failed to delete account. Firebase may require recent login. Please login again and retry."
+                );
+              } finally {
+                setAccountActionLoading(false);
+              }
+            }}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete Clinic Account
+          </button>
+        </div>
+      </div>
     </div>
+  </div>
+)}
     </div>
   );
 };
 
-const Header = ({ toggleSidebar, searchQuery, setSearchQuery }: { toggleSidebar: () => void; searchQuery: string; setSearchQuery: React.Dispatch<React.SetStateAction<string>> }) => (
+  const Header = ({
+    toggleSidebar,
+    searchQuery,
+    setSearchQuery,
+    currentUser
+  }: {
+    toggleSidebar: () => void;
+    searchQuery: string;
+    setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
+    currentUser: string | null;
+  }) =>
   <header className="bg-white border-b border-slate-200 h-20 flex items-center justify-between px-4 sm:px-8 sticky top-0 z-40">
     <div className="flex items-center gap-4">
       <button onClick={toggleSidebar} className="md:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg">
         <Menu className="w-6 h-6" />
       </button>
       <div>
-        <h1 className="text-xl font-bold text-slate-800 hidden sm:block">Biñan Animal Clinic & Grooming Center</h1>
+      <h1 className="text-xl font-bold text-slate-800 hidden sm:block">
+        {currentUser ? currentUser.split(' (')[0] : 'VetCloudPro'}
+      </h1>
         <p className="text-sm text-slate-500 hidden sm:block">Unified Practice Management Platform</p>
       </div>
-    </div>
-
-    <div className="flex items-center gap-4 border border-slate-200 rounded-full px-4 py-2 bg-slate-50 md:w-96 focus-within:ring-2 focus-within:ring-teal-500 focus-within:border-teal-500 transition-all">
-      <Search className="w-5 h-5 text-slate-400" />
-      <input 
-        type="text" 
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        placeholder="Search patient records or active stock catalog..." 
-        className="bg-transparent border-none outline-none w-full text-sm text-slate-700 placeholder-slate-400"
-      />
     </div>
 
     <div className="flex items-center gap-3">
@@ -1037,9 +1260,8 @@ const Header = ({ toggleSidebar, searchQuery, setSearchQuery }: { toggleSidebar:
       </span>
     </div>
   </header>
-);
 
-const DashboardHome = ({ 
+const DashboardHome = ({
   patients, 
   inventory, 
   consultations, 
@@ -1050,23 +1272,100 @@ const DashboardHome = ({
   consultations: Consultation[]; 
   onToggleStatus: (id: string) => void;
 }) => {
-  const lowStockCount = inventory.filter(i => i.stock <= i.threshold).length;
+  const activePatients = patients.filter(patient => patient.status !== 'Discharged');
+  const dischargedPatients = patients.filter(patient => patient.status === 'Discharged');
+  const confinedPatients = patients.filter(patient => patient.status === 'Confined');
+  const waitingPatients = patients.filter(patient => patient.status === 'Waiting');
+  const treatmentPatients = patients.filter(patient => patient.status === 'In Treatment');
+
+  const patientsWithLabs = patients.filter(
+    patient => patient.labResults && patient.labResults.length > 0
+  );
+
+  const lowStockItems = inventory.filter(item =>
+    item.category !== 'Service' &&
+    item.category !== 'Grooming' &&
+    item.threshold > 0 &&
+    item.stock <= item.threshold
+  );
+
+  const medicineAndSupplies = inventory.filter(item =>
+    item.category === 'Medicine' || item.category === 'Supplies'
+  );
+
+  const serviceItems = inventory.filter(item =>
+    item.category === 'Service' || item.category === 'Grooming'
+  );
+
+  const totalReceivables = patients.reduce(
+    (sum, patient) => sum + patient.balance,
+    0
+  );
+
+  const draftConsultations = consultations.filter(
+    consultation => consultation.status === 'Draft'
+  );
+
+  const completedConsultations = consultations.filter(
+    consultation => consultation.status === 'Completed'
+  );
+
+  const recentBillables = patients
+    .flatMap(patient =>
+      (patient.billableItems || []).map(billable => ({
+        ...billable,
+        patientName: patient.name,
+        patientId: patient.id
+      }))
+    )
+    .slice(-6)
+    .reverse();
+
+  const formatMoney = (amount: number) => `PHP ${amount.toFixed(2)}`;
 
   return (
     <div className="space-y-6">
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">Clinic Dashboard</h2>
-          <p className="text-slate-500 font-medium">Consolidated diagnostic and workflow overview replacing legacy paper records.</p>
+      {/* Dashboard Header */}
+      <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-sm overflow-hidden relative">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-teal-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+
+        <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-teal-300 mb-2">
+              Clinic Operations Overview
+            </p>
+            <h2 className="text-2xl font-black tracking-tight">
+              Dashboard
+            </h2>
+            <p className="text-slate-400 text-sm mt-1">
+              Live summary of admissions, billing, inventory, laboratory records, and consultation workflow.
+            </p>
+          </div>
+
+          <div className="bg-white/5 border border-white/10 rounded-2xl px-5 py-4">
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black">
+              Total Receivables
+            </p>
+            <p className="text-2xl font-black text-teal-300">
+              {formatMoney(totalReceivables)}
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Top Level KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Main KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-sm text-slate-500 font-bold block uppercase tracking-wider">Active Admits</span>
-            <span className="text-3xl font-black text-slate-900 mt-1 block">{patients.length}</span>
+            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
+              Active Patients
+            </span>
+            <span className="text-3xl font-black text-slate-900 mt-1 block">
+              {activePatients.length}
+            </span>
+            <p className="text-xs text-slate-400 mt-1">
+              Excludes discharged records
+            </p>
           </div>
           <div className="p-4 bg-teal-50 text-teal-600 rounded-xl">
             <PawPrint className="w-6 h-6" />
@@ -1075,104 +1374,320 @@ const DashboardHome = ({
 
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-sm text-slate-500 font-bold block uppercase tracking-wider">Action Required Labs</span>
-            <span className="text-3xl font-black text-slate-900 mt-1 block">1</span>
+            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
+              Patient Balances
+            </span>
+            <span className={`text-3xl font-black mt-1 block ${totalReceivables > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
+              {formatMoney(totalReceivables)}
+            </span>
+            <p className="text-xs text-slate-400 mt-1">
+              Unpaid ledger total
+            </p>
           </div>
-          <div className="p-4 bg-emerald-50 text-emerald-600 rounded-xl">
-            <TestTube className="w-6 h-6" />
+          <div className="p-4 bg-amber-50 text-amber-600 rounded-xl">
+            <CreditCard className="w-6 h-6" />
           </div>
         </div>
 
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div>
-            <span className="text-sm text-slate-500 font-bold block uppercase tracking-wider">Low Stock Warnings</span>
-            <span className={`text-3xl font-black mt-1 block ${lowStockCount > 0 ? 'text-red-500' : 'text-slate-900'}`}>{lowStockCount}</span>
+            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
+              Low Stock Alerts
+            </span>
+            <span className={`text-3xl font-black mt-1 block ${lowStockItems.length > 0 ? 'text-red-500' : 'text-slate-900'}`}>
+              {lowStockItems.length}
+            </span>
+            <p className="text-xs text-slate-400 mt-1">
+              Medicines and supplies only
+            </p>
           </div>
-          <div className="p-4 bg-amber-50 text-amber-600 rounded-xl">
+          <div className="p-4 bg-red-50 text-red-500 rounded-xl">
             <Package className="w-6 h-6" />
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
+              Lab Records
+            </span>
+            <span className="text-3xl font-black text-slate-900 mt-1 block">
+              {patientsWithLabs.length}
+            </span>
+            <p className="text-xs text-slate-400 mt-1">
+              Patients with lab panels
+            </p>
+          </div>
+          <div className="p-4 bg-purple-50 text-purple-600 rounded-xl">
+            <TestTube className="w-6 h-6" />
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Dynamic Consultation Registry */}
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+      {/* Secondary Status Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+            Waiting
+          </p>
+          <p className="text-2xl font-black text-amber-600 mt-1">
+            {waitingPatients.length}
+          </p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+            In Treatment
+          </p>
+          <p className="text-2xl font-black text-blue-600 mt-1">
+            {treatmentPatients.length}
+          </p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+            Confined
+          </p>
+          <p className="text-2xl font-black text-orange-600 mt-1">
+            {confinedPatients.length}
+          </p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+            Discharged
+          </p>
+          <p className="text-2xl font-black text-emerald-600 mt-1">
+            {dischargedPatients.length}
+          </p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+            Draft SOAPs
+          </p>
+          <p className="text-2xl font-black text-slate-900 mt-1">
+            {draftConsultations.length}
+          </p>
+        </div>
+      </div>
+
+      {/* Main Dashboard Body */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Recent Patient Ledger Activity */}
+        <div className="xl:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
             <div>
-              <h3 className="text-lg font-bold text-slate-800">Dynamic Consultation Queue</h3>
-              <p className="text-xs text-slate-500 mt-1">Vets can toggle draft records to avoid locking clinical notes prematurely.</p>
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-teal-600" />
+                Recent Billing Activity
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Latest medicines, services, and grooming items added to patient ledgers.
+              </p>
             </div>
+
+            <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full">
+              {recentBillables.length} Recent
+            </span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 text-slate-500 text-xs font-semibold uppercase border-b border-slate-200">
-                  <th className="p-4">Record ID</th>
-                  <th className="p-4">Patient</th>
-                  <th className="p-4">Consultation Details</th>
-                  <th className="p-4">Authorization</th>
-                  <th className="p-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {consultations.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="p-4 text-sm font-bold text-slate-800">{item.id}</td>
-                    <td className="p-4 text-sm font-bold text-slate-800">
-                      <div>
-                        {item.patient}
-                        <span className="text-xs text-slate-500 block">Owner: {item.client}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 text-sm text-slate-600 max-w-xs truncate">{item.notes}</td>
-                    <td className="p-4 text-sm">
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-                        item.status === 'Draft' 
-                          ? 'bg-amber-100 text-amber-800' 
-                          : 'bg-teal-100 text-teal-800'
-                      }`}>
-                        {item.status === 'Draft' ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="p-4 text-right">
-                      <button 
-                        onClick={() => onToggleStatus(item.id)}
-                        className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-200 transition-all text-slate-900"
-                      >
-                        Change State
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+          <div className="divide-y divide-slate-100">
+            {recentBillables.length > 0 ? (
+              recentBillables.map(item => (
+                <div
+                  key={item.id}
+                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
+                >
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">
+                      {item.itemName}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {item.patientName} • {item.category} • Qty {item.quantity} • {item.date}
+                    </p>
+                  </div>
+
+                  <p className="text-sm font-black text-slate-900">
+                    {formatMoney(item.total)}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <div className="p-10 text-center text-slate-400">
+                <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                <p className="text-sm font-medium">
+                  No billing activity recorded yet.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right Panel for Live Warnings */}
+        {/* Inventory Snapshot */}
         <div className="space-y-6">
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden p-6">
+            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <Package className="w-5 h-5 text-amber-600" />
+              Inventory Snapshot
+            </h3>
+
+            <div className="space-y-3">
+              <div className="flex justify-between items-center bg-slate-50 border border-slate-100 rounded-xl p-3">
+                <span className="text-xs font-bold text-slate-500 uppercase">
+                  Medicines / Supplies
+                </span>
+                <span className="text-sm font-black text-slate-900">
+                  {medicineAndSupplies.length}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center bg-slate-50 border border-slate-100 rounded-xl p-3">
+                <span className="text-xs font-bold text-slate-500 uppercase">
+                  Services / Grooming
+                </span>
+                <span className="text-sm font-black text-slate-900">
+                  {serviceItems.length}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center bg-red-50 border border-red-100 rounded-xl p-3">
+                <span className="text-xs font-bold text-red-600 uppercase">
+                  Critical Stock
+                </span>
+                <span className="text-sm font-black text-red-600">
+                  {lowStockItems.length}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden p-6">
             <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <AlertCircle className="w-5 h-5 text-red-500" />
               Critical Stock Alerts
             </h3>
+
             <div className="space-y-3">
-              {inventory.filter(i => i.stock <= i.threshold).map((item, idx) => (
-                <div key={idx} className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">{item.itemName}</h4>
-                    <span className="text-xs text-red-600 block font-medium mt-1">Current Stock: {item.stock} unit/s (Threshold: {item.threshold})</span>
+              {lowStockItems.length > 0 ? (
+                lowStockItems.map(item => (
+                  <div
+                    key={item.itemCode}
+                    className="p-4 bg-red-50 border border-red-200 rounded-xl"
+                  >
+                    <h4 className="text-sm font-bold text-slate-900">
+                      {item.itemName}
+                    </h4>
+                    <p className="text-xs text-red-600 font-medium mt-1">
+                      Stock: {item.stock} / Threshold: {item.threshold}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">
+                      {item.category} • {item.itemCode}
+                    </p>
                   </div>
-                </div>
-              ))}
-              {inventory.filter(i => i.stock <= i.threshold).length === 0 && (
+                ))
+              ) : (
                 <div className="p-4 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-xl text-center text-sm font-medium">
-                  All active inventories are safely above reorder thresholds.
+                  Medicines and supplies are above reorder thresholds.
                 </div>
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Consultation Queue */}
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-slate-600" />
+              Consultation Queue
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Draft and completed consultation records currently stored in the clinic ledger.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <span className="text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 rounded-full">
+              {draftConsultations.length} Draft
+            </span>
+            <span className="text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200 px-3 py-1 rounded-full">
+              {completedConsultations.length} Completed
+            </span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 text-slate-500 text-xs font-semibold uppercase border-b border-slate-200">
+                <th className="p-4">Record ID</th>
+                <th className="p-4">Patient</th>
+                <th className="p-4">Consultation Notes</th>
+                <th className="p-4">Status</th>
+                <th className="p-4 text-right">Action</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-slate-100">
+              {consultations.length > 0 ? (
+                consultations.map(item => (
+                  <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4 text-sm font-bold text-slate-800">
+                      {item.id}
+                    </td>
+
+                    <td className="p-4 text-sm font-bold text-slate-800">
+                      <div>
+                        {item.patient}
+                        <span className="text-xs text-slate-500 block">
+                          Owner: {item.client}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className="p-4 text-sm text-slate-600 max-w-xs truncate">
+                      {item.notes}
+                    </td>
+
+                    <td className="p-4 text-sm">
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                        item.status === 'Draft'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-teal-100 text-teal-800'
+                      }`}>
+                        {item.status === 'Draft' ? (
+                          <Unlock className="w-3 h-3" />
+                        ) : (
+                          <Lock className="w-3 h-3" />
+                        )}
+                        {item.status}
+                      </span>
+                    </td>
+
+                    <td className="p-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => onToggleStatus(item.id)}
+                        className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-200 transition-all"
+                      >
+                        Change State
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} className="p-10 text-center text-slate-400">
+                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                    No consultation records found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -1186,6 +1701,7 @@ const PatientRecordsView = ({
   searchQuery,
   onCreatePatient,
   onUpdatePatient,
+  onUpdateInventoryItem,
   onDeletePatient,
   triggerToast
 }: { 
@@ -1195,6 +1711,7 @@ const PatientRecordsView = ({
   onCreatePatient: (name: string, species: string, breed: string, gender: any, owner: string, contact: string, weight: number, admissionTypes: string[], reason: string, pictures?: string[]) => void;
   onUpdatePatient: (record: PatientRecord) => void;
   searchQuery: string;
+  onUpdateInventoryItem: (item: InventoryItem) => Promise<void>;
   onDeletePatient: (id: string) => void;
   onToggleStatus: (id: string) => void;
   triggerToast: (msg: string) => void;
@@ -1226,12 +1743,12 @@ const PatientRecordsView = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<PatientRecord | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-
+  const [patientDirectoryFilter, setPatientDirectoryFilter] = useState<'Active' | 'Discharged'>('Active');
   // Billing Module Calculation States
-  const [clinicalProcedureFee, setClinicalProcedureFee] = useState<number>(500);
-  const [prescribedMed, setPrescribedMed] = useState<string>('');
-  const [prescribedQuantity, setPrescribedQuantity] = useState<number>(1);
-  const [sigInstructions, setSigInstructions] = useState<string>('');
+
+  // Payables / Dossier Billing State
+  const [billableSearchQuery, setBillableSearchQuery] = useState('');
+  const [selectedBillables, setSelectedBillables] = useState<Record<string, number>>({});
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1260,7 +1777,35 @@ const PatientRecordsView = ({
       reader.readAsDataURL(file);
     }
   };
+  const handleEditProfilePictureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (!file || !editForm) return;
 
+  const reader = new FileReader();
+
+  reader.onloadend = () => {
+    if (typeof reader.result === 'string') {
+      const imageUrl = reader.result;
+
+      setEditForm((prev) => {
+        if (!prev) return prev;
+
+        const existingPictures = prev.pictures || [];
+
+        return {
+          ...prev,
+          profilePicture: imageUrl,
+          pictures:
+            existingPictures.length > 0
+              ? [imageUrl, ...existingPictures.slice(1)]
+              : [imageUrl]
+        };
+      });
+    }
+  };
+
+  reader.readAsDataURL(file);
+};
   const handleQuickInsertPreset = (url: string) => {
     setFormPictures(prev => [...prev, url]);
     triggerToast("Quick diagnostic preview preset attached.");
@@ -1352,33 +1897,156 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
     }
   };
 
-  const calculatePrescriptionCost = () => {
-    const med = inventory.find(i => i.itemCode === prescribedMed);
-    return med ? med.sellingPrice * prescribedQuantity : 0;
+  const billableCatalog = inventory.filter(item =>
+    item.category === 'Medicine' ||
+    item.category === 'Service' ||
+    item.category === 'Grooming'
+  );
+
+  const filteredBillableCatalog = billableCatalog.filter(item => {
+    const q = billableSearchQuery.toLowerCase().trim();
+
+    if (!q) return true;
+
+    return (
+      item.itemName.toLowerCase().includes(q) ||
+      item.itemCode.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q)
+    );
+  });
+
+  const toggleBillableSelection = (item: InventoryItem) => {
+    setSelectedBillables(prev => {
+      const next = { ...prev };
+
+      if (next[item.itemCode]) {
+        delete next[item.itemCode];
+      } else {
+        next[item.itemCode] = 1;
+      }
+
+      return next;
+    });
   };
 
-  const calculateTotalInvoice = () => {
-    return clinicalProcedureFee + calculatePrescriptionCost();
+  const updateBillableQuantity = (itemCode: string, quantity: number) => {
+    setSelectedBillables(prev => ({
+      ...prev,
+      [itemCode]: Math.max(1, quantity || 1)
+    }));
   };
 
-  const applyInvoiceToBalance = () => {
-    if (!selectedPatient) return;
+  const selectedBillableDetails = Object.entries(selectedBillables)
+    .map(([itemCode, quantity]) => {
+      const item = inventory.find(inv => inv.itemCode === itemCode);
+      if (!item) return null;
 
-    const finalInvoiceCost = calculateTotalInvoice();
+      return {
+        item,
+        quantity,
+        unitPrice: item.sellingPrice,
+        total: item.sellingPrice * quantity
+      };
+    })
+    .filter(Boolean) as {
+      item: InventoryItem;
+      quantity: number;
+      unitPrice: number;
+      total: number;
+    }[];
 
+  const billableSubtotal = selectedBillableDetails.reduce(
+    (sum, entry) => sum + entry.total,
+    0
+  );
+
+  const applyBillablesToPatient = () => {
+    if (!selectedPatient || selectedBillableDetails.length === 0) return;
+
+    // ✅ STEP 1: Deduct inventory stock FIRST
+    selectedBillableDetails.forEach(entry => {
+      const item = entry.item;
+
+      if (item.category === 'Medicine' || item.category === 'Supplies') {
+        const updatedItem = {
+          ...item,
+          stock: Math.max(0, item.stock - entry.quantity)
+        };
+
+        onUpdateInventoryItem(updatedItem);
+      }
+    });
+
+    // ✅ STEP 2: Create billable records
+    const newBillableItems: PatientBillableItem[] = selectedBillableDetails.map(entry => ({
+      id: `BILL-${Date.now()}-${entry.item.itemCode}`,
+      itemCode: entry.item.itemCode,
+      itemName: entry.item.itemName,
+      category: entry.item.category,
+      quantity: entry.quantity,
+      unitPrice: entry.unitPrice,
+      total: entry.total,
+      date: new Date().toLocaleDateString()
+    }));
+
+    // ✅ STEP 3: Update patient balance
     const updatedRecord: PatientRecord = {
       ...selectedPatient,
-      balance: selectedPatient.balance + finalInvoiceCost
+      balance: selectedPatient.balance + billableSubtotal,
+      billableItems: [
+        ...(selectedPatient.billableItems || []),
+        ...newBillableItems
+      ]
     };
 
     onUpdatePatient(updatedRecord);
     setSelectedPatient(updatedRecord);
 
-    triggerToast(`Added PHP ${finalInvoiceCost.toFixed(2)} to client invoice ledger.`);
+    // ✅ STEP 4: Reset UI
+    setSelectedBillables({});
+    setBillableSearchQuery('');
 
-    setPrescribedMed('');
-    setPrescribedQuantity(1);
-    setSigInstructions('');
+    triggerToast(`Added PHP ${billableSubtotal.toFixed(2)} to patient payables.`);
+  };
+  const removeBillableFromPatient = async (billableItem: PatientBillableItem) => {
+    if (!selectedPatient) return;
+
+    const confirmed = window.confirm(
+      `Remove "${billableItem.itemName}" from this patient's billing history?`
+    );
+
+    if (!confirmed) return;
+
+    // Restore inventory stock if billable was medicine or supplies
+    if (billableItem.category === 'Medicine' || billableItem.category === 'Supplies') {
+      const inventoryItem = inventory.find(
+        item => item.itemCode === billableItem.itemCode
+      );
+
+      if (inventoryItem) {
+        const restoredItem: InventoryItem = {
+          ...inventoryItem,
+          stock: inventoryItem.stock + billableItem.quantity
+        };
+
+        await onUpdateInventoryItem(restoredItem);
+      }
+    }
+
+    const updatedBillableItems = (selectedPatient.billableItems || []).filter(
+      item => item.id !== billableItem.id
+    );
+
+    const updatedRecord: PatientRecord = {
+      ...selectedPatient,
+      balance: Math.max(0, selectedPatient.balance - billableItem.total),
+      billableItems: updatedBillableItems
+    };
+
+    await onUpdatePatient(updatedRecord);
+    setSelectedPatient(updatedRecord);
+
+    triggerToast(`Removed ${billableItem.itemName} from billing history.`);
   };
 
 
@@ -1402,6 +2070,11 @@ const dischargedPatients = searchedPatients.filter(
   (pat) => pat.status === 'Discharged'
 );
 
+const visiblePatients =
+  patientDirectoryFilter === 'Active'
+    ? activePatients
+    : dischargedPatients;
+
 
   return (
     <div className="space-y-6 relative">
@@ -1419,7 +2092,7 @@ const dischargedPatients = searchedPatients.filter(
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm h-fit">
           <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
             <Activity className="text-teal-600 w-5 h-5" />
-            Patient Queue Intake
+            Add Patient
           </h3>
 
           <form onSubmit={handleAdmitPatient} className="space-y-4">
@@ -1500,7 +2173,59 @@ const dischargedPatients = searchedPatients.filter(
                 </select>
               </div>
             </div>
+            <div className="border-t border-slate-100 pt-4 space-y-3">
+              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                Patient Profile Image
+              </h4>
 
+              <div className="flex items-center gap-4">
+                <div className="w-20 h-20 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">           
+                  {newPatientImage ? (
+                    <img
+                      src={newPatientImage}
+                      alt="Patient preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <PawPrint className="w-8 h-8 text-slate-300" />
+                  )}
+                </div>
+
+
+                <div className="flex-1 space-y-2">
+                  <input
+                    type="file"
+                    id="newPatientImageUpload"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleNewPatientImageUpload}
+                  />
+
+                  <label
+                    htmlFor="newPatientImageUpload"
+                    className="cursor-pointer inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    {newPatientImage ? 'Change Patient Photo' : 'Upload Patient Photo'}
+                  </label>
+
+                  {newPatientImage && (
+                    <button
+                      type="button"
+                      onClick={() => setNewPatientImage(null)}
+                      className="ml-2 inline-flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold px-4 py-2.5 rounded-xl transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Remove
+                    </button>
+                  )}
+
+                  <p className="text-[10px] text-slate-400 font-medium">
+                    Optional. This image will appear as the patient avatar in the directory and dossier.
+                  </p>
+                </div>
+              </div>
+            </div>
             <div className="border-t border-slate-100 pt-3 space-y-3">
               <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
                 Owner Contact Details
@@ -1570,7 +2295,42 @@ const dischargedPatients = searchedPatients.filter(
         </div>
 
         {/* --- RIGHT COLUMN: ACTIVE DIRECTORY TABLE --- */}
-        <div className="xl:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-fit">
+<div className="xl:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-fit">
+  <div className="p-6 border-b border-slate-200 bg-slate-50/50 space-y-4">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <h3 className="text-lg font-bold text-slate-800">
+          Patient Directory
+        </h3>
+        <p className="text-xs text-slate-500 mt-1">
+          Filter admissions between active patients and discharged records.
+        </p>
+      </div>
+
+      <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full w-fit">
+        {visiblePatients.length} Records
+      </span>
+    </div>
+
+    <div className="flex flex-wrap gap-2">
+      {(['Active', 'Discharged'] as const).map((filter) => (
+        <button
+          key={filter}
+          type="button"
+          onClick={() => setPatientDirectoryFilter(filter)}
+          className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${
+            patientDirectoryFilter === filter
+              ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+          }`}
+        >
+          {filter === 'Active'
+            ? `Active (${activePatients.length})`
+            : `Discharged (${dischargedPatients.length})`}
+        </button>
+      ))}
+    </div>
+  </div>
           <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <h3 className="text-lg font-bold text-slate-800">
               Active Patient Directory
@@ -1592,7 +2352,7 @@ const dischargedPatients = searchedPatients.filter(
               </thead>
 
               <tbody className="divide-y divide-slate-100 text-sm">
-                {activePatients.map((pat) => (
+                {visiblePatients.map((pat) => (
                   <tr
                     key={pat.id}
                     className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
@@ -1663,11 +2423,11 @@ const dischargedPatients = searchedPatients.filter(
                   </tr>
                 ))}
 
-                {activePatients.length === 0 && (
+                {visiblePatients.length === 0 && (
                   <tr>
                     <td colSpan={3} className="p-12 text-center text-slate-400">
                       <PawPrint className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                      No active patients found in the directory.
+                      No {patientDirectoryFilter.toLowerCase()} patients found in the directory.
                     </td>
                   </tr>
                 )}
@@ -1725,7 +2485,73 @@ const dischargedPatients = searchedPatients.filter(
                 // --- EDIT MODE VIEW ---
                 // ==========================================
                 <div className="space-y-6 animate-in fade-in duration-200">
-                  
+                  {/* Patient Profile Picture Editor */}
+                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <PawPrint className="w-4 h-4" />
+                    Patient Profile Picture
+                  </h3>
+
+                  <div className="flex items-center gap-4">
+                    <div className="w-24 h-24 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
+                      {editForm.profilePicture || editForm.pictures?.[0] ? (
+                        <img
+                          src={editForm.profilePicture || editForm.pictures?.[0]}
+                          alt={`${editForm.name} profile`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <PawPrint className="w-10 h-10 text-slate-300" />
+                      )}
+                    </div>
+
+                    <div className="flex-1 space-y-2">
+                      <input
+                        type="file"
+                        id="editPatientProfilePictureUpload"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleEditProfilePictureUpload}
+                      />
+
+                      <label
+                        htmlFor="editPatientProfilePictureUpload"
+                        className="cursor-pointer inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        {editForm.profilePicture || editForm.pictures?.[0]
+                          ? 'Change Profile Picture'
+                          : 'Upload Profile Picture'}
+                      </label>
+
+                      {(editForm.profilePicture || editForm.pictures?.[0]) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextPictures =
+                              editForm.pictures && editForm.pictures.length > 0
+                                ? editForm.pictures.slice(1)
+                                : [];
+
+                            setEditForm({
+                              ...editForm,
+                              profilePicture: '',
+                              pictures: []
+                            });
+                          }}
+                          className="ml-2 inline-flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold px-4 py-2.5 rounded-xl transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Remove
+                        </button>
+                      )}
+
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        This image appears in the patient directory and clinical dossier after saving.
+                      </p>
+                    </div>
+                  </div>
+                </div>
                   {/* TOP: Core Demographics & Owner Details */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-1 space-y-4">
@@ -1785,11 +2611,11 @@ const dischargedPatients = searchedPatients.filter(
                           <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerName} onChange={e => handleEditChange('ownerName', e.target.value)} />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Primary Phone</label>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Contact Number</label>
                           <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerContact} onChange={e => handleEditChange('ownerContact', e.target.value)} />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Email Coordinates</label>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Email Address</label>
                           <input type="email" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerEmail || ''} onChange={e => handleEditChange('ownerEmail', e.target.value)} />
                         </div>
                         <div>
@@ -2144,16 +2970,16 @@ const dischargedPatients = searchedPatients.filter(
                             <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerName}</p>
                           </div>
                           <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Primary Phone</span>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Contact Number</span>
                             <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerContact}</p>
                           </div>
                           <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Email Coordinates</span>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Email Address</span>
                             <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerEmail || "N/A"}</p>
                           </div>
                           <div>
                             <span className="text-[10px] text-slate-400 font-bold uppercase block">Residence Address</span>
-                            <p className="text-xs font-medium text-slate-700">{selectedPatient.ownerAddress || "Biñan Animal Center Local Jurisdiction"}</p>
+                            <p className="text-xs font-medium text-slate-700">{selectedPatient.ownerAddress || "No address on file"}</p>
                           </div>
                         </div>
                       </div>
@@ -2178,7 +3004,209 @@ const dischargedPatients = searchedPatients.filter(
                       </div>
                     </div>
                   </div>
+                  
+                {/* SECTION 0: Patient Payables / Billing */}
+                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                        <CreditCard className="w-5 h-5 text-teal-600" />
+                        Patient Payables
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Search medicines and services, check needed items, set quantity, then add them to the patient ledger.
+                      </p>
+                    </div>
 
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">
+                        Current Balance
+                      </p>
+                      <p className="text-lg font-black text-slate-900">
+                        PHP {selectedPatient.balance.toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold text-slate-700 block">
+                        Search Medicine / Service
+                      </label>
+
+                      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-teal-500">
+                        <Search className="w-4 h-4 text-slate-400" />
+                        <input
+                          type="text"
+                          value={billableSearchQuery}
+                          onChange={e => setBillableSearchQuery(e.target.value)}
+                          placeholder="Search medicine, medical service, grooming..."
+                          className="bg-transparent outline-none border-none text-sm text-slate-800 w-full"
+                        />
+                      </div>
+
+                      <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50/60">
+                        {filteredBillableCatalog.map(item => {
+                          const isSelected = selectedBillables[item.itemCode] !== undefined;
+
+                          return (
+                            <div
+                              key={item.itemCode}
+                              className="p-3 bg-white flex items-center justify-between gap-3"
+                            >
+                              <label className="flex items-start gap-3 cursor-pointer flex-1">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleBillableSelection(item)}
+                                  className="mt-1"
+                                />
+
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900">
+                                    {item.itemName}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 uppercase font-bold">
+                                    {item.category} • {item.itemCode}
+                                  </p>
+                                  <p className="text-xs text-teal-700 font-black mt-1">
+                                    PHP {item.sellingPrice.toFixed(2)}
+                                  </p>
+                                </div>
+                              </label>
+
+                              {isSelected && (
+                                <div className="w-20">
+                                  <label className="text-[10px] text-slate-400 font-bold block mb-1">
+                                    Qty
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={selectedBillables[item.itemCode]}
+                                    onChange={e =>
+                                      updateBillableQuantity(
+                                        item.itemCode,
+                                        Number(e.target.value)
+                                      )
+                                    }
+                                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                        {filteredBillableCatalog.length === 0 && (
+                          <div className="p-6 text-center text-sm text-slate-400">
+                            No matching medicine or service found.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h5 className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                        Selected Payables
+                      </h5>
+
+                      <div className="border border-slate-200 rounded-xl bg-slate-50/60 divide-y divide-slate-100 min-h-[120px]">
+                        {selectedBillableDetails.length > 0 ? (
+                          selectedBillableDetails.map(entry => (
+                            <div
+                              key={entry.item.itemCode}
+                              className="p-3 bg-white flex items-center justify-between gap-3"
+                            >
+                              <div>
+                                <p className="text-sm font-bold text-slate-900">
+                                  {entry.item.itemName}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  PHP {entry.unitPrice.toFixed(2)} × {entry.quantity}
+                                </p>
+                              </div>
+
+                              <p className="text-sm font-black text-slate-900">
+                                PHP {entry.total.toFixed(2)}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-6 text-center text-sm text-slate-400">
+                            No payables selected yet.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="bg-teal-50 border border-teal-100 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                          <p className="text-[10px] text-teal-700 font-black uppercase">
+                            Payables Subtotal
+                          </p>
+                          <p className="text-xl font-black text-teal-800">
+                            PHP {billableSubtotal.toFixed(2)}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={selectedBillableDetails.length === 0}
+                          onClick={applyBillablesToPatient}
+                          className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all disabled:opacity-50"
+                        >
+                          Add to Ledger
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-100 pt-4">
+                    <h5 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-3">
+                      Dossier Billing History
+                    </h5>
+
+                    {selectedPatient.billableItems && selectedPatient.billableItems.length > 0 ? (
+                      <div className="space-y-2">
+                        {selectedPatient.billableItems.map(item => (
+                          <div
+                            key={item.id}
+                            className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex justify-between items-center text-xs gap-3"
+                          >
+                            <div>
+                              <p className="font-bold text-slate-900">
+                                {item.itemName}
+                              </p>
+                              <p className="text-slate-500">
+                                {item.date} • {item.category} • Qty {item.quantity}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <p className="font-black text-slate-900 whitespace-nowrap">
+                                PHP {item.total.toFixed(2)}
+                              </p>
+
+                              <button
+                                type="button"
+                                onClick={() => removeBillableFromPatient(item)}
+                                className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-400 italic">
+                        No medicine or service charges added yet.
+                      </p>
+                    )}
+                  </div>
+                </div>             
+                            
                   {/* SECTION 1: LAB RESULTS (Read View w/ Images) */}
                   <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
                     <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
@@ -2277,33 +3305,85 @@ const dischargedPatients = searchedPatients.filter(
             {/* Modal Footer */}
             <div className="p-6 bg-white border-t border-slate-200 flex justify-between items-center">
               {isEditing ? (
-                 <div className="flex w-full gap-4">
-                  <button 
-                    type="button"
-                    onClick={() => setIsEditing(false)}
-                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm"
-                  >
-                    Cancel Editing
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      if (!editForm) return;
+  <div className="flex w-full gap-4 items-stretch">
+    {showDeleteConfirm ? (
+      <div className="flex flex-1 gap-3 bg-red-50 border border-red-200 p-2 rounded-xl animate-in fade-in zoom-in-95 duration-200">
+        <button
+          type="button"
+          onClick={() => {
+            if (!selectedPatient) return;
 
-                      onUpdatePatient(editForm);
-                      setSelectedPatient(editForm);
-                      setIsEditing(false);
+            onDeletePatient(selectedPatient.id);
+            setShowFullReport(false);
+            setSelectedPatient(null);
+            setEditForm(null);
+            setIsEditing(false);
+            setShowDeleteConfirm(false);
 
-                      if (typeof triggerToast === 'function') {
-                        triggerToast("Dossier updated successfully.");
-                      }
-                    }}
-                    className="flex-1 bg-teal-600 hover:bg-teal-700 text-white font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-md shadow-teal-600/20"
-                  >
-                    Save Changes to Dossier
-                  </button>
-                 </div>
-              ) : (
+            if (typeof triggerToast === 'function') {
+              triggerToast("Patient record permanently deleted.");
+            }
+          }}
+          className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-3 rounded-xl text-xs transition-all shadow-md flex items-center justify-center gap-2"
+        >
+          <Trash2 className="w-4 h-4" />
+          Confirm Delete
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowDeleteConfirm(false)}
+          className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold px-4 py-3 rounded-xl text-xs transition-all"
+        >
+          Cancel
+        </button>
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setShowDeleteConfirm(true)}
+        className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-3 rounded-xl text-sm transition-all shadow-sm flex items-center justify-center gap-2"
+        title="Permanently delete this patient record"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    )}
+
+    <button
+      type="button"
+      onClick={() => {
+        setIsEditing(false);
+        setShowDeleteConfirm(false);
+      }}
+      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm"
+    >
+      Cancel Editing
+    </button>
+
+    <button
+      type="button"
+      onClick={() => {
+        if (!editForm) return;
+
+        onUpdatePatient(editForm);
+        setSelectedPatient(editForm);
+        setIsEditing(false);
+        setShowDeleteConfirm(false);
+
+        if (typeof triggerToast === 'function') {
+          if (editForm.status === 'Discharged') {
+            triggerToast("Patient marked as discharged and moved to the discharged tab.");
+          } else {
+            triggerToast("Dossier updated successfully.");
+          }
+        }
+      }}
+      className="flex-1 bg-teal-600 hover:bg-teal-700 text-white font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-md shadow-teal-600/20"
+    >
+      Save Changes to Dossier
+    </button>
+  </div>
+) : (
                 <>
                   <button 
                     type="button"
@@ -2368,6 +3448,7 @@ const InventoryControlView = ({
   const [editForm, setEditForm] = useState<InventoryItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  
 const filteredInventory = inventory.filter(item => {
     const matchesCategory = selectedCategory === 'All' ? true : item.category === selectedCategory;
     const matchesSearch = searchQuery.trim().length === 0 ? true : item.itemName.toLowerCase().includes(searchQuery.toLowerCase()) || item.itemCode.toLowerCase().includes(searchQuery.toLowerCase());
@@ -2376,9 +3457,13 @@ const filteredInventory = inventory.filter(item => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!itemName || !buyingPrice || !sellingPrice) return;
 
     const isService = category === 'Service' || category === 'Grooming';
+
+    if (!itemName.trim() || sellingPrice === '') return;
+
+    if (!isService && buyingPrice === '') return;
+
     const finalStock = isService ? 999 : Number(stock) || 0;
     const finalThreshold = isService ? 0 : Number(threshold) || 0;
     const prefix = isService ? 'SRV' : 'ITM';
@@ -2389,7 +3474,7 @@ const filteredInventory = inventory.filter(item => {
       itemName,
       category,
       stock: finalStock,
-      buyingPrice: Number(buyingPrice),
+      buyingPrice: isService ? 0 : Number(buyingPrice),
       sellingPrice: Number(sellingPrice),
       threshold: finalThreshold
     };
@@ -2422,11 +3507,13 @@ const filteredInventory = inventory.filter(item => {
     setShowDeleteConfirm(false);
   };
 
+
+
   return (
     <div className="space-y-6 relative">
-      
+        
       {/* --- SLIDE-OUT INVENTORY DETAILS & EDIT DRAWER --- */}
-      {selectedItem && (
+      {selectedItem && 
         <div className="fixed inset-0 z-50 flex justify-end">
           {/* Backdrop click dismisser */}
           <div 
@@ -2655,7 +3742,7 @@ const filteredInventory = inventory.filter(item => {
             </div>
           </div>
         </div>
-      )}
+                }
 
       <div>
         <h2 className="text-2xl font-bold text-slate-800">Inventory & Service Control</h2>
@@ -2674,7 +3761,7 @@ const filteredInventory = inventory.filter(item => {
                 : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
             }`}
           >
-            {cat}s
+            {cat}
           </button>
         ))}
       </div>
@@ -2739,32 +3826,54 @@ const filteredInventory = inventory.filter(item => {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4 pt-2">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Buying Price (PHP) *</label>
-                <input 
-                  type="number" 
-                  step="0.01" 
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 font-bold focus:ring-2 focus:ring-teal-500 outline-none" 
-                  placeholder="0.00" 
-                  value={buyingPrice} 
-                  onChange={e => setBuyingPrice(e.target.value ? Number(e.target.value) : '')} 
-                  required 
+            {category === 'Service' || category === 'Grooming' ? (
+              <div className="pt-2">
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Service Fee (PHP) *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 font-bold focus:ring-2 focus:ring-teal-500 outline-none"
+                  placeholder="0.00"
+                  value={sellingPrice}
+                  onChange={e => setSellingPrice(e.target.value ? Number(e.target.value) : '')}
+                  required
                 />
               </div>
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Selling Price (PHP) *</label>
-                <input 
-                  type="number" 
-                  step="0.01" 
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 font-bold focus:ring-2 focus:ring-teal-500 outline-none" 
-                  placeholder="0.00" 
-                  value={sellingPrice} 
-                  onChange={e => setSellingPrice(e.target.value ? Number(e.target.value) : '')} 
-                  required 
-                />
+            ) : (
+              <div className="grid grid-cols-2 gap-4 pt-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    Buying Price (PHP) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 font-bold focus:ring-2 focus:ring-teal-500 outline-none"
+                    placeholder="0.00"
+                    value={buyingPrice}
+                    onChange={e => setBuyingPrice(e.target.value ? Number(e.target.value) : '')}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    Selling Price (PHP) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 font-bold focus:ring-2 focus:ring-teal-500 outline-none"
+                    placeholder="0.00"
+                    value={sellingPrice}
+                    onChange={e => setSellingPrice(e.target.value ? Number(e.target.value) : '')}
+                    required
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
             <button 
               type="submit" 
@@ -3008,13 +4117,15 @@ const handleAnalyze = () => {
   );
 };
 
-const SystemSettingsView = ({ 
+const SystemSettingsView = ({
   inventory, 
-  setInventory, 
+  setInventory,
+  onAddInventoryItem,
   triggerToast 
 }: { 
   inventory: InventoryItem[]; 
-  setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>; 
+  setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
+  onAddInventoryItem: (item: InventoryItem) => Promise<void>;
   triggerToast: (msg: string) => void; 
 }) => {
   const [apiStatus, setApiStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -3036,13 +4147,142 @@ const SystemSettingsView = ({
     }
   };
 
-  const handleCSVImport = () => {
-    const newItems: InventoryItem[] = [
-      { itemCode: 'ITM-00201', itemName: 'Nexgard Chewables Medium', category: 'Medicine', stock: 15, buyingPrice: 0, sellingPrice: 650.00, threshold: 4 },
-      { itemCode: 'ITM-00202', itemName: 'Baytril Otic drops 15ml', category: 'Medicine', stock: 8, buyingPrice: 0, sellingPrice: 920.00, threshold: 2 },
-    ];
-    setInventory([...inventory, ...newItems]);
-    triggerToast("Batch imported Nexgard and Baytril from legacy Excel catalog.");
+  const parseCSVLine = (line: string) => {
+    const result: string[] = [];
+    let current = '';
+    let insideQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const nextChar = line[i + 1];
+
+      if (char === '"' && insideQuotes && nextChar === '"') {
+        current += '"';
+        i++;
+      } else if (char === '"') {
+        insideQuotes = !insideQuotes;
+      } else if (char === ',' && !insideQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+
+    result.push(current.trim());
+    return result;
+  };
+
+  const normalizeCategory = (value: string): InventoryItem['category'] => {
+    const cleaned = value.toLowerCase().trim();
+
+    if (cleaned.includes('supply')) return 'Supplies';
+    if (cleaned.includes('service') || cleaned.includes('procedure')) return 'Service';
+    if (cleaned.includes('groom')) return 'Grooming';
+
+    return 'Medicine';
+  };
+
+  const handleCSVFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = async () => {
+      try {
+        const text = String(reader.result || '');
+        const rows = text
+          .split(/\r?\n/)
+          .map(row => row.trim())
+          .filter(Boolean);
+
+        if (rows.length < 2) {
+          triggerToast("CSV import failed. File has no data rows.");
+          return;
+        }
+
+        const headers = parseCSVLine(rows[0]).map(header =>
+          header.toLowerCase().replace(/\s+/g, '').trim()
+        );
+
+        const getValue = (values: string[], possibleHeaders: string[]) => {
+          for (const header of possibleHeaders) {
+            const index = headers.indexOf(header);
+            if (index !== -1) return values[index] || '';
+          }
+          return '';
+        };
+
+        const existingCodes = new Set(inventory.map(item => item.itemCode));
+        const importedItems: InventoryItem[] = [];
+
+        rows.slice(1).forEach((row, index) => {
+          const values = parseCSVLine(row);
+
+          const itemName = getValue(values, ['itemname', 'name', 'description']);
+          if (!itemName) return;
+
+          const category = normalizeCategory(
+            getValue(values, ['category', 'type', 'classification'])
+          );
+
+          const isService = category === 'Service' || category === 'Grooming';
+
+          const rawCode = getValue(values, ['itemcode', 'code', 'sku']);
+          const prefix = isService ? 'SRV' : 'ITM';
+          const generatedCode = `${prefix}-CSV-${String(index + 1).padStart(4, '0')}`;
+          const itemCode = rawCode || generatedCode;
+
+          if (existingCodes.has(itemCode)) return;
+
+          existingCodes.add(itemCode);
+
+          const stock = isService
+            ? 999
+            : Number(getValue(values, ['stock', 'quantity', 'qty'])) || 0;
+
+          const buyingPrice = isService
+            ? 0
+            : Number(getValue(values, ['buyingprice', 'buying', 'cost'])) || 0;
+
+          const sellingPrice =
+            Number(getValue(values, ['sellingprice', 'selling', 'price', 'servicefee', 'fee'])) || 0;
+
+          const threshold = isService
+            ? 0
+            : Number(getValue(values, ['threshold', 'alertthreshold', 'lowstockalert'])) || 0;
+
+          importedItems.push({
+            itemCode,
+            itemName,
+            category,
+            stock,
+            buyingPrice,
+            sellingPrice,
+            threshold
+          });
+        });
+
+        if (importedItems.length === 0) {
+          triggerToast("No new valid inventory items found in CSV.");
+          return;
+        }
+
+        for (const item of importedItems) {
+          await onAddInventoryItem(item);
+        }
+
+        triggerToast(`Imported ${importedItems.length} inventory item/s from CSV.`);
+      } catch (error) {
+        console.error("CSV import failed:", error);
+        triggerToast("CSV import failed. Please check the file format.");
+      } finally {
+        e.target.value = '';
+      }
+    };
+
+    reader.readAsText(file);
   };
 
   return (
@@ -3111,16 +4351,24 @@ const SystemSettingsView = ({
               <h3 className="text-lg font-bold text-slate-800">Legacy Data Migration</h3>
             </div>
             <p className="text-sm text-slate-600 leading-relaxed">
-              Quickly load existing product records. This simulates the legacy Excel parser present in your father's old application, mapping legacy CSV databases to clean state structures instantly.
+              Import existing inventory records from a CSV file. Use this to bulk-load medicines, supplies, services, and grooming items for testing or migration.
             </p>
           </div>
-          <button 
-            onClick={handleCSVImport}
-            className="w-full bg-slate-950 text-white font-bold py-3 rounded-xl hover:bg-slate-800 text-sm transition-all flex items-center justify-center gap-2 shadow-sm mt-4"
+          <input
+            type="file"
+            id="inventoryCsvUpload"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={handleCSVFileImport}
+          />
+
+          <label
+            htmlFor="inventoryCsvUpload"
+            className="w-full bg-slate-950 text-white font-bold py-3 rounded-xl hover:bg-slate-800 text-sm transition-all flex items-center justify-center gap-2 shadow-sm mt-4 cursor-pointer"
           >
             <Database className="w-4 h-4 text-teal-400" />
-            Simulate Excel Database Migration
-          </button>
+            Import Inventory CSV
+          </label>
         </div>
 
       </div>
