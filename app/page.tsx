@@ -245,7 +245,11 @@ const generateGeminiJSON = async (prompt: string, imageData?: { mimeType: string
   return text ? JSON.parse(text) : { items: [] };
 };
 
-const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => void }) => {
+const LoginScreen = ({
+  onLoginSuccess
+}: {
+  onLoginSuccess: (displayUser: string, clinicId: string) => void;
+}) => {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [clinicName, setClinicName] = useState('');
   const [email, setEmail] = useState('admin@binanvet.com');
@@ -280,7 +284,7 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
 
         // Academic demo bypass for live defense / offline presentation safety
         if (authMode === 'login' && email === 'admin@binanvet.com' && password === 'admin123') {
-          onLoginSuccess(`Demo Clinic (${email})`);
+          onLoginSuccess(`Demo Clinic (${email})`, 'demo-clinic');
           setIsLoading(false);
           return;
         }
@@ -290,11 +294,11 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
           const auth = getAuth();
 
           if (authMode === 'login') {
-            await signInWithEmailAndPassword(auth, email, password);
-            onLoginSuccess(`${clinicName || 'Clinic'} (${email})`);
+            const userCredential = await signInWithEmailAndPassword(auth, email, password);
+            onLoginSuccess(`${clinicName || 'Clinic'} (${email})`, userCredential.user.uid);
           } else {
-            await createUserWithEmailAndPassword(auth, email, password);
-            onLoginSuccess(`${clinicName || 'Clinic'} (${email})`);
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            onLoginSuccess(`${clinicName || 'Clinic'} (${email})`, userCredential.user.uid);
           }
         } catch (fbErr: any) {
           if (authMode === 'login') {
@@ -407,7 +411,7 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
               </div>
 
               <h2 className="text-3xl font-black text-slate-900 tracking-tight">
-                {authMode === 'login' ? 'Secure Staff Login' : 'Create Staff Account'}
+                {authMode === 'login' ? 'Secure Staff Login' : 'Create New Account'}
               </h2>
               <p className="text-sm text-slate-500 mt-2 font-medium">
                 {authMode === 'login'
@@ -510,7 +514,7 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
                   </>
                 ) : (
                   <>
-                    {authMode === 'login' ? 'Access Clinical Dashboard' : 'Create Staff Account'}
+                    {authMode === 'login' ? 'Access Clinical Dashboard' : 'Create New Account'}
                     <ChevronRight className="w-5 h-5 text-teal-300" />
                   </>
                 )}
@@ -524,7 +528,7 @@ const LoginScreen = ({ onLoginSuccess }: { onLoginSuccess: (email: string) => vo
                 className="text-sm font-bold text-teal-700 hover:text-teal-800 transition-colors"
               >
                 {authMode === 'login'
-                  ? "Need an account? Create staff account"
+                  ? "Need an account? Create New account"
                   : "Already have an account? Return to login"}
               </button>
             </div>
@@ -568,46 +572,63 @@ export default function App() {
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentClinicId, setCurrentClinicId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<string | null>(null);  
   useEffect(() => {
-    const syncCloudData = async () => {
-      try {
-        console.log('[Firebase] Initiating automatic handshake sequence...');
-        const { db, firestore: fs } = await initializeFirebase();
+  const syncCloudData = async () => {
+    if (!isAuthenticated || !currentClinicId) return;
 
-        if (!db || !fs) {
-          console.error('[Firebase] Handshake failed: Database reference or Firestore module is undefined.');
-          triggerToast('Cloud connection failed. Check console.');
-          return;
-        }
+    try {
+      console.log('[Firebase] Initiating clinic-scoped sync...');
+      const { db, firestore: fs } = await initializeFirebase();
 
-        console.log('[Firebase] Handshake successful! Syncing datasets...');
-
-        console.log('[Firebase] Reading patient list from cloud...');
-        const patientSnapshot = await fs.getDocs(fs.collection(db, 'patients'));
-        const loadedPatients = patientSnapshot.docs.map((docItem: any) => docItem.data() as PatientRecord);
-        console.log(`[Firebase] Successfully loaded ${loadedPatients.length} patient records.`);
-        setPatients(loadedPatients);
-
-        console.log('[Firebase] Reading inventory database from cloud...');
-        const inventorySnapshot = await fs.getDocs(fs.collection(db, 'inventory'));
-        const loadedInventory = inventorySnapshot.docs.map((docItem: any) => docItem.data() as InventoryItem);
-        console.log(`[Firebase] Successfully loaded ${loadedInventory.length} inventory items.`);
-        setInventory(loadedInventory);
-
-        console.log('[Firebase] Reading consultation ledger from cloud...');
-        const consultationsSnapshot = await fs.getDocs(fs.collection(db, 'consultations'));
-        const loadedConsultations = consultationsSnapshot.docs.map((docItem: any) => docItem.data() as Consultation);
-        console.log(`[Firebase] Successfully loaded ${loadedConsultations.length} consultation entries.`);
-        setConsultations(loadedConsultations);
-      } catch (err) {
-        console.error('[Firebase Error] Failed to synchronize datasets on load:', err);
-        triggerToast('Failed to load clinic records from the cloud database.');
+      if (!db || !fs) {
+        console.error('[Firebase] Handshake failed: Database reference or Firestore module is undefined.');
+        triggerToast('Cloud connection failed. Check console.');
+        return;
       }
-    };
 
-    syncCloudData();
-  }, []);
+      console.log(`[Firebase] Syncing clinic workspace: ${currentClinicId}`);
+
+      const patientSnapshot = await fs.getDocs(
+        fs.collection(db, 'clinics', currentClinicId, 'patients')
+      );
+
+      const loadedPatients = patientSnapshot.docs.map(
+        (docItem: any) => docItem.data() as PatientRecord
+      );
+
+      setPatients(loadedPatients);
+
+      const inventorySnapshot = await fs.getDocs(
+        fs.collection(db, 'clinics', currentClinicId, 'inventory')
+      );
+
+      const loadedInventory = inventorySnapshot.docs.map(
+        (docItem: any) => docItem.data() as InventoryItem
+      );
+
+      setInventory(loadedInventory);
+
+      const consultationsSnapshot = await fs.getDocs(
+        fs.collection(db, 'clinics', currentClinicId, 'consultations')
+      );
+
+      const loadedConsultations = consultationsSnapshot.docs.map(
+        (docItem: any) => docItem.data() as Consultation
+      );
+
+      setConsultations(loadedConsultations);
+
+      console.log('[Firebase] Clinic-scoped sync complete.');
+    } catch (err) {
+      console.error('[Firebase Error] Failed to synchronize clinic datasets:', err);
+      triggerToast('Failed to load clinic records from the cloud database.');
+    }
+  };
+
+  syncCloudData();
+}, [isAuthenticated, currentClinicId]);
 
   // --- RECONCILED IN-MEMORY STATE FOR TEAM PRESENTATION ---
   const [patients, setPatients] = useState<PatientRecord[]>([
@@ -734,7 +755,15 @@ export default function App() {
 
     try {
       console.log(`[Firebase] Pushing new patient document ${newPat.id} to cloud...`);
-      await firestore.setDoc(firestore.doc(dbRef, 'patients', newPat.id), newPat);
+      if (!currentClinicId) {
+        triggerToast('No clinic workspace detected. Please login again.');
+        return;
+      }
+
+      await firestore.setDoc(
+        firestore.doc(dbRef, 'clinics', currentClinicId, 'patients', newPat.id),
+        newPat
+      );
       console.log(`[Firebase] Successfully committed patient record ${newPat.id} to cloud!`);
       setPatients(prev => [newPat, ...prev]);
       triggerToast(`Successfully admitted ${newPat.name} to the clinic queue.`);
@@ -757,7 +786,18 @@ export default function App() {
     if (!dbRef || !firestore) return triggerToast("Database not connected yet.");
     try {
       console.log('[Inventory] creating item', newItem.itemCode, newItem.itemName);
-      const docRef = firestore.doc(dbRef, 'inventory', newItem.itemCode);
+      if (!currentClinicId) {
+        triggerToast('No clinic workspace detected. Please login again.');
+        return;
+      }
+
+      const docRef = firestore.doc(
+        dbRef,
+        'clinics',
+        currentClinicId,
+        'inventory',
+        newItem.itemCode
+      );
       await firestore.setDoc(docRef, newItem);
       console.log('[Inventory] create success', newItem.itemCode);
       setInventory(prev => [
@@ -782,7 +822,18 @@ export default function App() {
     if (!dbRef || !firestore) return triggerToast('Database not connected yet');
     try {
       console.log('[Inventory] updating item', updatedItem.itemCode);
-      const docRef = firestore.doc(dbRef, 'inventory', updatedItem.itemCode);
+      if (!currentClinicId) {
+        triggerToast('No clinic workspace detected. Please login again.');
+        return;
+      }
+
+      const docRef = firestore.doc(
+        dbRef,
+        'clinics',
+        currentClinicId,
+        'inventory',
+        updatedItem.itemCode
+      );
       await firestore.updateDoc(docRef, { ...updatedItem });
       setInventory(inventory.map(item => item.itemCode === updatedItem.itemCode ? updatedItem : item));
       console.log('[Inventory] update success', updatedItem.itemCode);
@@ -803,7 +854,18 @@ export default function App() {
     if (!dbRef || !firestore) return triggerToast('Database not connected yet');
     try {
       console.log('[Inventory] deleting item', itemCode);
-      const docRef = firestore.doc(dbRef, 'inventory', itemCode);
+      if (!currentClinicId) {
+        triggerToast('No clinic workspace detected. Please login again.');
+        return;
+      }
+
+      const docRef = firestore.doc(
+        dbRef,
+        'clinics',
+        currentClinicId,
+        'inventory',
+        itemCode
+      );
       await firestore.deleteDoc(docRef);
       setInventory(inventory.filter(item => item.itemCode !== itemCode));
       console.log('[Inventory] delete success', itemCode);
@@ -822,7 +884,15 @@ export default function App() {
 
     try {
       console.log(`[Firebase] Overwriting patient document ${updatedRecord.id} in cloud...`);
-      await firestore.setDoc(firestore.doc(dbRef, 'patients', updatedRecord.id), updatedRecord);
+      if (!currentClinicId) {
+        triggerToast('No clinic workspace detected. Please login again.');
+        return;
+      }
+
+      await firestore.setDoc(
+        firestore.doc(dbRef, 'clinics', currentClinicId, 'patients', updatedRecord.id),
+        updatedRecord
+      );
       console.log(`[Firebase] Successfully updated patient record ${updatedRecord.id} in cloud.`);
       setPatients(prev => prev.map(p => p.id === updatedRecord.id ? updatedRecord : p));
       triggerToast(`Clinical record updated successfully.`);
@@ -840,7 +910,14 @@ export default function App() {
 
     try {
       console.log(`[Firebase] Deleting patient document ${id} from cloud...`);
-      await firestore.deleteDoc(firestore.doc(dbRef, 'patients', id));
+      if (!currentClinicId) {
+        triggerToast('No clinic workspace detected. Please login again.');
+        return;
+      }
+
+      await firestore.deleteDoc(
+        firestore.doc(dbRef, 'clinics', currentClinicId, 'patients', id)
+      );
       console.log(`[Firebase] Successfully deleted patient record ${id} from cloud.`);
       setPatients(prev => prev.filter(p => p.id !== id));
       triggerToast('Clinical record purged from system ledger.');
@@ -922,6 +999,12 @@ export default function App() {
     const handleLogout = () => {
       setIsAuthenticated(false);
       setCurrentUser(null);
+      setCurrentClinicId(null);
+
+      setPatients([]);
+      setInventory([]);
+      setConsultations([]);
+
       triggerToast("Securely logged out of the system.");
     };
     const handleUpdateCurrentUser = (updatedUser: string) => {
@@ -931,8 +1014,15 @@ export default function App() {
     if (!isAuthenticated) {
     return (
       <LoginScreen
-        onLoginSuccess={(email) => {
-          setCurrentUser(email);
+        onLoginSuccess={(displayUser, clinicId) => {
+          setCurrentUser(displayUser);
+          setCurrentClinicId(clinicId);
+
+          // Clear previous visible data immediately before clinic-scoped sync loads.
+          setPatients([]);
+          setInventory([]);
+          setConsultations([]);
+
           setIsAuthenticated(true);
           triggerToast("Authentication verified. Welcome back.");
         }}
@@ -1041,11 +1131,8 @@ const Sidebar = ({
                   onClick={() => { setActiveTab(item.id); setIsOpen(false); }}
                   className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all ${isActive ? 'bg-teal-500/10 text-teal-400 font-medium' : 'hover:bg-slate-800 hover:text-white'}`}
                 >
-                  <Icon className={`w-5 h-5 ${isActive ? 'text-teal-400' : 'text-slate-400'}`} />
-                  {item.label}
-                  {(item.id === 'laboratory' || item.id === 'inventory') && (
-                    <Sparkles className="w-3 h-3 text-yellow-400 ml-auto" />
-                  )}
+                <Icon className={`w-5 h-5 ${isActive ? 'text-teal-400' : 'text-slate-400'}`} />
+                {item.label}
                 </button>
               </li>
             );
@@ -1252,12 +1339,6 @@ const Sidebar = ({
       </h1>
         <p className="text-sm text-slate-500 hidden sm:block">Unified Practice Management Platform</p>
       </div>
-    </div>
-
-    <div className="flex items-center gap-3">
-      <span className="text-xs font-semibold px-3 py-1.5 bg-teal-50 text-teal-700 rounded-full border border-teal-200 uppercase tracking-wider">
-        Local Dev Server
-      </span>
     </div>
   </header>
 
@@ -1749,7 +1830,17 @@ const PatientRecordsView = ({
   // Payables / Dossier Billing State
   const [billableSearchQuery, setBillableSearchQuery] = useState('');
   const [selectedBillables, setSelectedBillables] = useState<Record<string, number>>({});
+  const sanitizePhoneNumber = (value: string) => {
+    return value.replace(/\D/g, '').slice(0, 15);
+  };
 
+  const isValidName = (value: string) => {
+    return /^[A-Za-zÀ-ÿ .'-]{2,}$/.test(value.trim());
+  };
+
+  const isValidPhoneNumber = (value: string) => {
+    return /^\d{10,15}$/.test(value);
+  };
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
@@ -1820,37 +1911,67 @@ const PatientRecordsView = ({
   };
 
 const handleAdmitPatient = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !breed || !ownerName || !ownerContact || !weight || selectedAdmissions.length === 0) return;
-    
-    const pictures = newPatientImage ? [newPatientImage, ...formPictures] : formPictures;
-    
-    await onCreatePatient(
-      name, 
-      species, 
-      breed, 
-      gender, 
-      ownerName, 
-      ownerContact, 
-      Number(weight) || 0, 
-      selectedAdmissions, 
-      reason, 
-      pictures
-    );
-    
-    // Reset form states completely
-    setName(''); 
-    setBreed(''); 
-    setOwnerName(''); 
-    setOwnerContact(''); 
-    setWeight(''); 
-    setReason(''); 
-    setSelectedAdmissions(['Medical Checkup']);
-    setFormPictures([]);
-    setNewPatientImage(null);
+  e.preventDefault();
 
-    if (triggerToast) triggerToast("Patient successfully admitted to the directory queue.");
-  };
+  const trimmedName = name.trim();
+  const trimmedBreed = breed.trim();
+  const trimmedOwnerName = ownerName.trim();
+  const cleanedContact = sanitizePhoneNumber(ownerContact);
+  const weightNumber = Number(weight);
+
+  if (!trimmedName || !trimmedBreed || !trimmedOwnerName || !cleanedContact || !weight || selectedAdmissions.length === 0) {
+    triggerToast("Please complete all required patient admission fields.");
+    return;
+  }
+
+  if (!isValidName(trimmedName)) {
+    triggerToast("Patient name should contain letters only and be at least 2 characters.");
+    return;
+  }
+
+  if (!isValidName(trimmedOwnerName)) {
+    triggerToast("Owner name should contain letters only and be at least 2 characters.");
+    return;
+  }
+
+  if (!isValidPhoneNumber(cleanedContact)) {
+    triggerToast("Owner contact number must contain 10 to 15 digits only.");
+    return;
+  }
+
+  if (!weightNumber || weightNumber <= 0 || weightNumber > 200) {
+    triggerToast("Weight must be a valid number between 0.1 and 200 kg.");
+    return;
+  }
+
+  const pictures = newPatientImage ? [newPatientImage, ...formPictures] : formPictures;
+
+  await onCreatePatient(
+    trimmedName,
+    species,
+    trimmedBreed,
+    gender,
+    trimmedOwnerName,
+    cleanedContact,
+    weightNumber,
+    selectedAdmissions,
+    reason.trim(),
+    pictures
+  );
+
+  // Reset form states completely
+  setName('');
+  setBreed('');
+  setOwnerName('');
+  setOwnerContact('');
+  setWeight('');
+  setReason('');
+  setSelectedAdmissions(['Medical Checkup']);
+  setFormPictures([]);
+  setNewPatientImage(null);
+
+  if (triggerToast) triggerToast("Patient successfully admitted to the directory queue.");
+};
   
   const startEditing = () => {
     setEditForm(selectedPatient);
@@ -2149,10 +2270,15 @@ const visiblePatients =
                 <input
                   type="number"
                   step="0.1"
+                  min="0.1"
+                  max="200"
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none"
                   placeholder="0.0"
                   value={weight}
-                  onChange={e => setWeight(parseFloat(e.target.value) || '')}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setWeight(value === '' ? '' : Math.max(0, Number(value)));
+                  }}
                 />
               </div>
 
@@ -2241,12 +2367,14 @@ const visiblePatients =
               />
 
               <input
-                type="text"
+                type="tel"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 required
                 className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none"
                 placeholder="Phone Number *"
                 value={ownerContact}
-                onChange={e => setOwnerContact(e.target.value)}
+                onChange={e => setOwnerContact(sanitizePhoneNumber(e.target.value))}
               />
             </div>
 
@@ -2612,7 +2740,14 @@ const visiblePatients =
                         </div>
                         <div>
                           <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Contact Number</label>
-                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerContact} onChange={e => handleEditChange('ownerContact', e.target.value)} />
+                          <input
+                            type="tel"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none"
+                            value={editForm.ownerContact}
+                            onChange={e => handleEditChange('ownerContact', sanitizePhoneNumber(e.target.value))}
+                          />
                         </div>
                         <div>
                           <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Email Address</label>
