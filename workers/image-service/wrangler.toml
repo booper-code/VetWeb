@@ -1,0 +1,16 @@
+name = "vetcloudpro-images"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# The bucket stays private; the Worker is the only reader/writer.
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "vetcloudpro-images"
+
+[vars]
+FIREBASE_PROJECT_ID = "vetcloudpro"
+# Comma-separated. Add the production app origin before deploying.
+ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+
+# Signing secret (32+ random characters). Never put it in this file:
+#   npx wrangler secret put IMAGE_TOKEN_SECRET

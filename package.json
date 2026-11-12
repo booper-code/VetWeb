@@ -6,11 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:rules": "npx --yes firebase-tools emulators:exec --only firestore,auth --project demo-vetcloud-rules \"node tests/firestore.rules.test.mjs\"",
+    "test:images": "node --test tests/image-migration.test.mjs tests/image-service.test.mjs",
+    "migrate:images": "node scripts/migrate-patient-images.mjs"
   },
   "dependencies": {
-    "lucide-react": "^1.21.0",
     "firebase": "^10.11.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
+    "lucide-react": "^1.21.0",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"
