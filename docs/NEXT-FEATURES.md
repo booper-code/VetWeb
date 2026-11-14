@@ -1,5 +1,9 @@
 # VetCloudPro — feature handoff
 
+> **Current status:** See [CURRENT-HANDOFF.md](CURRENT-HANDOFF.md). This older
+> document is retained as a feature roadmap; its baseline and session details
+> may be out of date.
+
 This document is for the next chat/agent picking up **new features**. The
 multi-clinic essentials are implemented in the working tree; see
 `.opencode/HANDOFF.md` for the exact session state and verification commands.
