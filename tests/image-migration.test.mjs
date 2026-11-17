@@ -62,7 +62,13 @@ test('apply backs up first, preserves Firestore values, and verifies rewritten i
   assert.equal(state.uploads, 3);
   assert.equal(state.reads, 2);
   assert.equal(state.patch.precondition, original.updateTime);
-  assert.deepEqual(state.patch.mask, ['profilePicture', 'pictures', 'labResults']);
+  assert.deepEqual(state.patch.mask, ['profilePicture', 'pictures', 'labResults', 'revision']);
+  assert.equal(state.patch.fields.revision.integerValue, '1');
+  assert.equal(state.auditWrites.length, 2);
+  assert.equal(state.auditWrites[0].update.fields.actorUid.stringValue, 'test-user');
+  assert.deepEqual(state.auditWrites[0].update.fields, state.auditWrites[1].update.fields);
+  assert.equal(state.auditWrites[0].update.fields.seq.integerValue, '1');
+  assert.deepEqual(state.auditWrites[0].updateTransforms, [{ fieldPath: 'time', setToServerValue: 'REQUEST_TIME' }]);
   assert.deepEqual(state.patch.fields.labResults.arrayValue.values[0].mapValue.fields.timestamp,
     original.fields.labResults.arrayValue.values[0].mapValue.fields.timestamp);
   assert.deepEqual(state.patch.fields.labResults.arrayValue.values[0].mapValue.fields.bigNumber,

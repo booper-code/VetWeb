@@ -7,9 +7,16 @@ import type {
 } from '@/types';
 import type { DocumentData, Firestore, Transaction } from 'firebase/firestore';
 import { initializeFirebase } from '@/lib/firebase';
+import { refreshInvitationVerification } from '@/lib/invitation-verification';
 
 type FirestoreModule = typeof import('firebase/firestore');
 type FirebaseHandles = { db: Firestore; fs: FirestoreModule };
+
+const requireConnection = () => {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error('Clinic management requires a connection. No change was submitted.');
+  }
+};
 
 const getHandles = async (): Promise<FirebaseHandles> => {
   const { db: initializedDb, firestore: initializedModule } = await initializeFirebase();
@@ -55,6 +62,7 @@ export const createClinic = async (
   user: ClinicSessionUser,
   name: string
 ): Promise<ClinicMembership> => {
+  requireConnection();
   const clinicName = name.trim();
   if (!clinicName) throw new Error('Enter a clinic name.');
 
@@ -90,6 +98,7 @@ export const createClinic = async (
 
 /** Renames a clinic. Only owners are allowed by the published rules. */
 export const renameClinic = async (clinicId: string, name: string): Promise<string> => {
+  requireConnection();
   const clinicName = name.trim();
   if (!clinicName) throw new Error('Enter a clinic name.');
   if (clinicName.length > 100) throw new Error('Clinic names are limited to 100 characters.');
@@ -101,8 +110,25 @@ export const renameClinic = async (clinicId: string, name: string): Promise<stri
 
 /** Owners control whether AI features are shown to members of this clinic. */
 export const setClinicAIEnabled = async (clinicId: string, enabled: boolean): Promise<void> => {
+  requireConnection();
   const { db, fs } = await getHandles();
   await fs.updateDoc(fs.doc(db, 'clinics', clinicId), { aiEnabled: enabled });
+};
+
+/** A reversible owner-only storage safeguard; existing images stay readable. */
+export const setClinicImageUploadsEnabled = async (clinicId: string, enabled: boolean): Promise<void> => {
+  requireConnection();
+  const { db, fs } = await getHandles();
+  await fs.updateDoc(fs.doc(db, 'clinics', clinicId), { imageUploadsEnabled: enabled });
+};
+
+export const subscribeClinicImageUploads = async (
+  clinicId: string, onChange: (enabled: boolean) => void, onError: (error: Error) => void
+): Promise<() => void> => {
+  const { db, fs } = await getHandles();
+  return fs.onSnapshot(fs.doc(db, 'clinics', clinicId), snapshot => {
+    onChange(snapshot.exists() && snapshot.data().imageUploadsEnabled !== false);
+  }, onError);
 };
 
 /** Listen for the clinic-wide setting, including changes made by another member. */
@@ -151,6 +177,7 @@ export const createClinicInvitation = async ({
   role: Exclude<ClinicRole, 'owner'>;
   user: ClinicSessionUser;
 }): Promise<ClinicInvitation> => {
+  requireConnection();
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) throw new Error('Enter the invitee’s email address.');
   if (!['editor', 'viewer'].includes(role)) throw new Error('Choose editor or viewer access.');
@@ -188,6 +215,9 @@ export const acceptClinicInvitation = async (
 ): Promise<ClinicMembership> => {
   // These checks improve the user-facing errors. Matching Firestore rules must
   // enforce invite status, expiry, email, and atomic membership writes too.
+  if (!await refreshInvitationVerification(user.uid)) {
+    throw new Error('Verify your email address before accepting an invitation.');
+  }
   const { db, fs } = await getHandles();
   const invitationRef = fs.doc(db, 'clinics', clinicId, 'invitations', invitationId);
   const memberRef = fs.doc(db, 'clinics', clinicId, 'members', user.uid);
@@ -206,8 +236,8 @@ export const acceptClinicInvitation = async (
       throw new Error(`This invitation was addressed to ${invitation.email}. Sign in with that email address.`);
     }
 
-    const existingMember = await transaction.get(memberRef);
-    if (existingMember.exists()) throw new Error('You already have access to this clinic.');
+    const existingIndex = await transaction.get(userClinicRef);
+    if (existingIndex.exists()) throw new Error('You already have access to this clinic.');
 
     const clinicName = invitation.clinicName;
     const role = invitation.role as Exclude<ClinicRole, 'owner'>;
@@ -261,6 +291,7 @@ export const changeClinicMemberRole = async (
 
 /** Removes a member and their clinic index. The owner must be transferred first. */
 export const removeClinicMember = async (clinicId: string, memberUid: string): Promise<void> => {
+  requireConnection();
   const { db, fs } = await getHandles();
   const memberRef = fs.doc(db, 'clinics', clinicId, 'members', memberUid);
   const indexRef = fs.doc(db, 'users', memberUid, 'clinics', clinicId);
@@ -309,6 +340,7 @@ export const transferClinicOwnership = async (
 };
 
 export const revokeClinicInvitation = async (clinicId: string, invitationId: string) => {
+  requireConnection();
   const { db, fs } = await getHandles();
   await fs.updateDoc(
     fs.doc(db, 'clinics', clinicId, 'invitations', invitationId),

@@ -11,6 +11,7 @@ export type GeminiPayload = {
 };
 
 export type InventoryItem = {
+  revision?: number;
   itemCode: string;
   itemName: string;
   category: 'Medicine' | 'Supplies' | 'Service' | 'Grooming';
@@ -42,6 +43,8 @@ export type PatientBillableItem = {
 };
 
 export type PatientRecord = {
+  revision?: number;
+  dischargedAt?: string;
   id: string;
   name: string;
   species: string;
@@ -67,15 +70,82 @@ export type PatientRecord = {
   billableItems?: PatientBillableItem[];
 };
 
-export type Consultation = {
+/** One structured treatment/service line recorded during a visit. */
+export type TreatmentLine = {
   id: string;
+  itemCode: string;
+  itemName: string;
+  category: InventoryItem['category'];
+  quantity: number;
+  unitPrice: number;
+  dose: string;
+  notes: string;
+};
+
+/** Bounded stock invariant checked by Firestore rules, one entry per stocked item. */
+export type ConsultationStockMove = {
+  itemCode: string;
+  quantity: number;
+};
+
+export type Consultation = {
+  revision?: number;
+  id: string;
+  /** Legacy display date. New records also store the precise `occurredAt`. */
   date: string;
   client: string;
   patient: string;
   type: string;
   status: 'Draft' | 'Completed';
   notes: string;
+  /** Structured, day-end-friendly clinical activity fields. */
+  patientId?: string;
+  appointmentId?: string | null;
+  /** Actual visit time as a UTC ISO string, separate from the entry/audit time. */
+  occurredAt?: string;
+  /** Server-recorded entry time as a UTC ISO string. */
+  recordedAt?: string;
+  staffUid?: string;
+  staffName?: string;
+  treatments?: TreatmentLine[];
+  stockMoves?: ConsultationStockMove[];
 };
+
+export type ConsultationDraft = {
+  patientId: string;
+  occurredAt: string;
+  type: string;
+  notes: string;
+  appointmentId?: string | null;
+  treatments: TreatmentLine[];
+  staffUid: string;
+  staffName: string;
+};
+
+export type AppointmentType = 'Checkup' | 'Vaccination' | 'Deworming' | 'Grooming' | 'Surgery' | 'Follow-up';
+export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
+/** UI timestamps are UTC ISO strings; Firestore stores real timestamps. */
+export type Appointment = {
+  id: string;
+  revision: number;
+  patientId: string;
+  patientName: string;
+  ownerName: string;
+  ownerContact: string;
+  ownerEmail: string;
+  type: AppointmentType;
+  status: AppointmentStatus;
+  dueAt: string;
+  durationMinutes: number;
+  notes: string;
+  occurredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+};
+export type AppointmentDraft = Pick<Appointment,
+  'patientId' | 'type' | 'status' | 'dueAt' | 'durationMinutes' | 'notes' | 'occurredAt'>;
 
 export type ClinicRole = 'owner' | 'editor' | 'viewer';
 

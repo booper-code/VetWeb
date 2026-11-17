@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "vetcloudpro-staging",
+  "compatibility_date": "2026-11-15",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./out"
+  }
+}

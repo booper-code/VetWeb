@@ -10,7 +10,23 @@ bucket_name = "vetcloudpro-images"
 [vars]
 FIREBASE_PROJECT_ID = "vetcloudpro"
 # Comma-separated. Add the production app origin before deploying.
-ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,https://vetcloudpro-staging.jmferrari16.workers.dev"
 
 # Signing secret (32+ random characters). Never put it in this file:
 #   npx wrangler secret put IMAGE_TOKEN_SECRET
+
+# Approximate per-location limits, NOT strict global storage/billing quotas.
+[[ratelimits]]
+name = "USER_REQUEST_LIMITER"
+namespace_id = "2281264601"
+simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "USER_UPLOAD_LIMITER"
+namespace_id = "2281264602"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "CLINIC_UPLOAD_LIMITER"
+namespace_id = "2281264603"
+simple = { limit = 30, period = 60 }

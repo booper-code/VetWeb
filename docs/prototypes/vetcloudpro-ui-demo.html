@@ -1,0 +1,295 @@
+<!doctype html>
+<!--
+  VETCLOUDPRO UI-ONLY DESIGN HANDOFF
+  One self-contained file. All records are fictional. No network, backend,
+  real authentication, AI, financial processing, uploads or persistent storage.
+  JavaScript below exists ONLY for navigation and disposable UI previews.
+  Pair with docs/CLAUDE-PROJECT-BRIEF.md. Return the revised HTML to the user;
+  production React integration and security review happen separately.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>VetCloudPro — UI-only design demo</title>
+  <style>
+    :root{color-scheme:light;--ink:#000;--paper:#fff;--canvas:#f1f5f9;--line:#cbd5e1;--nav:#0f172a;--accent:#0f766e;--soft:#f0fdfa;--radius:14px}
+    *{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+    button,input,select,textarea{font:inherit}button,a,input,select,textarea{outline-offset:4px}button{cursor:pointer}button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allowed;color:#000;background:#e2e8f0;opacity:1}
+    button{border:1px solid var(--line);border-radius:9px;background:white;color:#000;padding:9px 13px;font-weight:650}button:hover:not(:disabled){background:#e2e8f0}button.primary{background:var(--accent);border-color:var(--accent);color:white}button.primary:hover:not(:disabled){background:#115e59}
+    button.primary:disabled{background:#e2e8f0;border-color:#94a3b8;color:#000}button.danger{border-color:#fca5a5;background:#fef2f2;color:#000}button.small{padding:6px 10px;font-size:13px}button.linklike{border:0;padding:0;background:transparent;text-decoration:underline;text-align:left}
+    input,select,textarea{display:block;width:100%;min-width:0;background:white;color:#000;border:1px solid #94a3b8;border-radius:8px;padding:9px 11px}textarea{resize:vertical;min-height:90px}input[type=checkbox]{display:inline;width:auto;min-height:20px;min-width:20px}
+    h1,h2,h3,p{margin:0}h1{font-size:27px;line-height:1.25}h2{font-size:20px;line-height:1.3}h3{font-size:16px}p+p{margin-top:8px}small,.caption{font-size:12px;color:#000}.subtext{color:#000;margin-top:5px}.stack{display:grid;gap:18px}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.between{justify-content:space-between}.grow{flex:1;min-width:0}
+    .prototype-bar{background:#fef3c7;border-bottom:1px solid #d97706;padding:9px 20px;color:#000;font-size:13px}.prototype-bar strong{font-weight:800}.shell{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:calc(100vh - 40px)}
+    .sidebar{background:var(--nav);color:white;padding:24px 16px;display:flex;flex-direction:column;gap:24px}.brand{font-size:23px;font-weight:850;letter-spacing:-.6px;color:white}.brand span{color:#5eead4}.brand-mark{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#134e4a;color:#99f6e4;margin-right:6px;font-size:19px}
+    .clinic-switch{border:1px solid #475569;background:#1e293b;border-radius:12px;padding:13px;color:white;width:100%;text-align:left}.clinic-switch:hover:not(:disabled){background:#334155}.clinic-switch span{display:block;font-size:12px;color:white}.clinic-switch strong{display:block;margin-top:3px}
+    .nav-caption{font-size:11px;font-weight:750;letter-spacing:1px;text-transform:uppercase;color:#cbd5e1;margin-bottom:10px}.nav-list{display:grid;gap:5px}.nav-list button{border:0;background:transparent;color:white;display:flex;gap:10px;align-items:center;text-align:left;padding:11px;border-radius:9px;font-weight:550}.nav-list button:hover:not(:disabled){background:#1e293b}.nav-list button.active{background:#134e4a;color:#99f6e4}.nav-icon{display:grid;place-items:center;width:23px;height:23px;border:1px solid #64748b;border-radius:6px;font-size:12px;flex-shrink:0}
+    .side-footer{margin-top:auto;border-top:1px solid #475569;padding-top:18px;display:grid;gap:12px}.side-footer p{font-size:12px;color:white}.side-footer button{color:white;background:#450a0a;border-color:#7f1d1d}.workspace{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);padding:16px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}.topbar .search{flex:1;min-width:180px}.topbar label{font-size:12px;font-weight:650}.topbar .role{width:150px}.menu-button{display:none}.page{padding:26px;max-width:1500px;margin:auto}
+    .card{background:white;border:1px solid var(--line);border-radius:var(--radius);padding:20px;min-width:0}.hero{background:#0f172a;color:white;border-radius:var(--radius);padding:24px}.hero p,.hero h1{color:white}.hero .caption{color:#ccfbf1}.grid{display:grid;gap:16px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}.metric{font-size:30px;font-weight:800;margin-top:6px;letter-spacing:-.8px}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.7px;font-weight:750}
+    .notice{border:1px solid #d97706;border-radius:10px;background:#fffbeb;padding:12px 14px;color:#000}.notice.info{border-color:#5eead4;background:#f0fdfa}.notice.error{border-color:#fca5a5;background:#fef2f2}.badge{display:inline-block;padding:3px 9px;border-radius:999px;background:#e2e8f0;color:#000;font-size:12px;font-weight:650}.badge.teal{background:#ccfbf1}.badge.amber{background:#fef3c7}.badge.blue{background:#dbeafe}.badge.red{background:#fee2e2}.badge.purple{background:#f3e8ff}
+    .toolbar{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.toolbar label{display:grid;gap:5px;font-size:13px;font-weight:650}.toolbar label:not(.wide){flex:0 1 180px}.toolbar .wide{flex:1;min-width:160px}.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:11px}table{width:100%;border-collapse:collapse;background:white;text-align:left}th{background:#f8fafc;text-transform:uppercase;font-size:11px;letter-spacing:.6px}th,td{padding:13px 15px;border-bottom:1px solid #e2e8f0;vertical-align:top}tbody tr:last-child td{border-bottom:0}td strong{display:block}td .caption{display:block;margin-top:3px}.table-actions{min-width:100px}.table-actions button{white-space:nowrap}
+    .list{display:grid;gap:12px}.list-item{border:1px solid var(--line);border-radius:10px;padding:14px;background:white}.list-item p{margin-top:5px}.avatar{width:44px;height:44px;display:grid;place-items:center;flex-shrink:0;border-radius:12px;background:#ccfbf1;color:#000;font-weight:800}.divider{height:1px;background:var(--line);margin:16px 0}.empty{padding:32px;text-align:center;background:#f8fafc;border-radius:10px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.form-grid label{display:grid;gap:5px;font-weight:650;font-size:13px}.form-grid .full{grid-column:1/-1}.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:12px 0}.toggle-row label{display:flex;gap:10px;align-items:center}.placeholder{background:repeating-linear-gradient(135deg,#f8fafc,#f8fafc 10px,#eef2f6 10px,#eef2f6 20px);border:1px dashed #94a3b8;border-radius:10px;display:grid;place-items:center;min-height:140px;padding:20px;text-align:center}
+    dialog{width:min(760px,calc(100vw - 30px));max-height:90vh;overflow:auto;border:1px solid var(--line);border-radius:18px;padding:0;color:#000;background:white}dialog::backdrop{background:#0f172a99}.dialog-head{padding:20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:16px}.dialog-body{padding:20px}.dialog-actions{margin-top:20px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.tabs{display:flex;gap:7px;margin:16px 0;flex-wrap:wrap}.tabs button.active{background:#ccfbf1;border-color:#0f766e}
+    #toast{position:fixed;right:20px;bottom:20px;z-index:100;background:#0f172a;color:white;border-radius:12px;box-shadow:0 8px 30px #0003;padding:15px 20px;max-width:min(460px,calc(100vw - 40px))}#toast[hidden]{display:none}.backdrop{display:none}details.design-help{margin-bottom:18px;border:1px solid var(--line);border-radius:10px;background:white;padding:12px 15px}summary{cursor:pointer;font-weight:650}details ul{padding-left:20px;margin-bottom:0}.screen-footer{margin-top:18px;font-size:12px;color:#000}.login-preview{max-width:460px;margin:60px auto}
+    @media(max-width:1100px){.grid.four{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar{gap:12px;padding:14px 18px}.page{padding:20px}}
+    @media(max-width:760px){.shell{grid-template-columns:minmax(0,1fr)}.sidebar{position:fixed;inset:0 auto 0 0;width:260px;z-index:30;transform:translateX(-100%);transition:transform .18s;overflow-y:auto}.sidebar.open{transform:translateX(0)}.menu-button{display:block}.backdrop.open{display:block;position:fixed;inset:0;z-index:29;background:#0f172a88}.grid.two,.grid.three,.grid.four,.form-grid{grid-template-columns:minmax(0,1fr)}.page{padding:16px}.topbar{padding:12px 16px}.topbar .search{min-width:140px}.topbar .role{width:145px}.hero{padding:20px}.card{padding:16px}h1{font-size:24px}.form-grid .full{grid-column:auto}.prototype-bar{padding:9px 16px}th,td{padding:10px}.toolbar label:not(.wide){flex:1 1 140px}.row.mobile-stack{align-items:stretch;flex-direction:column}.login-preview{margin:24px auto}}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <div class="prototype-bar"><strong>UI-ONLY DESIGN DEMO</strong> · Fictional records · No backend, AI, uploads or message delivery · Changes disappear on reload.</div>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">✚</span>VetCloud<span>Pro</span></div>
+      <button class="clinic-switch" data-action="clinic"><span>Current clinic · preview only</span><strong>Sample Veterinary Clinic</strong></button>
+      <div><p class="nav-caption">Core clinical hub</p><nav class="nav-list" id="navigation"></nav></div>
+      <div class="side-footer"><div><strong>Demo staff member</strong><p>designer@example.com · fictional</p></div><button data-action="login">Preview login screen</button></div>
+    </aside>
+    <div class="backdrop" id="backdrop"></div>
+    <div class="workspace">
+      <header class="topbar">
+        <button class="menu-button" id="menu" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+        <label class="search">Search this demo screen<input id="search" type="search" placeholder="Patient, owner, item or record…" autocomplete="off"></label>
+        <span class="badge teal">Memory-only mockup</span>
+        <label class="role">Preview role<select id="role"><option value="owner">Owner</option><option value="editor">Editor</option><option value="viewer">Viewer</option></select></label>
+      </header>
+      <main class="page" id="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <div class="dialog-head"><h2 id="dialog-title">Preview</h2><button id="close-dialog" aria-label="Close preview">✕</button></div>
+    <div class="dialog-body" id="dialog-content"></div>
+  </dialog>
+  <div id="toast" role="status" hidden></div>
+  <script>
+  'use strict';
+  // Disposable UI state only. Never copy this mock logic into production.
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const localDay = (offset = 0) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+  const dateText = value => new Date(value).toLocaleString([], { dateStyle:'medium', timeStyle:'short' });
+  const money = value => `PHP ${Number(value).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const state = {
+    view:'dashboard', role:'owner', query:'', ai:false, patientFilter:'Active', appointmentStatus:'scheduled', appointmentType:'all',
+    patients:[
+      {id:'PAT-DEMO-001',name:'Mochi',species:'Canine',breed:'Mixed breed',owner:'Sample Owner A',contact:'Contact placeholder',status:'Waiting',balance:850,weight:7.2},
+      {id:'PAT-DEMO-002',name:'Biscuit',species:'Feline',breed:'Domestic shorthair',owner:'Sample Owner B',contact:'Contact placeholder',status:'In Treatment',balance:1500,weight:3.4},
+      {id:'PAT-DEMO-003',name:'Pepper',species:'Canine',breed:'Mixed breed',owner:'Sample Owner C',contact:'Contact placeholder',status:'Discharged',balance:0,weight:12}
+    ],
+    appointments:[
+      {id:'APT-DEMO-001',patient:'PAT-DEMO-001',type:'Vaccination',date:`${localDay()}T09:00`,duration:30,status:'scheduled',notes:'Fictional scheduling note. No vaccine administration is recorded.',actual:''},
+      {id:'APT-DEMO-002',patient:'PAT-DEMO-002',type:'Follow-up',date:`${localDay(3)}T10:30`,duration:30,status:'scheduled',notes:'Example follow-up schedule.',actual:''},
+      {id:'APT-DEMO-003',patient:'PAT-DEMO-003',type:'Checkup',date:`${localDay(-3)}T14:00`,duration:30,status:'completed',notes:'Historical UI example only.',actual:`${localDay(-3)}T14:10`}
+    ],
+    inventory:[
+      {id:'ITM-DEMO-001',name:'Sample medicine A',category:'Medicine',stock:8,threshold:10,buy:120,sell:180},
+      {id:'ITM-DEMO-002',name:'Sample supply B',category:'Supplies',stock:35,threshold:10,buy:25,sell:40},
+      {id:'SRV-DEMO-001',name:'Consultation fee',category:'Service',stock:0,threshold:0,buy:0,sell:500}
+    ]
+  };
+  const views = [
+    ['dashboard','01','Dashboard'],['appointments','02','Appointments & Reminders'],['patients','03','Admission & Medical'],
+    ['inventory','04','Inventory Control'],['laboratory','05','Laboratory & AI'],['settings','06','Clinic Setup'],
+    ['account','07','Account Settings'],['staff','08','Staff & Payroll'],['team','09','Team & Invitations'],['audit','10','Clinical Audit']
+  ];
+  const types = ['Checkup','Vaccination','Deworming','Grooming','Surgery','Follow-up'];
+  const statuses = ['scheduled','completed','cancelled','no-show'];
+  const canEdit = () => state.role !== 'viewer';
+  const patient = id => state.patients.find(p => p.id === id);
+  const filtered = (rows, getText) => rows.filter(row => getText(row).toLowerCase().includes(state.query.toLowerCase()));
+  const badge = (text, tone='') => `<span class="badge ${tone}">${esc(text)}</span>`;
+  const disabled = allowed => allowed ? '' : 'disabled';
+  const options = (values, selected) => values.map(value => `<option value="${esc(value)}" ${value===selected?'selected':''}>${esc(value)}</option>`).join('');
+  const notice = (text, kind='') => `<div class="notice ${kind}">${text}</div>`;
+  const title = (heading, description, action='') => `<div class="row between"><div class="grow"><h1>${heading}</h1><p class="subtext">${description}</p></div>${action}</div>`;
+  const button = (label, action, id='', extra='') => `<button type="button" data-action="${action}" ${id?`data-id="${esc(id)}"`:''} ${extra}>${label}</button>`;
+  const stub = label => button(label,'stub','',`data-label="${esc(label)}"`);
+  function flash(message) { const toast=document.getElementById('toast'); toast.textContent=message; toast.hidden=false; clearTimeout(flash.timer); flash.timer=setTimeout(()=>toast.hidden=true,4500); }
+  function openDialog(heading, html) { document.getElementById('dialog-title').textContent=heading; document.getElementById('dialog-content').innerHTML=html; const dialog=document.getElementById('dialog'); if(!dialog.open) dialog.showModal(); }
+  function closeDialog() { document.getElementById('dialog').close(); }
+  function closeMenu() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('backdrop').classList.remove('open'); document.getElementById('menu').setAttribute('aria-expanded','false'); }
+  function nav() {
+    if ((['team','audit'].includes(state.view) && state.role!=='owner') || (state.view==='laboratory'&&!state.ai)) state.view='dashboard';
+    document.getElementById('navigation').innerHTML=views.filter(([id]) => (id!=='laboratory'||state.ai) && (!['team','audit'].includes(id)||state.role==='owner')).map(([id,icon,label]) =>
+      `<button type="button" data-view="${id}" class="${state.view===id?'active':''}" ${state.view===id?'aria-current="page"':''}><span class="nav-icon" aria-hidden="true">${icon}</span>${label}</button>`).join('');
+  }
+  function help() { return `<details class="design-help"><summary>About this prototype / Claude handoff</summary><ul>
+    <li>This is a representative visual mockup of the current app areas, not an exact export of every production form.</li>
+    <li>Staff often enter work occasionally or at day's end. Design for fast patient lookup, actual work dates, review and clear save results.</li>
+    <li>Current local features are not all deployed. Scheduling completion is not treatment, stock usage or payment.</li>
+    <li>Real AI analysis and the controlled end-of-day assistant are not implemented. Future AI may propose confirmed, predefined actions only.</li>
+    <li>Read CLAUDE-PROJECT-BRIEF.md for the complete feature plan. Redesign this standalone file; production React integration happens separately.</li>
+    <li>No network, credentials, persistent storage or real clinic data belongs in this file. Reload to reset mock edits.</li>
+    </ul></details>`; }
+  function dashboard() {
+    const due=state.appointments.filter(a=>a.date.startsWith(localDay())&&a.status==='scheduled');
+    const low=state.inventory.filter(i=>i.category!=='Service'&&i.stock<=i.threshold);
+    return `<div class="stack">${title('Dashboard','A practical overview of admissions, appointments, billing and stock.')}
+      <div class="hero row between"><div><p class="caption">CLINIC OPERATIONS OVERVIEW</p><h1 style="margin-top:6px">Welcome back, demo staff</h1><p style="margin-top:8px">${esc(localDay())} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)} · Fictional loaded records</p></div><div><p>Sample receivables</p><div class="metric">${money(state.patients.reduce((n,p)=>n+p.balance,0))}</div></div></div>
+      ${notice('Loaded-demo summary only, not clinic-wide financial totals. No live data is fetched.')}
+      <div class="card stack"><div class="row between"><h2>Appointments & reminders</h2><div class="row">${button('Refresh appointments','refresh')}${button('Open appointments','navigate','appointments','class="primary"')}</div></div>
+        <p>Dates regroup when this screen is opened. In the real app, snapshots need explicit refresh; no background message delivery is implied.</p>
+        <div class="grid three">${[['Earlier than today',state.appointments.filter(a=>a.date.slice(0,10)<localDay()&&a.status==='scheduled')],['Due today',due],['Upcoming sample',state.appointments.filter(a=>a.date.slice(0,10)>localDay()&&a.status==='scheduled')]].map(([label,rows])=>`<div class="list-item"><strong>${label}: ${rows.length} loaded</strong>${rows.map(a=>`<p>${esc(patient(a.patient)?.name)} · ${esc(a.type)}</p>`).join('')||'<p>No sample items</p>'}</div>`).join('')}</div>
+      </div>
+      <div class="grid four">${[['Active patients',state.patients.filter(p=>p.status!=='Discharged').length],['Outstanding balance',money(2350)],['Low stock alerts',low.length],['Lab records','1 example']].map(([label,value])=>`<div class="card"><p class="eyebrow">${label}</p><div class="metric">${value}</div><p class="caption">Fictional loaded snapshot</p></div>`).join('')}</div>
+      <div class="grid two"><div class="card stack"><h2>Recent billing activity</h2><div class="list-item"><strong>Mochi · Consultation</strong><p>Example charge: PHP 500.00</p></div><div class="list-item"><strong>Biscuit · Sample service</strong><p>No payment transaction has been processed.</p></div>${button('View patients','navigate','patients')}</div>
+      <div class="card stack"><h2>Critical stock alerts</h2>${low.map(i=>`<div class="notice"><strong>${esc(i.name)}</strong><p>${i.stock} in stock · threshold ${i.threshold}</p></div>`).join('')}${button('Open inventory','navigate','inventory')}</div></div>
+      <div class="card stack"><div class="row between"><h2>Consultation queue</h2>${badge('UI sample','amber')}</div><div class="table-wrap"><table><thead><tr><th>Record</th><th>Patient</th><th>Notes</th><th>Status</th><th>Action</th></tr></thead><tbody><tr><td>SOAP-DEMO-001</td><td>Mochi</td><td>Placeholder consultation notes</td><td>${badge('Draft','amber')}</td><td>${stub('Change state')}</td></tr></tbody></table></div></div></div>`;
+  }
+  function appointments() {
+    const rows=filtered(state.appointments,a=>`${patient(a.patient)?.name} ${patient(a.patient)?.owner} ${a.type}`).filter(a=>(state.appointmentStatus==='all'||a.status===state.appointmentStatus)&&(state.appointmentType==='all'||a.type===state.appointmentType));
+    return `<div class="stack">${title('Appointments & reminders',`Schedule checkups, vaccinations and follow-ups. Device timezone: ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}.`,button('New appointment','new-appointment','','class="primary" '+disabled(canEdit())))}
+      ${notice('Scheduling only: marking complete does not record vaccine administration, clinical treatment, inventory use or payment. All mock edits vanish on reload.')}
+      <div class="card toolbar"><label>From<input type="date" value="${localDay(-30)}"></label><label>Through<input type="date" value="${localDay(30)}"></label>${button('Apply dates','stub','','data-label="Date query"')}${button('Refresh schedule','refresh')}</div>
+      <div class="toolbar"><label>Status<select id="appointment-status">${options(['all',...statuses],state.appointmentStatus)}</select></label><label>Visit type<select id="appointment-type">${options(['all',...types],state.appointmentType)}</select></label></div>
+      <p>Showing ${rows.length} matching fictional records. These are in-memory samples, not a server query or complete clinic history.</p>
+      <div class="list">${rows.map(a=>{const p=patient(a.patient);return `<article class="card stack"><div class="row between"><div><h2>${esc(p?.name)} · ${esc(a.type)}</h2><p class="subtext">${esc(dateText(a.date))} · ${a.duration} min · ${badge(a.status,a.status==='scheduled'?'teal':'')}</p></div>${button('Edit appointment','edit-appointment',a.id,disabled(canEdit()))}</div>
+        <p>Owner: ${esc(p?.owner)} · ${esc(p?.contact)}</p>${a.actual?`<p>Actual visit: ${esc(dateText(a.actual))}</p>`:''}<p class="caption">Recorded: server entry time would appear here in the real app.</p><p>${esc(a.notes)}</p>
+        <div class="row">${button('Open patient','patient',p?.id)}${stub('Download calendar')}${a.status==='scheduled'?`${button('Preview reminder','reminder',a.id)}${stub('Draft email')}${stub('Draft WhatsApp')}`:''}</div></article>`;}).join('')||'<div class="empty">No matching sample appointments. Change filters or create a local-only preview.</div>'}</div>
+      <p class="screen-footer">Date inputs above are visual controls only. Status/type filters and local mock appointment forms are clickable; no scheduling, delivery or calendar integration runs.</p></div>`;
+  }
+  function patients() {
+    const rows=filtered(state.patients,p=>`${p.id} ${p.name} ${p.owner} ${p.species}`).filter(p=>state.patientFilter==='Active'?p.status!=='Discharged':p.status==='Discharged');
+    return `<div class="stack">${title('Admission & Medical','Patient directory and clinical dossier previews.',button('Quick admission','admission','','class="primary" '+disabled(canEdit())))}
+      ${notice('Current app context: patient identity, consultation, appointment, clinical treatment and payment are distinct. This mockup cannot save a medical record.','info')}
+      <div class="grid three"><div class="card"><p class="eyebrow">Active sample patients</p><div class="metric">${state.patients.filter(p=>p.status!=='Discharged').length}</div></div><div class="card"><p class="eyebrow">Discharged history</p><div class="metric">${state.patients.filter(p=>p.status==='Discharged').length}</div></div><div class="card"><p class="eyebrow">Loaded balances</p><div class="metric">${money(state.patients.reduce((n,p)=>n+p.balance,0))}</div></div></div>
+      <div class="card stack"><div class="row between"><h2>Patient directory</h2><div class="row">${stub('Export patient PDF')}${button('Load more','stub','','data-label="Pagination"')}</div></div>
+      <div class="tabs">${['Active','Discharged'].map(value=>`<button data-patient-filter="${value}" class="${state.patientFilter===value?'active':''}">${value}</button>`).join('')}</div>
+      <div class="table-wrap"><table><thead><tr><th>Patient</th><th>Owner</th><th>Status</th><th>Balance</th><th>Action</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="row"><span class="avatar" aria-hidden="true">${esc(p.name[0])}</span><div><strong>${esc(p.name)}</strong><span class="caption">${esc(p.id)} · ${esc(p.species)} · ${esc(p.breed)}</span></div></div></td><td>${esc(p.owner)}<span class="caption">${esc(p.contact)}</span></td><td>${badge(p.status,p.status==='Waiting'?'amber':'teal')}</td><td>${money(p.balance)}</td><td>${button('View dossier','patient',p.id,'class="small"')}</td></tr>`).join('')||'<tr><td colspan="5">No matching sample patients.</td></tr>'}</tbody></table></div></div></div>`;
+  }
+  function inventory() {
+    const rows=filtered(state.inventory,i=>`${i.id} ${i.name} ${i.category}`);
+    return `<div class="stack">${title('Inventory Control','Catalog, stock levels and reorder thresholds.',button('Add item','inventory-form','','class="primary" '+disabled(canEdit())))}
+      <div class="grid three"><div class="card"><p class="eyebrow">Loaded items</p><div class="metric">${state.inventory.length}</div></div><div class="card"><p class="eyebrow">Low stock</p><div class="metric">1</div></div><div class="card"><p class="eyebrow">Catalog categories</p><p style="margin-top:10px">Medicine · Supplies · Services · Grooming</p></div></div>
+      <div class="card stack"><div class="row between"><h2>Item catalog</h2>${stub('Export inventory PDF')}</div><div class="table-wrap"><table><thead><tr><th>Item</th><th>Category</th><th>Stock / alert</th><th>Buying price</th><th>Selling price</th><th>Action</th></tr></thead><tbody>${rows.map(i=>`<tr><td><strong>${esc(i.name)}</strong><span class="caption">${esc(i.id)}</span></td><td>${esc(i.category)}</td><td>${i.category==='Service'?'Not stocked':`${i.stock} / ${i.threshold} ${i.stock<=i.threshold?badge('Low','red'):''}`}</td><td>${money(i.buy)}</td><td>${money(i.sell)}</td><td>${button('Edit','inventory-form',i.id,`class="small" ${disabled(canEdit())}`)}</td></tr>`).join('')||'<tr><td colspan="6">No matching sample items.</td></tr>'}</tbody></table></div>${notice('Full stock movement, payment and void/reconciliation workflows remain separate planned work. No dispensing occurs in this HTML.','info')}</div></div>`;
+  }
+  function laboratory() {
+    return `<div class="stack">${title('Laboratory & AI','Representative layout only. Clinical analysis is NOT implemented.')}
+      ${notice('<strong>DEMO OUTPUT ONLY:</strong> no medical analysis, interpretation, extraction or diagnosis is performed. Do not enter real clinical data.')}
+      <div class="grid two"><div class="card stack"><h2>Document / lab image input</h2><div class="placeholder">Image or document preview placeholder<br>No file is opened or uploaded.</div>${stub('Choose sample document')}${stub('Preview example output')}</div>
+      <div class="card stack"><h2>Result review area</h2><div class="placeholder">No clinical findings are generated.<br>Use this space to redesign source/result/review hierarchy.</div><p>In a future workflow, extracted values would be drafts requiring clinician review—not automatic medical truth.</p></div></div>
+      <div class="card stack"><h2>Provider connection</h2><p>A provider connection check is separate from clinical functionality.</p>${stub('Preview connection status')}</div></div>`;
+  }
+  function settings() {
+    return `<div class="stack">${title('Clinic Settings & Import Portal','Owner policy, offline privacy and import previews.')}
+      <div class="card stack"><h2>Offline device privacy</h2><p>Memory-only is the real app's default. Trusted-device caching requires explicit consent. Offline clinical writes are not queued.</p>
+        <label class="row"><input type="checkbox" id="mock-consent">Preview trusted-device consent (does not enable storage)</label><div class="row">${stub('Enable on next start')}${stub('Disable, sign out & clear device data')}</div></div>
+      <div class="card stack"><h2>Image storage controls</h2><p>Owner upload pause is an operational safeguard, not a strict global storage quota.</p>${button('Preview upload pause','stub','','data-label="Owner upload pause" '+disabled(state.role==='owner'))}</div>
+      <div class="card stack"><h2>AI provider connection</h2><div class="toggle-row"><div><strong>Enable AI features</strong><p>Prototype toggle changes navigation only. It does not call a provider.</p></div><label><input type="checkbox" id="ai-toggle" ${state.ai?'checked':''} ${disabled(state.role==='owner')}>Enabled</label></div>
+      ${notice('Current lab extraction and summaries are demonstrations. The end-of-day assistant is planned, not implemented.')}
+      <div class="form-grid"><label>Provider<select disabled><option>Not connected — mockup</option></select></label><label>API credential<input disabled placeholder="No credentials belong in this file"></label></div><div class="row">${stub('Save provider settings')}${stub('Test connection')}${stub('Clear provider settings')}</div></div>
+      <div class="card stack"><h2>Inventory CSV import</h2><p>Current app import limits: 2 MB / 500 rows, with honest partial-failure reporting.</p><div class="placeholder">CSV input preview only — this file never reads an uploaded file.</div>${stub('Preview import review')}</div></div>`;
+  }
+  function account() {
+    return `<div class="stack">${title('Account Settings','Clinic profile, account information and recovery entry points.')}
+      <div class="grid two"><div class="card stack"><h2>Clinic profile</h2><label>Clinic name<input value="Sample Veterinary Clinic" disabled></label><p>Owner-only rename in the real app; no change is made here.</p>${button('Preview rename','stub','','data-label="Clinic rename" '+disabled(state.role==='owner'))}</div>
+      <div class="card stack"><h2>Signed-in account</h2><p>Demo staff member · designer@example.com</p><p>Preview role: ${esc(state.role)}</p>${stub('Send password reset')}</div></div>
+      <div class="card stack"><h2>Clinic JSON backup</h2><p>Owner export includes records and image object keys, not image bytes or one-click restoration.</p>${button('Preview backup download','stub','','data-label="Clinic backup" '+disabled(state.role==='owner'))}${notice('Full recovery requires verified image backups and rehearsed restoration. A downloaded JSON file is not proof of complete recovery.')}</div></div>`;
+  }
+  function staff() {
+    return `<div class="stack">${title('Staff & Payroll','Roster and owner-only payroll information.')}
+      <div class="card stack"><div class="row between"><h2>Staff roster</h2>${button('Add staff','stub','','data-label="Staff form" '+disabled(canEdit()))}</div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th>Position</th><th>Status</th><th>Action</th></tr></thead><tbody><tr><td>Sample Veterinarian</td><td>Veterinarian</td><td>Clinician</td><td>${badge('Active','teal')}</td><td>${stub('View profile')}</td></tr><tr><td>Sample Team Member</td><td>Employee</td><td>Clinic staff</td><td>${badge('Active','teal')}</td><td>${stub('View profile')}</td></tr></tbody></table></div></div>
+      ${state.role==='owner'?`<div class="grid two"><div class="card stack"><h2>Payroll period</h2><label>Period<select><option>Example current period</option></select></label><div class="row">${stub('Create period')}${stub('Close period')}</div><p>Sample payout figures are omitted; this is not a payroll calculation engine.</p></div><div class="card stack"><h2>Ledger integrity</h2>${badge('Sample status only','blue')}<p>The real ledger uses append-only entries and hash-chain checks. It is not compliance-certified.</p>${stub('Verify ledger')}</div></div><div class="card stack"><h2>Payroll ledger</h2><div class="empty">No payroll transactions exist in this prototype.</div><div class="row">${stub('Preview advance')}${stub('Preview repayment')}${stub('Preview payout')}</div></div>`:notice('Pay rates, payroll periods and payroll ledger details are owner-only in the real app.','info')}</div>`;
+  }
+  function team() {
+    return `<div class="stack">${title('Team & Invitations','Owner-only membership and invitation controls.')}
+      <div class="card stack"><h2>Invite someone</h2><div class="form-grid"><label>Email<input placeholder="person@example.com" type="email"></label><label>Role<select><option>Viewer</option><option>Editor</option></select></label></div>${stub('Preview invitation')}${notice('This preview cannot create or send an invitation. Real verification-email delivery remains a separate verification gap.')}</div>
+      <div class="card stack"><h2>Members</h2>${[['Demo owner','owner'],['Demo editor','editor'],['Demo viewer','viewer']].map(([name,role])=>`<div class="list-item row between"><div><strong>${name}</strong><p>${role}@example.com</p></div><div class="row">${badge(role,role==='owner'?'teal':'')}${role==='owner'?'':`${stub('Change role')}${stub('Make owner')}${stub('Remove')}`}</div></div>`).join('')}<p>Never use a design exercise to change actual clinic ownership or membership.</p></div></div>`;
+  }
+  function audit() {
+    return `<div class="stack">${title('Clinical audit trail','Owner-only metadata, not a full medical-content snapshot.')}
+      ${notice('Immutable application audit events record actor, action, record and revision. Project administrators can bypass rules. This is not a compliance certification.','info')}
+      <div class="card stack"><div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Record</th><th>Revision</th><th>Actor</th></tr></thead><tbody>${[['create','appointments/APT-DEMO-001',1],['update','patients/PAT-DEMO-002',2],['update','inventory/ITM-DEMO-001',3]].map(([action,record,rev])=>`<tr><td>Fictional server time</td><td>${action}</td><td>${record}</td><td>${rev}</td><td>demo-actor</td></tr>`).join('')}</tbody></table></div>${stub('Load more audit events')}</div></div>`;
+  }
+  function render() {
+    nav();
+    const screens={dashboard,appointments,patients,inventory,laboratory,settings,account,staff,team,audit};
+    document.getElementById('main').innerHTML=help()+screens[state.view]()+`<p class="screen-footer">VetCloudPro design reference · no production functions · ${esc(state.role)} preview · reload to reset local mock edits</p>`;
+  }
+  function showPatient(id, tab='overview') {
+    const p=patient(id); if(!p) return;
+    const tabs=['overview','billing','labs'];
+    const bodies={
+      overview:`<div class="row"><span class="avatar">${esc(p.name[0])}</span><div><h2>${esc(p.name)}</h2><p>${esc(p.id)} · ${esc(p.species)} · ${esc(p.breed)}</p></div></div><div class="divider"></div><div class="grid two"><div><h3>Owner contact</h3><p>${esc(p.owner)}</p><p>${esc(p.contact)}</p><p>sample-owner@example.com</p></div><div><h3>Clinical status</h3><p>${badge(p.status,'teal')} · ${p.weight} kg</p><p>Reason: fictional example only.</p></div></div><div class="divider"></div><h3>Clinical notes</h3><p>No actual diagnosis, treatment or medication advice is included in this mockup.</p><div class="dialog-actions">${button('Preview editing','stub','','data-label="Patient editing" '+disabled(canEdit()))}</div>`,
+      billing:`<div class="grid two"><div class="card"><p>Sample outstanding balance</p><div class="metric">${money(p.balance)}</div></div><div class="card"><h3>Important distinction</h3><p>Existing charges/balance are not a complete payment ledger. A full payment/receipt/void workflow is planned.</p></div></div><div class="divider"></div><h3>Sample billable item</h3><p>Consultation · Qty 1 · PHP 500.00</p><div class="dialog-actions">${stub('Preview adding billables')}${stub('Preview receipt layout')}</div>`,
+      labs:`<div class="placeholder">Saved lab image / result preview<br>No file access, upload, extraction or analysis.</div><div class="divider"></div><p>Future manual lab workflows and any AI draft must remain clearly distinguishable.</p>${stub('Preview lab record')}`
+    };
+    openDialog('Patient Clinical Dossier',notice('Fictional UI-only dossier. No medical, billing or inventory record can be changed.','info')+`<div class="tabs">${tabs.map(value=>`<button data-action="patient-tab" data-id="${esc(id)}" data-tab="${value}" class="${tab===value?'active':''}">${value[0].toUpperCase()+value.slice(1)}</button>`).join('')}</div>`+bodies[tab]);
+  }
+  function appointmentForm(id) {
+    if(!canEdit()) return flash('Viewer preview is read-only.');
+    const a=state.appointments.find(row=>row.id===id);
+    openDialog(a?'Edit appointment — local preview':'New appointment — local preview',`${notice('This form only changes disposable mock data in this page. It cannot book, notify, administer, dispense or charge.','info')}
+      <form id="appointment-form" data-id="${esc(id||'')}"><div class="form-grid" style="margin-top:16px">
+      <label>Patient<select name="patient" ${a?'disabled':''}>${state.patients.map(p=>`<option value="${p.id}" ${a?.patient===p.id?'selected':''}>${esc(p.name)} · ${esc(p.owner)}</option>`).join('')}</select></label>
+      <label>Type<select name="type">${options(types,a?.type||'Checkup')}</select></label>
+      <label>Scheduled date & time<input name="date" type="datetime-local" required value="${esc(a?.date||`${localDay()}T09:00`)}"></label>
+      <label>Duration (minutes)<input name="duration" type="number" min="5" max="480" required value="${a?.duration||30}"></label>
+      <label>Status<select name="status" id="form-status">${options(statuses,a?.status||'scheduled')}</select></label>
+      <label>Actual visit time<input name="actual" type="datetime-local" value="${esc(a?.actual||'')}"><small>Required for a completed visit preview.</small></label>
+      <label class="full">Scheduling notes<textarea name="notes" maxlength="2000">${esc(a?.notes||'')}</textarea></label></div>
+      <div class="dialog-actions"><button type="button" data-action="close">Discard</button><button class="primary">Apply to mockup only</button></div></form>`);
+  }
+  function inventoryForm(id) {
+    if(!canEdit()) return flash('Viewer preview is read-only.');
+    const i=state.inventory.find(row=>row.id===id);
+    openDialog('Inventory item — local preview',`${notice('No purchase, dispensing, stock transaction or cloud write takes place.','info')}<form id="inventory-form" data-id="${esc(id||'')}"><div class="form-grid" style="margin-top:16px">
+      <label>Item name<input name="name" required maxlength="100" value="${esc(i?.name||'')}"></label><label>Category<select name="category">${options(['Medicine','Supplies','Service','Grooming'],i?.category||'Supplies')}</select></label>
+      <label>Stock<input name="stock" type="number" min="0" required value="${i?.stock||0}"></label><label>Reorder threshold<input name="threshold" type="number" min="0" required value="${i?.threshold||0}"></label>
+      <label>Buying price<input name="buy" type="number" min="0" step=".01" required value="${i?.buy||0}"></label><label>Selling price<input name="sell" type="number" min="0" step=".01" required value="${i?.sell||0}"></label></div>
+      <div class="dialog-actions"><button type="button" data-action="close">Discard</button><button class="primary">Apply to mockup only</button></div></form>`);
+  }
+  function loginPreview() {
+    openDialog('Login screen preview',`<div class="login-preview stack"><div class="brand" style="color:#000">VetCloud<span style="color:#0f766e">Pro</span></div><h1>Secure staff login</h1><p>Presentation only. No account is authenticated.</p><label>Email<input value="designer@example.com" disabled></label><label>Password<input placeholder="No password needed or stored" disabled></label>${button('Enter UI demo','close','','class="primary"')}<p class="caption">Real authentication, invitation verification and device privacy remain in the React app.</p></div>`);
+  }
+  document.addEventListener('click',event=>{
+    const target=event.target.closest('button'); if(!target||target.disabled) return;
+    if(target.dataset.view||target.dataset.action==='navigate') {
+      state.view=target.dataset.view||target.dataset.id; state.query=''; document.getElementById('search').value=''; closeMenu(); render(); document.getElementById('main').focus(); return;
+    }
+    if(target.dataset.patientFilter) { state.patientFilter=target.dataset.patientFilter; render(); return; }
+    const {action,id}=target.dataset;
+    if(action==='close') closeDialog();
+    if(action==='patient') showPatient(id);
+    if(action==='patient-tab') showPatient(id,target.dataset.tab);
+    if(action==='new-appointment') appointmentForm();
+    if(action==='edit-appointment') appointmentForm(id);
+    if(action==='inventory-form') inventoryForm(id);
+    if(action==='reminder') { const a=state.appointments.find(a=>a.id===id); openDialog('Manual reminder preview',`<div class="notice info">No message is sent or copied to an external service.</div><p style="margin-top:16px">Hello ${esc(patient(a.patient)?.owner)}, ${esc(patient(a.patient)?.name)} has a ${esc(a.type.toLowerCase())} appointment on ${esc(dateText(a.date))}. Please contact the clinic to confirm.</p><p class="subtext">In the real app, staff review the recipient and send manually.</p>`); }
+    if(action==='refresh') { render(); flash('Mock screen refreshed. No server query was made.'); }
+    if(action==='stub') flash(`${target.dataset.label||target.textContent.trim()}: visual placeholder only. No real action was performed.`);
+    if(action==='clinic') openDialog('Clinic picker preview',`<div class="list-item"><h3>Sample Veterinary Clinic</h3><p>Role preview: ${esc(state.role)}</p>${badge('Fictional clinic','teal')}</div><p class="subtext">No clinic is created, selected in Firebase or transferred.</p>`);
+    if(action==='login') loginPreview();
+    if(action==='admission') openDialog('Quick admission preview',notice('Layout placeholder only. Patient creation and clinical validation belong to the real application.','info')+`<div class="form-grid" style="margin-top:16px"><label>Patient name<input placeholder="Fictional patient name"></label><label>Species<select><option>Canine</option><option>Feline</option></select></label><label>Owner<input placeholder="Sample owner"></label><label>Contact<input placeholder="No real contact details"></label><label class="full">Reason<textarea placeholder="Use fictional notes only"></textarea></label></div><div class="dialog-actions">${button('Close preview','close','','class="primary"')}</div>`);
+  });
+  document.addEventListener('change',event=>{
+    const element=event.target;
+    if(element.id==='role') { state.role=element.value; render(); }
+    if(element.id==='appointment-status') { state.appointmentStatus=element.value; render(); }
+    if(element.id==='appointment-type') { state.appointmentType=element.value; render(); }
+    if(element.id==='ai-toggle') { state.ai=element.checked; render(); flash('AI navigation preview changed. No AI provider is connected.'); }
+    if(element.id==='mock-consent') flash('Consent checkbox preview only. No browser storage was enabled.');
+  });
+  document.addEventListener('submit',event=>{
+    event.preventDefault();
+    const form=event.target; if(!canEdit()) return flash('Viewer preview is read-only.');
+    const data=new FormData(form);
+    if(form.id==='appointment-form') {
+      const previous=state.appointments.find(a=>a.id===form.dataset.id);
+      if(data.get('status')==='completed'&&!data.get('actual')) return flash('Choose an actual visit time for the completed preview.');
+      const value={id:previous?.id||`APT-MOCK-${state.appointments.length+1}`,patient:previous?.patient||String(data.get('patient')),type:String(data.get('type')),date:String(data.get('date')),duration:Number(data.get('duration')),status:String(data.get('status')),notes:String(data.get('notes')),actual:data.get('status')==='completed'?String(data.get('actual')):''};
+      state.appointments=[...state.appointments.filter(a=>a.id!==value.id),value]; closeDialog(); render(); flash('Local mock appointment updated. Nothing was saved, booked or sent.');
+    }
+    if(form.id==='inventory-form') {
+      const value={id:form.dataset.id||`ITM-MOCK-${state.inventory.length+1}`,name:String(data.get('name')),category:String(data.get('category')),stock:Number(data.get('stock')),threshold:Number(data.get('threshold')),buy:Number(data.get('buy')),sell:Number(data.get('sell'))};
+      state.inventory=[...state.inventory.filter(i=>i.id!==value.id),value]; closeDialog(); render(); flash('Local mock item updated. No real stock changed.');
+    }
+  });
+  document.getElementById('search').addEventListener('input',event=>{state.query=event.target.value;render();});
+  document.getElementById('close-dialog').addEventListener('click',closeDialog);
+  document.getElementById('backdrop').addEventListener('click',closeMenu);
+  document.getElementById('menu').addEventListener('click',()=>{const open=document.getElementById('sidebar').classList.toggle('open');document.getElementById('backdrop').classList.toggle('open',open);document.getElementById('menu').setAttribute('aria-expanded',String(open));});
+  render();
+  </script>
+</body>
+</html>

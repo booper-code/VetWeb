@@ -1,28 +1,92 @@
 "use client";
 
-import { PawPrint, Package, TestTube, Activity, FileText, AlertCircle, Lock, Unlock, CreditCard } from 'lucide-react';
-import type { InventoryItem, PatientRecord, Consultation } from '@/types';
+import { CalendarDays, Package, PawPrint, Plus } from 'lucide-react';
+import type { Appointment, Consultation, InventoryItem, PatientRecord } from '@/types';
+import { WorkspaceModeStrip } from '@/components/WorkspaceModeStrip';
+
+type WorkspaceView = 'quick' | 'advanced';
+
+const startOfToday = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+};
+
+const startOfTomorrow = () => startOfToday() + 24 * 60 * 60 * 1000;
+
+const formatMoney = (amount: number) => `PHP ${amount.toFixed(2)}`;
+
+const formatWhen = (iso: string) => {
+  const value = new Date(iso);
+  if (Number.isNaN(value.getTime())) return iso;
+  return value.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+const appointmentStatus = (appointment: Appointment, today: number) => {
+  if (appointment.status !== 'scheduled') return appointment.status;
+  return new Date(appointment.dueAt).getTime() < today ? 'overdue' : 'scheduled';
+};
+
+const statusClass = (status: string) => {
+  if (status === 'overdue' || status === 'no-show' || status === 'cancelled') return 'vc-badge vc-badge-red';
+  if (status === 'completed') return 'vc-badge vc-badge-teal';
+  if (status === 'scheduled') return 'vc-badge vc-badge-teal';
+  return 'vc-badge';
+};
 
 export const DashboardHome = ({
-  patients, 
-  inventory, 
-  consultations, 
-  onToggleStatus
-}: { 
-  patients: PatientRecord[]; 
-  inventory: InventoryItem[]; 
-  consultations: Consultation[]; 
+  patients,
+  inventory,
+  consultations,
+  appointments = [],
+  onToggleStatus,
+  partialData = false,
+  mode = 'quick',
+  clinicName = '',
+  canEdit = false,
+  onNavigate,
+  onRecordVisit,
+  onOpenPatient,
+  onOpenAppointments,
+  onRefreshAppointments,
+  appointmentsBusy = false,
+  appointmentsError = '',
+  appointmentsPartial = false,
+  appointmentsFromCache = false,
+  appointmentsRange = ''
+}: {
+  patients: PatientRecord[];
+  inventory: InventoryItem[];
+  consultations: Consultation[];
+  appointments?: Appointment[];
   onToggleStatus: (id: string) => void;
+  partialData?: boolean;
+  mode?: WorkspaceView;
+  clinicName?: string;
+  canEdit?: boolean;
+  onNavigate?: (tab: string) => void;
+  onRecordVisit?: () => void;
+  onOpenPatient?: (id: string) => void;
+  onOpenAppointments?: () => void;
+  onRefreshAppointments?: () => void;
+  appointmentsBusy?: boolean;
+  appointmentsError?: string;
+  appointmentsPartial?: boolean;
+  appointmentsFromCache?: boolean;
+  appointmentsRange?: string;
 }) => {
+  const todayLabel = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date());
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const today = startOfToday();
+  const tomorrow = startOfTomorrow();
+  const isAdvanced = mode === 'advanced';
+
   const activePatients = patients.filter(patient => patient.status !== 'Discharged');
-  const dischargedPatients = patients.filter(patient => patient.status === 'Discharged');
-  const confinedPatients = patients.filter(patient => patient.status === 'Confined');
   const waitingPatients = patients.filter(patient => patient.status === 'Waiting');
   const treatmentPatients = patients.filter(patient => patient.status === 'In Treatment');
-
-  const patientsWithLabs = patients.filter(
-    patient => patient.labResults && patient.labResults.length > 0
-  );
+  const confinedPatients = patients.filter(patient => patient.status === 'Confined');
+  const dischargedPatients = patients.filter(patient => patient.status === 'Discharged');
+  const draftConsultations = consultations.filter(consultation => consultation.status === 'Draft');
 
   const lowStockItems = inventory.filter(item =>
     item.category !== 'Service' &&
@@ -31,407 +95,424 @@ export const DashboardHome = ({
     item.stock <= item.threshold
   );
 
-  const medicineAndSupplies = inventory.filter(item =>
-    item.category === 'Medicine' || item.category === 'Supplies'
-  );
+  const patientsWithBalance = patients.filter(patient => patient.balance > 0);
+  const totalReceivables = patients.reduce((sum, patient) => sum + patient.balance, 0);
 
-  const serviceItems = inventory.filter(item =>
-    item.category === 'Service' || item.category === 'Grooming'
-  );
+  const dueAppointments = appointments
+    .filter(appointment =>
+      appointment.status === 'scheduled' &&
+      new Date(appointment.dueAt).getTime() < tomorrow
+    )
+    .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
 
-  const totalReceivables = patients.reduce(
-    (sum, patient) => sum + patient.balance,
-    0
-  );
+  const overdueCount = dueAppointments.filter(
+    appointment => new Date(appointment.dueAt).getTime() < today
+  ).length;
 
-  const draftConsultations = consultations.filter(
-    consultation => consultation.status === 'Draft'
-  );
-
-  const completedConsultations = consultations.filter(
-    consultation => consultation.status === 'Completed'
-  );
+  const recentConsultations = consultations.slice(-5).reverse();
 
   const recentBillables = patients
-    .flatMap(patient =>
-      (patient.billableItems || []).map(billable => ({
-        ...billable,
-        patientName: patient.name,
-        patientId: patient.id
-      }))
-    )
-    .slice(-6)
+    .flatMap(patient => (patient.billableItems || []).map(billable => ({
+      ...billable,
+      patientName: patient.name,
+      patientId: patient.id
+    })))
+    .slice(-5)
     .reverse();
 
-  const formatMoney = (amount: number) => `PHP ${amount.toFixed(2)}`;
+  const go = (tab: string) => () => onNavigate?.(tab);
+
+  const openAppointments = () => {
+    if (onOpenAppointments) onOpenAppointments();
+    else onNavigate?.('appointments');
+  };
+
+  const openPatient = (id: string) => {
+    if (onOpenPatient) onOpenPatient(id);
+    else onNavigate?.('patients');
+  };
+
+  const modeStrip = <WorkspaceModeStrip mode={mode} />;
+
+  const scheduleMeta = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="vc-note">
+        Loaded schedule only{appointmentsRange ? ` · ${appointmentsRange}` : ''}
+        {appointmentsPartial ? ' · More pages available' : ''}
+        {appointmentsFromCache ? ' · Cached snapshot, may be incomplete' : ''}.
+      </p>
+      {onRefreshAppointments && (
+        <button type="button" onClick={onRefreshAppointments} disabled={appointmentsBusy} className="vc-btn vc-btn-sm">
+          Refresh appointments
+        </button>
+      )}
+    </div>
+  );
+
+  const scheduleMessage = (
+    <>
+      {appointmentsBusy && <p role="status" className="vc-note">Loading appointments…</p>}
+      {appointmentsError && (
+        <p role="alert" className="rounded-[10px] border border-red-200 bg-red-50 p-3 text-[12px] text-red-900">
+          {appointmentsError}
+        </p>
+      )}
+    </>
+  );
+
+  const visitsList = (limit: number) => {
+    const rows = dueAppointments.slice(0, limit);
+    if (!rows.length) {
+      return <p className="vc-empty">No visits are currently due or overdue in the loaded schedule.</p>;
+    }
+    return (
+      <div className="vc-clean-list">
+        {rows.map(appointment => {
+          const status = appointmentStatus(appointment, today);
+          return (
+            <div key={appointment.id} className="vc-clean-row">
+              <div className="vc-clean-item">
+                <strong>
+                  {appointment.patientName}
+                  <span className="vc-muted"> · {appointment.type}</span>
+                </strong>
+                <p>{formatWhen(appointment.dueAt)} · {appointment.ownerName}</p>
+              </div>
+              <div className="vc-clean-actions">
+                <span className={statusClass(status)}>{status}</span>
+                <button type="button" onClick={openAppointments} className="vc-btn vc-btn-sm">
+                  Open
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const attentionList = (limit: number) => {
+    const stockRows = lowStockItems.slice(0, limit);
+    const balanceRows = patientsWithBalance.slice(0, Math.max(0, limit - stockRows.length));
+    if (!stockRows.length && !balanceRows.length) {
+      return <p className="vc-empty">No stock or balance alerts in the loaded records.</p>;
+    }
+    return (
+      <div className="vc-clean-list">
+        {stockRows.map(item => (
+          <div key={`stock-${item.itemCode}`} className="vc-clean-row">
+            <div className="vc-clean-item">
+              <strong>{item.itemName}</strong>
+              <p>{item.stock} remaining · reorder threshold {item.threshold}</p>
+            </div>
+            <div className="vc-clean-actions">
+              <span className="vc-badge vc-badge-red">Low stock</span>
+              <button type="button" onClick={go('inventory')} className="vc-btn vc-btn-sm">
+                View stock
+              </button>
+            </div>
+          </div>
+        ))}
+        {balanceRows.map(patient => (
+          <div key={`balance-${patient.id}`} className="vc-clean-row">
+            <div className="vc-clean-item">
+              <strong>
+                {patient.name}
+                <span className="vc-muted"> · {patient.ownerName}</span>
+              </strong>
+              <p>Outstanding balance: {formatMoney(patient.balance)}</p>
+            </div>
+            <div className="vc-clean-actions">
+              <button type="button" onClick={() => openPatient(patient.id)} className="vc-btn vc-btn-sm">
+                Open patient
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  if (!isAdvanced) {
+    return (
+      <div className="flex flex-col gap-[17px]">
+        {partialData && (
+          <p role="note" className="rounded-[12px] border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900">
+            Loaded-page summary only, not clinic-wide totals. Patient history, inventory and
+            consultations load in bounded pages.
+          </p>
+        )}
+
+        <div className="vc-page-heading">
+          <div>
+            <div className="vc-kicker">Welcome to your clinic</div>
+            <h1>Good day. What needs doing?</h1>
+            <p suppressHydrationWarning>
+              {clinicName || 'Clinic workspace'}
+              {todayLabel ? ` · ${todayLabel}` : ''}
+              {timezone ? ` · ${timezone}` : ''}
+            </p>
+          </div>
+        </div>
+
+        {modeStrip}
+
+        <div className="vc-action-grid" aria-label="Common clinic tasks">
+          <button type="button" onClick={onRecordVisit} disabled={!canEdit} className="vc-action-card">
+            <span className="vc-action-icon" aria-hidden="true"><Plus className="h-5 w-5" /></span>
+            <strong>Record a visit</strong>
+            <span className="vc-action-desc">Open the patient record to enter completed work, even from an earlier date.</span>
+          </button>
+          <button type="button" onClick={go('patients')} className="vc-action-card">
+            <span className="vc-action-icon" aria-hidden="true"><PawPrint className="h-5 w-5" /></span>
+            <strong>Find a patient</strong>
+            <span className="vc-action-desc">Open their medical and owner information.</span>
+          </button>
+          <button type="button" onClick={go('appointments')} disabled={!canEdit} className="vc-action-card">
+            <span className="vc-action-icon" aria-hidden="true"><CalendarDays className="h-5 w-5" /></span>
+            <strong>Book an appointment</strong>
+            <span className="vc-action-desc">Create or reschedule a clinic visit.</span>
+          </button>
+          <button type="button" onClick={go('inventory')} className="vc-action-card">
+            <span className="vc-action-icon" aria-hidden="true"><Package className="h-5 w-5" /></span>
+            <strong>Check stock</strong>
+            <span className="vc-action-desc">Find supplies and see low-stock alerts.</span>
+          </button>
+        </div>
+
+        <div className="vc-dual">
+          <section className="vc-card vc-section">
+            <div className="vc-section-head">
+              <div>
+                <h2>Visits needing attention</h2>
+                <p>{dueAppointments.length} due or overdue in the loaded schedule</p>
+              </div>
+              <button type="button" onClick={openAppointments} className="vc-btn vc-btn-sm">All appointments</button>
+            </div>
+            {scheduleMeta}
+            {scheduleMessage}
+            {visitsList(4)}
+          </section>
+
+          <section className="vc-card vc-section">
+            <div className="vc-section-head">
+              <div>
+                <h2>Things to review</h2>
+                <p>Stock levels and loaded balances</p>
+              </div>
+              <button type="button" onClick={go('patients')} className="vc-btn vc-btn-sm">Patient directory</button>
+            </div>
+            {attentionList(4)}
+          </section>
+        </div>
+
+        <div className="vc-bottom-strip">
+          <span className="vc-led" aria-hidden="true" />
+          <div>
+            <strong>Need to enter several visits?</strong>
+            <p>Open a patient, record the work, and review it before saving. Dates are always entered explicitly.</p>
+          </div>
+          <button type="button" onClick={onRecordVisit} disabled={!canEdit} className="vc-btn vc-btn-sm">
+            Start recording
+          </button>
+        </div>
+
+        <p className="vc-note">
+          Loaded records only. Balances are not payments received; no background synchronization or messaging occurs.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Dashboard Header */}
-      <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-sm overflow-hidden relative">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-teal-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+    <div className="flex flex-col gap-[17px]">
+      {partialData && (
+        <p role="note" className="rounded-[12px] border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900">
+          Loaded-page summary only, not clinic-wide totals. Patient history, inventory and
+          consultations load in bounded pages.
+        </p>
+      )}
 
-        <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <p className="text-xs font-black uppercase tracking-widest text-teal-300 mb-2">
-              Clinic Operations Overview
-            </p>
-            <h2 className="text-2xl font-black tracking-tight">
-              Dashboard
-            </h2>
-            <p className="text-slate-400 text-sm mt-1">
-              Live summary of admissions, billing, inventory, laboratory records, and consultation workflow.
-            </p>
-          </div>
-
-          <div className="bg-white/5 border border-white/10 rounded-2xl px-5 py-4">
-            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black">
-              Total Receivables
-            </p>
-            <p className="text-2xl font-black text-teal-300">
-              {formatMoney(totalReceivables)}
-            </p>
-          </div>
+      <div className="vc-page-heading">
+        <div>
+          <div className="vc-kicker">Clinic operations</div>
+          <h1>Overview</h1>
+          <p suppressHydrationWarning>
+            {clinicName || 'Clinic workspace'}
+            {todayLabel ? ` · ${todayLabel}` : ''}
+            {timezone ? ` · ${timezone}` : ''}
+            {' · '}Loaded snapshot
+          </p>
+        </div>
+        <div className="vc-lead-action">
+          <button type="button" onClick={go('appointments')} disabled={!canEdit} className="vc-btn vc-btn-primary">
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            New appointment
+          </button>
         </div>
       </div>
 
-      {/* Main KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
-              Active Patients
-            </span>
-            <span className="text-3xl font-black text-slate-900 mt-1 block">
-              {activePatients.length}
-            </span>
-            <p className="text-xs text-slate-400 mt-1">
-              Excludes discharged records
-            </p>
-          </div>
-          <div className="p-4 bg-teal-50 text-teal-600 rounded-xl">
-            <PawPrint className="w-6 h-6" />
-          </div>
-        </div>
+      {modeStrip}
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
-              Patient Balances
-            </span>
-            <span className={`text-3xl font-black mt-1 block ${totalReceivables > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
-              {formatMoney(totalReceivables)}
-            </span>
-            <p className="text-xs text-slate-400 mt-1">
-              Unpaid ledger total
-            </p>
-          </div>
-          <div className="p-4 bg-amber-50 text-amber-600 rounded-xl">
-            <CreditCard className="w-6 h-6" />
-          </div>
+      <div className="vc-stat-grid">
+        <div className="vc-stat">
+          <p className="vc-eyebrow">Due / overdue visits</p>
+          <p className="vc-metric">{dueAppointments.length}</p>
+          <p className="vc-caption">Scheduled for today or earlier</p>
         </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
-              Low Stock Alerts
-            </span>
-            <span className={`text-3xl font-black mt-1 block ${lowStockItems.length > 0 ? 'text-red-500' : 'text-slate-900'}`}>
-              {lowStockItems.length}
-            </span>
-            <p className="text-xs text-slate-400 mt-1">
-              Medicines and supplies only
-            </p>
-          </div>
-          <div className="p-4 bg-red-50 text-red-500 rounded-xl">
-            <Package className="w-6 h-6" />
-          </div>
+        <div className="vc-stat">
+          <p className="vc-eyebrow">Active patients</p>
+          <p className="vc-metric">{activePatients.length}</p>
+          <p className="vc-caption">Waiting or in treatment</p>
         </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-black block uppercase tracking-wider">
-              Lab Records
-            </span>
-            <span className="text-3xl font-black text-slate-900 mt-1 block">
-              {patientsWithLabs.length}
-            </span>
-            <p className="text-xs text-slate-400 mt-1">
-              Patients with lab panels
-            </p>
-          </div>
-          <div className="p-4 bg-purple-50 text-purple-600 rounded-xl">
-            <TestTube className="w-6 h-6" />
-          </div>
+        <div className="vc-stat">
+          <p className="vc-eyebrow">Low-stock alerts</p>
+          <p className="vc-metric">{lowStockItems.length}</p>
+          <p className="vc-caption">At or under reorder threshold</p>
+        </div>
+        <div className="vc-stat">
+          <p className="vc-eyebrow">Outstanding balances</p>
+          <p className="vc-metric">{formatMoney(totalReceivables)}</p>
+          <p className="vc-caption">Loaded balances, not collections</p>
         </div>
       </div>
 
-      {/* Secondary Status Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-            Waiting
-          </p>
-          <p className="text-2xl font-black text-amber-600 mt-1">
-            {waitingPatients.length}
-          </p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-            In Treatment
-          </p>
-          <p className="text-2xl font-black text-blue-600 mt-1">
-            {treatmentPatients.length}
-          </p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-            Confined
-          </p>
-          <p className="text-2xl font-black text-orange-600 mt-1">
-            {confinedPatients.length}
-          </p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-            Discharged
-          </p>
-          <p className="text-2xl font-black text-emerald-600 mt-1">
-            {dischargedPatients.length}
-          </p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-            Draft SOAPs
-          </p>
-          <p className="text-2xl font-black text-slate-900 mt-1">
-            {draftConsultations.length}
-          </p>
-        </div>
-      </div>
-
-      {/* Main Dashboard Body */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Recent Patient Ledger Activity */}
-        <div className="xl:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex items-center justify-between">
+      <div className="vc-dual">
+        <section className="vc-card vc-section">
+          <div className="vc-section-head">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-teal-600" />
-                Recent Billing Activity
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Latest medicines, services, and grooming items added to patient ledgers.
-              </p>
+              <h2>Today &amp; overdue</h2>
+              <p>{overdueCount} overdue · {dueAppointments.length} scheduled visits requiring review</p>
             </div>
-
-            <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full">
-              {recentBillables.length} Recent
-            </span>
+            <button type="button" onClick={openAppointments} className="vc-btn vc-btn-sm">Full schedule</button>
           </div>
+          {scheduleMeta}
+          {scheduleMessage}
+          {visitsList(5)}
+        </section>
 
-          <div className="divide-y divide-slate-100">
-            {recentBillables.length > 0 ? (
-              recentBillables.map(item => (
-                <div
-                  key={item.id}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
-                >
-                  <div>
-                    <p className="text-sm font-bold text-slate-900">
-                      {item.itemName}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {item.patientName} • {item.category} • Qty {item.quantity} • {item.date}
-                    </p>
-                  </div>
-
-                  <p className="text-sm font-black text-slate-900">
-                    {formatMoney(item.total)}
-                  </p>
-                </div>
-              ))
-            ) : (
-              <div className="p-10 text-center text-slate-400">
-                <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                <p className="text-sm font-medium">
-                  No billing activity recorded yet.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Inventory Snapshot */}
-        <div className="space-y-6">
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <Package className="w-5 h-5 text-amber-600" />
-              Inventory Snapshot
-            </h3>
-
-            <div className="space-y-3">
-              <div className="flex justify-between items-center bg-slate-50 border border-slate-100 rounded-xl p-3">
-                <span className="text-xs font-bold text-slate-500 uppercase">
-                  Medicines / Supplies
-                </span>
-                <span className="text-sm font-black text-slate-900">
-                  {medicineAndSupplies.length}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center bg-slate-50 border border-slate-100 rounded-xl p-3">
-                <span className="text-xs font-bold text-slate-500 uppercase">
-                  Services / Grooming
-                </span>
-                <span className="text-sm font-black text-slate-900">
-                  {serviceItems.length}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center bg-red-50 border border-red-100 rounded-xl p-3">
-                <span className="text-xs font-bold text-red-600 uppercase">
-                  Critical Stock
-                </span>
-                <span className="text-sm font-black text-red-600">
-                  {lowStockItems.length}
-                </span>
-              </div>
+        <section className="vc-card vc-section">
+          <div className="vc-section-head">
+            <div>
+              <h2>Needs attention</h2>
+              <p>Inventory and balances requiring follow-up</p>
             </div>
+            <button type="button" onClick={go('inventory')} className="vc-btn vc-btn-sm">Inventory</button>
           </div>
-
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden p-6">
-            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-red-500" />
-              Critical Stock Alerts
-            </h3>
-
-            <div className="space-y-3">
-              {lowStockItems.length > 0 ? (
-                lowStockItems.map(item => (
-                  <div
-                    key={item.itemCode}
-                    className="p-4 bg-red-50 border border-red-200 rounded-xl"
-                  >
-                    <h4 className="text-sm font-bold text-slate-900">
-                      {item.itemName}
-                    </h4>
-                    <p className="text-xs text-red-600 font-medium mt-1">
-                      Stock: {item.stock} / Threshold: {item.threshold}
-                    </p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">
-                      {item.category} • {item.itemCode}
-                    </p>
-                  </div>
-                ))
-              ) : (
-                <div className="p-4 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-xl text-center text-sm font-medium">
-                  Medicines and supplies are above reorder thresholds.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+          {attentionList(5)}
+        </section>
       </div>
 
-      {/* Consultation Queue */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
+      <section className="vc-card vc-section">
+        <div className="vc-section-head">
           <div>
-            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-slate-600" />
-              Consultation Queue
-            </h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Draft and completed consultation records currently stored in the clinic ledger.
-            </p>
-          </div>
-
-          <div className="flex gap-2">
-            <span className="text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 rounded-full">
-              {draftConsultations.length} Draft
-            </span>
-            <span className="text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200 px-3 py-1 rounded-full">
-              {completedConsultations.length} Completed
-            </span>
+            <h2>Clinic status</h2>
+            <p>Current loaded patient and consultation states</p>
           </div>
         </div>
+        <div className="vc-chip-row">
+          <span className="vc-badge vc-badge-amber">Waiting {waitingPatients.length}</span>
+          <span className="vc-badge vc-badge-blue">In treatment {treatmentPatients.length}</span>
+          <span className="vc-badge vc-badge-purple">Confined {confinedPatients.length}</span>
+          <span className="vc-badge vc-badge-teal">Discharged {dischargedPatients.length}</span>
+          <span className="vc-badge">Draft SOAPs {draftConsultations.length}</span>
+        </div>
+      </section>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+      <section className="vc-card vc-section">
+        <div className="vc-section-head">
+          <div>
+            <h2>Recent entered visits</h2>
+            <p>Consultation records currently stored in the clinic ledger</p>
+          </div>
+          <button type="button" onClick={go('patients')} className="vc-btn vc-btn-sm">Patients &amp; history</button>
+        </div>
+        <div className="vc-table-wrap">
+          <table className="vc-table">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs font-semibold uppercase border-b border-slate-200">
-                <th className="p-4">Record ID</th>
-                <th className="p-4">Patient</th>
-                <th className="p-4">Consultation Notes</th>
-                <th className="p-4">Status</th>
-                <th className="p-4 text-right">Action</th>
+              <tr>
+                <th>Patient</th>
+                <th>Record</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th>Action</th>
               </tr>
             </thead>
-
-            <tbody className="divide-y divide-slate-100">
-              {consultations.length > 0 ? (
-                consultations.map(item => (
-                  <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="p-4 text-sm font-bold text-slate-800">
-                      {item.id}
-                    </td>
-
-                    <td className="p-4 text-sm font-bold text-slate-800">
-                      <div>
-                        {item.patient}
-                        <span className="text-xs text-slate-500 block">
-                          Owner: {item.client}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="p-4 text-sm text-slate-600 max-w-xs truncate">
-                      {item.notes}
-                    </td>
-
-                    <td className="p-4 text-sm">
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-                        item.status === 'Draft'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-teal-100 text-teal-800'
-                      }`}>
-                        {item.status === 'Draft' ? (
-                          <Unlock className="w-3 h-3" />
-                        ) : (
-                          <Lock className="w-3 h-3" />
-                        )}
-                        {item.status}
-                      </span>
-                    </td>
-
-                    <td className="p-4 text-right">
+            <tbody>
+              {recentConsultations.length ? recentConsultations.map(item => (
+                <tr key={item.id}>
+                  <td>
+                    <strong>{item.patient}</strong>
+                    <small>{item.client}</small>
+                  </td>
+                  <td>
+                    <strong>{item.id}</strong>
+                    <small>{item.type}</small>
+                  </td>
+                  <td>{item.date}</td>
+                  <td>
+                    <span className={item.status === 'Draft' ? 'vc-badge vc-badge-amber' : 'vc-badge vc-badge-teal'}>
+                      {item.status}
+                    </span>
+                  </td>
+                  <td>
+                    {item.patientId ? (
+                      <span className="vc-note">Locked clinical record</span>
+                    ) : (
                       <button
                         type="button"
                         onClick={() => onToggleStatus(item.id)}
-                        className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-200 transition-all"
+                        disabled={!canEdit}
+                        className="vc-btn vc-btn-sm"
                       >
-                        Change State
+                        Change state
                       </button>
-                    </td>
-                  </tr>
-                ))
-              ) : (
+                    )}
+                  </td>
+                </tr>
+              )) : (
                 <tr>
-                  <td colSpan={5} className="p-10 text-center text-slate-400">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                    No consultation records found.
+                  <td colSpan={5}>
+                    <span className="vc-note">No consultation records found.</span>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
+
+      <section className="vc-card vc-section">
+        <div className="vc-section-head">
+          <div>
+            <h2>Recent billing activity</h2>
+            <p>Latest medicines, services and grooming items added to patient ledgers</p>
+          </div>
+          <span className="vc-badge">{recentBillables.length} recent</span>
+        </div>
+        {recentBillables.length ? (
+          <div className="vc-clean-list">
+            {recentBillables.map(item => (
+              <div key={item.id} className="vc-clean-row">
+                <div className="vc-clean-item">
+                  <strong>{item.itemName}</strong>
+                  <p>{item.patientName} · {item.category} · Qty {item.quantity} · {item.date}</p>
+                </div>
+                <div className="vc-clean-actions">
+                  <strong className="text-[13px] text-ink">{formatMoney(item.total)}</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="vc-empty">No billing activity recorded yet.</p>
+        )}
+      </section>
+
+      <p className="vc-note">
+        These counts cover loaded records only. Scheduling, clinical notes, stock use, charges and
+        payments are distinct operations.
+      </p>
     </div>
   );
 };

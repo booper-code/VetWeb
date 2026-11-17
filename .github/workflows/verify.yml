@@ -1,0 +1,48 @@
+name: Verify application
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - run: npm run lint -- --max-warnings=1
+      - run: npm run test:rules
+      - run: npm run test:images
+      - run: npm run test:backup
+      - run: npm run test:offline
+      - run: npm run test:records
+      - run: npm run test:workflows
+      - run: npm run test:appointments
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:prototype
+      - run: npm run test:offline:browser
+      - run: npm run build
+      - run: npm run build:staging
+        env:
+          NEXT_PUBLIC_IMAGE_WORKER_URL: https://vetcloudpro-images.jmferrari16.workers.dev
+      - run: npm run test:appointments:browser

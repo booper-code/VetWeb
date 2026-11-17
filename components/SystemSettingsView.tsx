@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Settings, Sparkles, Loader2, FileSpreadsheet, Database } from 'lucide-react';
+import { Sparkles, Loader2, FileSpreadsheet, Database } from 'lucide-react';
 import type { InventoryItem } from '@/types';
 import {
   AI_PROVIDERS,
@@ -17,7 +17,6 @@ import {
 
 export const SystemSettingsView = ({
   inventory, 
-  setInventory,
   onAddInventoryItem,
   aiEnabled,
   canManageAI,
@@ -26,7 +25,6 @@ export const SystemSettingsView = ({
   triggerToast 
 }: { 
   inventory: InventoryItem[]; 
-  setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
   onAddInventoryItem: (item: InventoryItem) => Promise<void>;
   aiEnabled: boolean;
   canManageAI: boolean;
@@ -123,10 +121,16 @@ export const SystemSettingsView = ({
   const handleCSVFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      triggerToast('CSV files must be at most 2 MB. Nothing was imported.');
+      e.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
 
     reader.onload = async () => {
+      let savedCount = 0;
       try {
         const text = String(reader.result || '');
         const rows = text
@@ -154,7 +158,8 @@ export const SystemSettingsView = ({
         const existingCodes = new Set(inventory.map(item => item.itemCode));
         const importedItems: InventoryItem[] = [];
 
-        rows.slice(1).forEach((row, index) => {
+        if (rows.length > 501) throw new Error('Import at most 500 inventory rows at a time.');
+        rows.slice(1).forEach(row => {
           const values = parseCSVLine(row);
 
           const itemName = getValue(values, ['itemname', 'name', 'description']);
@@ -168,7 +173,7 @@ export const SystemSettingsView = ({
 
           const rawCode = getValue(values, ['itemcode', 'code', 'sku']);
           const prefix = isService ? 'SRV' : 'ITM';
-          const generatedCode = `${prefix}-CSV-${String(index + 1).padStart(4, '0')}`;
+          const generatedCode = `${prefix}-CSV-${crypto.randomUUID()}`;
           const itemCode = rawCode || generatedCode;
 
           if (existingCodes.has(itemCode)) return;
@@ -208,12 +213,13 @@ export const SystemSettingsView = ({
 
         for (const item of importedItems) {
           await onAddInventoryItem(item);
+          savedCount += 1;
         }
 
         triggerToast(`Imported ${importedItems.length} inventory item/s from CSV.`);
       } catch (error) {
         console.error("CSV import failed:", error);
-        triggerToast("CSV import failed. Please check the file format.");
+        triggerToast(`CSV import stopped after ${savedCount} saved item(s). ${error instanceof Error ? error.message : 'Check the file and retry.'}`);
       } finally {
         e.target.value = '';
       }

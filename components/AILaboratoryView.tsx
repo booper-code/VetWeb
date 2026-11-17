@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { TestTube, Plus, Sparkles, Loader2, PlusCircle, X } from 'lucide-react';
+import { TestTube, Sparkles, Loader2, PlusCircle } from 'lucide-react';
 import { compressImageFile, DOCUMENT_IMAGE_OPTIONS } from '@/lib/images';
 
 export const AILaboratoryView = ({

@@ -5,18 +5,30 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:staging": "node scripts/build-static.mjs",
     "start": "next start",
     "lint": "eslint",
-    "test:rules": "npx --yes firebase-tools emulators:exec --only firestore,auth --project demo-vetcloud-rules \"node tests/firestore.rules.test.mjs\"",
-    "test:images": "node --test tests/image-migration.test.mjs tests/image-service.test.mjs",
-    "migrate:images": "node scripts/migrate-patient-images.mjs"
+    "test:rules": "npx --yes firebase-tools@15.36.0 emulators:exec --only firestore,auth --project demo-vetcloud-rules \"node tests/firestore.rules.test.mjs && node tests/clinic-pages.rules.test.mjs && node tests/clinical-audit.rules.test.mjs && node tests/appointments.rules.test.mjs\"",
+    "test:appointments": "node --test tests/appointment-values.test.mjs tests/appointments-workflow.test.mjs",
+    "test:appointments:browser": "node --test tests/appointments.browser.test.mjs",
+    "test:prototype": "node --test tests/ui-prototype.browser.test.mjs",
+    "test:offline": "node --test tests/offline-policy.test.mjs",
+    "test:records": "node --test tests/record-validation.test.mjs",
+    "test:consultations": "node --test tests/consultation-values.test.mjs tests/clinical-activity.test.mjs",
+    "test:workflows": "node --test tests/mutation-scope.test.mjs tests/clinic-pages-hook.test.mjs tests/clinic-team-scope.test.mjs",
+    "test:offline:browser": "npx --yes firebase-tools@15.36.0 emulators:exec --only firestore,auth --project demo-vetcloud-rules \"node --test tests/offline-browser.test.mjs\"",
+    "test:images": "node --test tests/image-migration.test.mjs tests/image-service.test.mjs tests/image-service-hardening.test.mjs tests/image-service-body-limit.test.mjs tests/image-service-rate-limit.test.mjs tests/image-value.test.mjs",
+    "migrate:images": "node scripts/migrate-patient-images.mjs",
+    "test:backup": "node --test tests/image-backup.test.mjs tests/image-restore.test.mjs",
+    "backup:images": "node scripts/backup-referenced-images.mjs",
+    "restore:images": "node scripts/restore-referenced-images.mjs"
   },
   "dependencies": {
-    "firebase": "^10.11.0",
+    "firebase": "12.19.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.9",
     "lucide-react": "^1.21.0",
-    "next": "16.2.9",
+    "next": "16.4.6",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -25,8 +37,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "0.28.2",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.4.6",
+    "jsdom": "31.0.1",
+    "playwright": "1.65.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

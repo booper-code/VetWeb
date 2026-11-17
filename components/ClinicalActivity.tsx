@@ -1,0 +1,375 @@
+"use client";
+
+import { useMemo, useState } from 'react';
+import { Activity, Loader2, PlusCircle, Stethoscope, X } from 'lucide-react';
+import type { Consultation, ConsultationDraft, InventoryItem, PatientRecord, TreatmentLine } from '@/types';
+import {
+  CONSULTATION_TYPES,
+  MAX_STOCK_LINES,
+  consultationMatchesPatient,
+  consultationTime,
+  consultationValidationError,
+  isStockTreatment,
+  toLocalDateTimeValue
+} from '@/lib/consultation-values';
+
+const newLineId = () => `TRT-${crypto.randomUUID()}`;
+
+export const ClinicalActivity = ({
+  patient,
+  consultations,
+  inventory,
+  canEdit,
+  staffUid,
+  staffName,
+  appointmentId = null,
+  initialOccurredAt,
+  onSave,
+  triggerToast
+}: {
+  patient: PatientRecord;
+  consultations: Consultation[];
+  inventory: InventoryItem[];
+  canEdit: boolean;
+  staffUid: string;
+  staffName: string;
+  appointmentId?: string | null;
+  initialOccurredAt?: string;
+  onSave: (draft: ConsultationDraft) => Promise<boolean>;
+  triggerToast: (msg: string) => void;
+}) => {
+  const linkedVisitTime = appointmentId ? toLocalDateTimeValue(initialOccurredAt || new Date()) : '';
+  const defaultOccurredAt = () => linkedVisitTime || toLocalDateTimeValue();
+  const [showForm, setShowForm] = useState(Boolean(appointmentId));
+  const [occurredAt, setOccurredAt] = useState(defaultOccurredAt);
+  const [type, setType] = useState<string>('Consultation');
+  const [notes, setNotes] = useState('');
+  const [lines, setLines] = useState<TreatmentLine[]>([]);
+  const [itemCode, setItemCode] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [dose, setDose] = useState('');
+  const [lineNotes, setLineNotes] = useState('');
+  const [error, setError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const patientConsultations = useMemo(() => consultations
+    .filter(entry => consultationMatchesPatient(entry, patient))
+    .sort((a, b) => consultationTime(b) - consultationTime(a)), [consultations, patient]);
+
+  const selectedItem = inventory.find(entry => entry.itemCode === itemCode) ?? null;
+  const stockLineCount = lines.filter(isStockTreatment).length;
+
+  const resetForm = () => {
+    setOccurredAt(defaultOccurredAt());
+    setType('Consultation');
+    setNotes('');
+    setLines([]);
+    setItemCode('');
+    setQuantity(1);
+    setDose('');
+    setLineNotes('');
+    setError('');
+    setShowForm(false);
+  };
+
+  const addLine = () => {
+    if (!selectedItem) {
+      setError('Choose an inventory item or service first.');
+      return;
+    }
+    const whole = Math.trunc(quantity);
+    if (!Number.isSafeInteger(whole) || whole < 1) {
+      setError('Use a whole positive quantity.');
+      return;
+    }
+    const existing = lines.find(line => line.itemCode === selectedItem.itemCode);
+    const nextQuantity = (existing?.quantity ?? 0) + whole;
+    if (isStockTreatment(selectedItem) && nextQuantity > selectedItem.stock) {
+      setError(`Only ${selectedItem.stock} ${selectedItem.itemName} left in stock.`);
+      return;
+    }
+    if (!existing && isStockTreatment(selectedItem) && stockLineCount >= MAX_STOCK_LINES) {
+      setError(`Apply at most ${MAX_STOCK_LINES} stock items per treatment record.`);
+      return;
+    }
+    setLines(previous => existing
+      ? previous.map(line => line.itemCode === existing.itemCode
+        ? { ...line, quantity: nextQuantity, dose: dose || line.dose, notes: lineNotes || line.notes }
+        : line)
+      : [...previous, {
+        id: newLineId(),
+        itemCode: selectedItem.itemCode,
+        itemName: selectedItem.itemName,
+        category: selectedItem.category,
+        quantity: whole,
+        unitPrice: selectedItem.sellingPrice,
+        dose,
+        notes: lineNotes
+      }]);
+    setItemCode('');
+    setQuantity(1);
+    setDose('');
+    setLineNotes('');
+    setError('');
+  };
+
+  const removeLine = (id: string) => setLines(previous => previous.filter(line => line.id !== id));
+
+  const handleSave = async () => {
+    if (!canEdit || isSaving) return;
+    const draft: ConsultationDraft = {
+      patientId: patient.id,
+      occurredAt: new Date(occurredAt).toISOString(),
+      type,
+      notes: notes.trim(),
+      appointmentId,
+      treatments: lines,
+      staffUid,
+      staffName
+    };
+    const invalid = consultationValidationError(draft, inventory);
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
+    setIsSaving(true);
+    setError('');
+    try {
+      const saved = await onSave(draft);
+      if (!saved) return;
+      resetForm();
+      triggerToast(draft.treatments.some(isStockTreatment)
+        ? 'Treatment record saved. Stock moves were applied once.'
+        : 'Treatment record saved. No stock changed.');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'The treatment record was not saved.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+      <div className="flex flex-col gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-teal-600" />
+            Clinical activity
+          </h4>
+          <p className="text-xs text-slate-500 mt-1">
+            Visit time is stored separately from the recorded/audit time. Medicine and supply lines move stock once; they do not add charges.
+          </p>
+        </div>
+        {canEdit && !showForm && (
+          <button
+            type="button"
+            onClick={() => {
+              setOccurredAt(defaultOccurredAt());
+              setShowForm(true);
+            }}
+            className="vc-btn vc-btn-primary shrink-0"
+          >
+            <PlusCircle className="h-4 w-4" aria-hidden="true" />
+            Record treatment
+          </button>
+        )}
+      </div>
+
+      {!canEdit && (
+        <p className="text-xs font-semibold text-slate-500">
+          View-only: an online owner or editor can record treatments.
+        </p>
+      )}
+
+      {showForm && canEdit && (
+        <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 space-y-4">
+          {appointmentId && (
+            <p className="rounded-lg border border-teal-200 bg-white px-3 py-2 text-[11px] font-semibold text-teal-900">
+              Linked to the completed appointment visit at {new Date(occurredAt).toLocaleString()}. Saving creates a separate treatment record; it does not change the appointment.
+            </p>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="vc-label">
+              Actual visit time
+              <input
+                type="datetime-local"
+                value={occurredAt}
+                max={toLocalDateTimeValue()}
+                onChange={event => setOccurredAt(event.target.value)}
+                className="vc-input"
+              />
+            </label>
+            <label className="vc-label">
+              Visit type
+              <select value={type} onChange={event => setType(event.target.value)} className="vc-input">
+                {CONSULTATION_TYPES.map(option => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <div className="vc-label">
+              Recorded by
+              <div className="flex min-h-[38px] items-center rounded-[9px] border border-slate-200 bg-slate-100 px-3 text-xs font-bold text-slate-600">
+                {staffName || 'Signed-in staff'}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Treatment &amp; service lines</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              <select
+                aria-label="Treatment item"
+                value={itemCode}
+                onChange={event => setItemCode(event.target.value)}
+                className="vc-input lg:col-span-2"
+              >
+                <option value="">Choose medicine, supply or service…</option>
+                {inventory.map(item => (
+                  <option key={item.itemCode} value={item.itemCode}>
+                    {item.itemName} · {item.category}
+                    {isStockTreatment(item) ? ` · ${item.stock} left` : ''}
+                  </option>
+                ))}
+              </select>
+              <input
+                aria-label="Quantity"
+                type="number"
+                min={1}
+                step={1}
+                value={quantity}
+                onChange={event => setQuantity(Number(event.target.value))}
+                className="vc-input"
+                placeholder="Qty"
+              />
+              <button type="button" onClick={addLine} className="vc-btn justify-center">
+                <PlusCircle className="h-4 w-4" aria-hidden="true" /> Add line
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                aria-label="Dose or instructions"
+                type="text"
+                maxLength={200}
+                value={dose}
+                onChange={event => setDose(event.target.value)}
+                className="vc-input"
+                placeholder="Dose / instructions (e.g. 0.5 mL once daily)"
+              />
+              <input
+                aria-label="Line note"
+                type="text"
+                maxLength={500}
+                value={lineNotes}
+                onChange={event => setLineNotes(event.target.value)}
+                className="vc-input"
+                placeholder="Optional line note"
+              />
+            </div>
+
+            {lines.length === 0 ? (
+              <p className="text-xs text-slate-500">No treatment lines yet. A notes-only visit is allowed.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {lines.map(line => (
+                  <li key={line.id} className="flex items-start justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800">
+                        {line.itemName} × {line.quantity}
+                        <span className="ml-2 font-medium text-slate-500">{line.category}</span>
+                      </p>
+                      {(line.dose || line.notes) && (
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          {[line.dose, line.notes].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeLine(line.id)}
+                      className="text-slate-400 hover:text-red-600"
+                      aria-label={`Remove ${line.itemName}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {stockLineCount > 0 && (
+              <p className="text-[11px] font-medium text-amber-800">
+                {stockLineCount} stock line{stockLineCount === 1 ? '' : 's'} will be dispensed exactly once when saved.
+              </p>
+            )}
+          </div>
+
+          <label className="vc-label">
+            Clinical notes
+            <textarea
+              value={notes}
+              onChange={event => setNotes(event.target.value)}
+              maxLength={5000}
+              className="vc-input min-h-[96px] resize-y"
+              placeholder="Findings, diagnosis and follow-up instructions. Do not use AI output as a clinical decision."
+            />
+          </label>
+
+          {error && <p role="alert" className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={resetForm} disabled={isSaving} className="vc-btn">Cancel</button>
+            <button type="button" onClick={handleSave} disabled={isSaving} className="vc-btn vc-btn-primary">
+              {isSaving && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              Save treatment
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {patientConsultations.length === 0 ? (
+          <div className="vc-empty">
+            <Stethoscope className="h-6 w-6 text-slate-300 mx-auto mb-2" aria-hidden="true" />
+            No clinical activity recorded for this patient yet.
+          </div>
+        ) : patientConsultations.map(entry => (
+          <article key={entry.id} className="rounded-xl border border-slate-200 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-slate-900">{entry.type}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Visit {entry.occurredAt ? new Date(entry.occurredAt).toLocaleString() : entry.date || 'time not recorded'}
+                  {entry.staffName ? ` · ${entry.staffName}` : ''}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {entry.appointmentId && (
+                  <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                    Appointment linked
+                  </span>
+                )}
+                <span className={`vc-badge ${entry.status === 'Completed' ? 'vc-badge-teal' : 'vc-badge-amber'}`}>
+                  {entry.status}
+                </span>
+              </div>
+            </div>
+            {entry.notes && <p className="mt-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">{entry.notes}</p>}
+            {entry.treatments && entry.treatments.length > 0 && (
+              <ul className="mt-2 flex flex-wrap gap-1.5">
+                {entry.treatments.map(line => (
+                  <li key={line.id} className="rounded-md bg-slate-50 border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700">
+                    {line.itemName} × {line.quantity}
+                    {line.dose ? ` · ${line.dose}` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-2 text-[10px] text-slate-400">
+              {entry.recordedAt
+                ? `Recorded ${new Date(entry.recordedAt).toLocaleString()}`
+                : 'Entry time is available in the audit trail.'}
+            </p>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+};

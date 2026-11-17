@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Building2, CheckCircle2, Loader2, LogOut, Plus, Users } from 'lucide-react';
 import type { ClinicInvitation, ClinicMembership, ClinicSessionUser } from '@/types';
+import { refreshInvitationVerification, sendInvitationVerification, verificationErrorMessage } from '@/lib/invitation-verification';
 import {
   acceptClinicInvitation,
   createClinic,
@@ -29,24 +30,37 @@ export const ClinicWorkspaceScreen = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState('');
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [verificationMessage, setVerificationMessage] = useState('');
+  const [verificationBusy, setVerificationBusy] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
     const loadWorkspace = async () => {
       setIsLoading(true);
       setError('');
+      setInvitation(null);
+      setNeedsVerification(false);
       try {
         const memberships = await listUserClinics(user.uid);
         if (active) setClinics(memberships);
 
         if (invitationClinicId && invitationId) {
+          // Leave the retry controls available if the network refresh fails.
+          if (active) setNeedsVerification(true);
+          if (!await refreshInvitationVerification(user.uid)) {
+            if (active) setNeedsVerification(true);
+            return;
+          }
+          if (active) setNeedsVerification(false);
           const invite = await getClinicInvitation(invitationClinicId, invitationId);
           if (active) setInvitation(invite);
         }
       } catch (loadError) {
         console.error('[Clinic workspace] Failed to load memberships:', loadError);
         if (active) {
-          setError('Could not load your clinics. The clinic membership rules may not be published yet.');
+          setError('Could not load the workspace or invitation. Check your connection and that the invitation is current and addressed to this account.');
         }
       } finally {
         if (active) setIsLoading(false);
@@ -55,7 +69,29 @@ export const ClinicWorkspaceScreen = ({
 
     loadWorkspace();
     return () => { active = false; };
-  }, [user.uid, invitationClinicId, invitationId]);
+  }, [user.uid, invitationClinicId, invitationId, refreshKey]);
+
+  const handleVerification = async (resend: boolean) => {
+    setVerificationBusy(true);
+    setVerificationMessage('');
+    try {
+      const verified = await refreshInvitationVerification(user.uid);
+      if (verified) {
+        setNeedsVerification(false);
+        setVerificationMessage('Email verified.');
+        setRefreshKey(value => value + 1);
+      } else if (resend) {
+        await sendInvitationVerification(user.uid);
+        setVerificationMessage('Verification email sent. Check your inbox and spam folder, open the link, then choose “I’ve verified”.');
+      } else {
+        setVerificationMessage('This email is not verified yet. Open the verification link in your inbox, then try again.');
+      }
+    } catch (verificationError) {
+      setVerificationMessage(verificationErrorMessage(verificationError));
+    } finally {
+      setVerificationBusy(false);
+    }
+  };
 
   const handleCreateClinic = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -93,9 +129,9 @@ export const ClinicWorkspaceScreen = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl overflow-hidden">
-        <div className="bg-slate-900 text-white px-7 py-6 flex items-center justify-between gap-4">
+    <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
+      <div className="w-full max-w-3xl overflow-hidden rounded-[18px] border border-line bg-white shadow-[0_24px_70px_#0b26381f]">
+        <div className="flex items-center justify-between gap-4 bg-nav px-7 py-6 text-white">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] font-bold text-teal-300">VetCloudPro</p>
             <h1 className="text-2xl font-black mt-1">Your clinic workspace</h1>
@@ -111,9 +147,21 @@ export const ClinicWorkspaceScreen = ({
         </div>
 
         <div className="p-6 sm:p-8 space-y-7">
+          {needsVerification && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-slate-900">
+              <h2 className="font-bold">Verify your email to open and accept this invitation</h2>
+              <p className="mt-2">Use the verification link sent to {user.email}. Your existing clinics remain available below.</p>
+              <div className="mt-3 flex gap-3">
+                <button type="button" disabled={verificationBusy} onClick={() => handleVerification(true)} className="rounded-lg bg-slate-900 px-3 py-2 text-white disabled:opacity-50">Send / resend email</button>
+                <button type="button" disabled={verificationBusy} onClick={() => handleVerification(false)} className="rounded-lg border border-slate-400 px-3 py-2 disabled:opacity-50">I’ve verified</button>
+              </div>
+            </section>
+          )}
+          {verificationMessage && <p role="status" className="text-sm text-slate-700">{verificationMessage}</p>}
           {error && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               {error}
+              <button type="button" disabled={isLoading} onClick={() => setRefreshKey(value => value + 1)} className="ml-3 font-bold underline">Retry</button>
             </div>
           )}
 
@@ -195,7 +243,7 @@ export const ClinicWorkspaceScreen = ({
                   <button
                     type="submit"
                     disabled={isWorking || !clinicName.trim()}
-                    className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-black text-white hover:bg-accent-strong disabled:opacity-50"
                   >
                     {isWorking && <Loader2 className="w-4 h-4 animate-spin" />}
                     Create clinic

@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import ts from 'typescript';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword } from 'firebase/auth';
+import * as fs from 'firebase/firestore';
+
+const projectId = 'demo-vetcloud-rules';
+const host = process.env.FIRESTORE_EMULATOR_HOST;
+if (!host || !/^(127\.0\.0\.1|localhost):\d+$/.test(host)) {
+  throw new Error('Pagination integration tests require a local Firestore emulator.');
+}
+const app = initializeApp({ apiKey: 'fake-key', projectId }, `paging-${Date.now()}`);
+const auth = getAuth(app);
+connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+const db = fs.getFirestore(app);
+const [hostname, port] = host.split(':');
+fs.connectFirestoreEmulator(db, hostname, Number(port));
+globalThis.__pagingHandles = { db, firestore: fs };
+const url = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+let source = await readFile(new URL('../lib/clinic-pages.ts', import.meta.url), 'utf8');
+source = source.replace('@/lib/firebase', url('export const initializeFirebase = async () => globalThis.__pagingHandles;'));
+const { loadClinicPage, appendUnique, CLINIC_PAGE_SIZE } = await import(url(ts.transpileModule(source, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
+}).outputText));
+
+test('real Firestore cursors bound pages, preserve legacy history and isolate clinics', async () => {
+  try {
+    const user = (await createUserWithEmailAndPassword(auth, `paging-${Date.now()}@example.com`, 'PagingFixture123!')).user;
+    const clinicId = `paging-${Date.now()}`;
+    const batch = fs.writeBatch(db);
+    batch.set(fs.doc(db, 'clinics', clinicId), { name: 'Synthetic paging clinic', ownerId: user.uid, createdAt: fs.serverTimestamp() });
+    batch.set(fs.doc(db, 'clinics', clinicId, 'members', user.uid), {
+      uid: user.uid, email: user.email, displayName: 'Test', role: 'owner', createdAt: fs.serverTimestamp()
+    });
+    batch.set(fs.doc(db, 'users', user.uid, 'clinics', clinicId), {
+      clinicId, clinicName: 'Synthetic paging clinic', role: 'owner', joinedAt: fs.serverTimestamp()
+    });
+    await batch.commit();
+    const writes = [];
+    const add = (collection, id, values) => writes.push({
+      update: {
+        name: `projects/${projectId}/databases/(default)/documents/clinics/${clinicId}/${collection}/${id}`,
+        fields: Object.fromEntries(Object.entries(values).map(([key, value]) =>
+          [key, typeof value === 'number' ? { integerValue: String(value) } : { stringValue: value }]))
+      }
+    });
+    for (let index = 0; index < 65; index++) add('patients', `active-${String(index).padStart(3, '0')}`, {
+      id: 'incorrect-stored-id', name: `Synthetic ${index}`, status: index % 2 ? 'Waiting' : 'Confined', balance: 0
+    });
+    for (let index = 0; index < 7; index++) add('patients', `history-${index}`, { name: 'Legacy history', status: 'Discharged' });
+    for (let index = 0; index < 57; index++) add('inventory', `item-${String(index).padStart(3, '0')}`, { itemName: 'Synthetic item', category: 'Supplies', stock: 1 });
+    for (let index = 0; index < 60; index++) add('consultations', `SOAP-${String(index).padStart(4, '0')}`, { status: 'Draft', notes: 'Synthetic' });
+    // Admin fixture writes are restricted to this demo emulator and never used in app code.
+    const seeded = await fetch(`http://${host}/v1/projects/${projectId}/databases/(default)/documents:commit`, {
+      method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ writes })
+    });
+    assert.equal(seeded.status, 200);
+    const first = await loadClinicPage(clinicId, 'activePatients');
+    assert.equal(first.records.length, CLINIC_PAGE_SIZE);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.records[0].id, 'active-000');
+    const second = await loadClinicPage(clinicId, 'activePatients', first.cursor);
+    assert.equal(second.records.length, 15);
+    assert.equal(second.hasMore, false);
+    const merged = appendUnique(first.records, [...first.records, ...second.records], record => record.id);
+    assert.equal(merged.length, 65);
+    assert.ok(merged.every(record => record.status !== 'Discharged'));
+    const history = await loadClinicPage(clinicId, 'dischargedPatients');
+    assert.equal(history.records.length, 7, 'legacy history must not require a new timestamp');
+    const inventory = await loadClinicPage(clinicId, 'inventory');
+    assert.equal(inventory.records.length, 50);
+    assert.equal((await loadClinicPage(clinicId, 'inventory', inventory.cursor)).records.length, 7);
+    const consultations = await loadClinicPage(clinicId, 'consultations');
+    assert.equal(consultations.records.length, 50);
+    assert.equal(consultations.records[0].id, 'SOAP-0000');
+    await assert.rejects(loadClinicPage(`${clinicId}-not-a-member`, 'activePatients'),
+      error => error.code === 'permission-denied');
+    await assert.rejects(loadClinicPage('demo-clinic', 'inventory'));
+  } finally {
+    delete globalThis.__pagingHandles;
+    await deleteApp(app);
+  }
+});

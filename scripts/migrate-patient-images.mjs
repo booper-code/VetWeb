@@ -26,6 +26,7 @@
 
 import { writeFile } from 'node:fs/promises';
 import { Buffer } from 'node:buffer';
+import { randomUUID } from 'node:crypto';
 
 const apply = process.argv.includes('--apply');
 const projectId = process.env.FIREBASE_PROJECT_ID || 'vetcloudpro';
@@ -40,6 +41,7 @@ const firestoreBase =
   `/databases/(default)/documents`;
 
 let idToken = '';
+let actorUid = '';
 let refreshToken = '';
 let tokenExpiresAt = 0;
 
@@ -66,6 +68,8 @@ const signIn = async () => {
   }
 
   idToken = data.idToken;
+  if (typeof data.localId !== 'string' || !data.localId) throw new Error('Sign-in did not identify the user.');
+  actorUid = data.localId;
   refreshToken = data.refreshToken;
   tokenExpiresAt = Date.now() + (Number(data.expiresIn) || 3600) * 1000;
 };
@@ -194,31 +198,48 @@ const uploadDataUrl = async (dataUrl, patientId) => {
   if (!response.ok || typeof data.key !== 'string') {
     throw new Error(data.error || `Upload failed (${response.status}).`);
   }
+  const prefix = `clinics/${clinicId}/patients/${patientId}/`;
+  if (!data.key.startsWith(prefix) || !/^[0-9a-f-]{36}\.jpg$/.test(data.key.slice(prefix.length))) {
+    throw new Error('Upload returned an unexpected image key.');
+  }
 
   return data.key;
 };
 
 const patchPatient = async (doc, fields) => {
   const patientId = recordId(doc);
-  const params = new URLSearchParams();
-  for (const field of Object.keys(fields)) {
-    params.append('updateMask.fieldPaths', field);
-  }
   if (!doc.updateTime) throw new Error('Missing updateTime; refusing an unsafe write.');
-  params.set('currentDocument.updateTime', doc.updateTime);
-
-  const body = {
-    fields: Object.fromEntries(
-      Object.entries(fields)
-    )
+  const entity = `projects/${projectId}/databases/(default)/documents/clinics/${clinicId}/patients/${patientId}`;
+  if (doc.name !== entity) throw new Error('Patient is outside the selected clinic.');
+  const revision = Number(doc.fields?.revision?.integerValue ?? 0);
+  if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid patient revision.');
+  const headName = `projects/${projectId}/databases/(default)/documents/clinics/${clinicId}/auditHeads/patients_${patientId}`;
+  const headResponse = await authedFetch(`${firestoreBase}/clinics/${encodeURIComponent(clinicId)}/auditHeads/${encodeURIComponent(`patients_${patientId}`)}`);
+  const head = await readJson(headResponse);
+  if (headResponse.status !== 404 && !headResponse.ok) throw new Error('Could not read the patient audit head.');
+  if ((headResponse.ok ? Number(head.fields?.seq?.integerValue) : 0) !== revision) throw new Error('Patient audit head is inconsistent.');
+  const eventId = randomUUID();
+  const metadata = {
+    actorUid: { stringValue: actorUid }, action: { stringValue: 'update' },
+    entityType: { stringValue: 'patients' }, entityId: { stringValue: patientId },
+    seq: { integerValue: String(revision + 1) }, eventId: { stringValue: eventId }
   };
-
+  const auditWrite = (name, currentDocument) => ({
+    update: { name, fields: metadata }, currentDocument,
+    updateTransforms: [{ fieldPath: 'time', setToServerValue: 'REQUEST_TIME' }]
+  });
   const response = await authedFetch(
-    `${firestoreBase}/clinics/${encodeURIComponent(clinicId)}/patients/${encodeURIComponent(patientId)}?${params}`,
+    `${firestoreBase}:commit`,
     {
-      method: 'PATCH',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ writes: [
+        { update: { name: entity, fields: { ...fields, revision: { integerValue: String(revision + 1) } } },
+          updateMask: { fieldPaths: [...Object.keys(fields), 'revision'] },
+          currentDocument: { updateTime: doc.updateTime } },
+        auditWrite(headName, headResponse.ok ? { updateTime: head.updateTime } : { exists: false }),
+        auditWrite(`projects/${projectId}/databases/(default)/documents/clinics/${clinicId}/auditEvents/${eventId}`, { exists: false })
+      ] })
     }
   );
   const data = await readJson(response);

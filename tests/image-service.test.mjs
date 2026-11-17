@@ -26,6 +26,7 @@ test('image service enforces authentication, membership, roles and signed URLs',
     const url = String(input);
     if (url.includes('googleapis.com/service_accounts/')) return Response.json({ keys: [jwk] });
     if (url.includes('firestore.googleapis.com/')) {
+      if (url.endsWith('/clinics/clinic-a')) return Response.json({ fields: {} });
       const uid = decodeURIComponent(url.split('/').pop());
       const clinic = url.includes('/clinics/clinic-a/');
       return clinic && roles[uid]
@@ -35,7 +36,11 @@ test('image service enforces authentication, membership, roles and signed URLs',
     throw new Error(`Unexpected fetch: ${url}`);
   };
   const objects = new Map();
+  let deletes = 0;
   const env = {
+    USER_REQUEST_LIMITER: { limit: async () => ({ success: true }) },
+    USER_UPLOAD_LIMITER: { limit: async () => ({ success: true }) },
+    CLINIC_UPLOAD_LIMITER: { limit: async () => ({ success: true }) },
     FIREBASE_PROJECT_ID: 'test-project', IMAGE_TOKEN_SECRET: 'x'.repeat(48),
     ALLOWED_ORIGINS: 'https://app.example',
     IMAGES: {
@@ -44,7 +49,7 @@ test('image service enforces authentication, membership, roles and signed URLs',
         const item = objects.get(key);
         return item ? { body: new Blob([item.bytes]).stream(), httpMetadata: item.options.httpMetadata } : null;
       },
-      async delete(key) { objects.delete(key); }
+      async delete(key) { deletes += 1; objects.delete(key); }
     }
   };
   const request = (path, init = {}) => worker.fetch(new Request(`https://images.example${path}`, init), env);
@@ -90,10 +95,24 @@ test('image service enforces authentication, membership, roles and signed URLs',
   const tampered = new URL(urls[key]);
   tampered.searchParams.set('exp', '1');
   assert.equal((await worker.fetch(new Request(tampered), env)).status, 403);
+  // Deletion is disabled in this version of the Worker: every role gets 405,
+  // R2 is never touched, and the signed URL keeps working.
   const remove = identity => request('/file', {
     method: 'DELETE', headers: { ...auth(identity), 'Content-Type': 'application/json' }, body: JSON.stringify({ key })
   });
-  assert.equal((await remove(viewer)).status, 403);
-  assert.equal((await remove(owner)).status, 200);
-  assert.equal((await worker.fetch(new Request(urls[key]), env)).status, 404);
+  const viewerDelete = await remove(viewer);
+  assert.equal(viewerDelete.status, 405);
+  assert.match((await viewerDelete.json()).error, /disabled/i);
+  const ownerDelete = await remove(owner);
+  assert.equal(ownerDelete.status, 405);
+  assert.equal(ownerDelete.headers.get('allow'), 'GET, POST, OPTIONS');
+  assert.equal(ownerDelete.headers.get('cache-control'), 'no-store');
+  assert.equal(deletes, 0, 'R2 delete must not be called while deletion is disabled');
+  const afterDelete = await worker.fetch(new Request(urls[key]), env);
+  assert.equal(afterDelete.status, 200);
+  assert.deepEqual([...new Uint8Array(await afterDelete.arrayBuffer())], [0xff, 0xd8, 0xff, 1]);
+
+  const preflight = await request('/file', { method: 'OPTIONS', headers: { Origin: 'https://app.example' } });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET,POST,OPTIONS');
 });

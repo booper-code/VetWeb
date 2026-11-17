@@ -4,6 +4,20 @@
 > document is retained as a feature roadmap; its baseline and session details
 > may be out of date.
 
+### Current roadmap adjustment (2026-11-15)
+
+The local foundation work and appointments/manual reminders are now implemented;
+see `docs/FEATURE-BATCH.md` and `docs/APPOINTMENTS.md`. They remain undeployed by
+user choice. The original baseline/specifications below are historical, not
+current implementation claims (notably offline write queues and audit design).
+
+The user clarified that staff often enter work at day's end. Next prioritize
+structured clinical activity with actual-event timestamps and complete
+payments/receipts, then a proposal-and-confirmation assistant using predefined
+actions. See `docs/AI-ACTION-PLAN.md`. No unrestricted AI database access or
+automatic clinical decisions are planned. Production hardening and coordinated
+deployment remain separately authorized work.
+
 This document is for the next chat/agent picking up **new features**. The
 multi-clinic essentials are implemented in the working tree; see
 `.opencode/HANDOFF.md` for the exact session state and verification commands.
@@ -113,7 +127,9 @@ Target:
   old records keep working during migration.
 - Reuse the canvas compression in `lib/images.ts`, but return a `Blob`/`File`
   for upload instead of a data URL.
-- Best-effort delete of orphaned objects when a photo is removed.
+- Object deletion stays **off** until a reference-aware cleanup process exists:
+  the Worker's `DELETE /file` endpoint is disabled (`405`) so a key referenced by
+  another patient document cannot be removed by accident.
 - Migration: download a clinic backup first, then a one-off script reads each
   patient, uploads every data URL, rewrites the fields, and verifies counts.
   Batch writes and keep the original JSON until the migration is confirmed.

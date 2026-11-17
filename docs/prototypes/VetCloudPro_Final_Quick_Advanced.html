@@ -1,0 +1,519 @@
+<!doctype html>
+<!--
+  VETCLOUDPRO UI-ONLY DESIGN HANDOFF
+  One self-contained file. All records are fictional. No network, backend,
+  real authentication, AI, financial processing, uploads or persistent storage.
+  JavaScript below exists ONLY for navigation and disposable UI previews.
+  Pair with docs/CLAUDE-PROJECT-BRIEF.md. Return the revised HTML to the user;
+  production React integration and security review happen separately.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>VetCloudPro — Unified Clinic Workspace · Final UI Design</title>
+  <style>
+    :root{color-scheme:light;--ink:#000;--paper:#fff;--canvas:#f1f5f9;--line:#cbd5e1;--nav:#0f172a;--accent:#0f766e;--soft:#f0fdfa;--radius:14px}
+    *{box-sizing:border-box}body{margin:0;background:var(--canvas);color:var(--ink);font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+    button,input,select,textarea{font:inherit}button,a,input,select,textarea{outline-offset:4px}button{cursor:pointer}button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allowed;color:#000;background:#e2e8f0;opacity:1}
+    button{border:1px solid var(--line);border-radius:9px;background:white;color:#000;padding:9px 13px;font-weight:650}button:hover:not(:disabled){background:#e2e8f0}button.primary{background:var(--accent);border-color:var(--accent);color:white}button.primary:hover:not(:disabled){background:#115e59}
+    button.primary:disabled{background:#e2e8f0;border-color:#94a3b8;color:#000}button.danger{border-color:#fca5a5;background:#fef2f2;color:#000}button.small{padding:6px 10px;font-size:13px}button.linklike{border:0;padding:0;background:transparent;text-decoration:underline;text-align:left}
+    input,select,textarea{display:block;width:100%;min-width:0;background:white;color:#000;border:1px solid #94a3b8;border-radius:8px;padding:9px 11px}textarea{resize:vertical;min-height:90px}input[type=checkbox]{display:inline;width:auto;min-height:20px;min-width:20px}
+    h1,h2,h3,p{margin:0}h1{font-size:27px;line-height:1.25}h2{font-size:20px;line-height:1.3}h3{font-size:16px}p+p{margin-top:8px}small,.caption{font-size:12px;color:#000}.subtext{color:#000;margin-top:5px}.stack{display:grid;gap:18px}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.between{justify-content:space-between}.grow{flex:1;min-width:0}
+    .prototype-bar{background:#fef3c7;border-bottom:1px solid #d97706;padding:9px 20px;color:#000;font-size:13px}.prototype-bar strong{font-weight:800}.shell{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:calc(100vh - 40px)}
+    .sidebar{background:var(--nav);color:white;padding:24px 16px;display:flex;flex-direction:column;gap:24px}.brand{font-size:23px;font-weight:850;letter-spacing:-.6px;color:white}.brand span{color:#5eead4}.brand-mark{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#134e4a;color:#99f6e4;margin-right:6px;font-size:19px}
+    .clinic-switch{border:1px solid #475569;background:#1e293b;border-radius:12px;padding:13px;color:white;width:100%;text-align:left}.clinic-switch:hover:not(:disabled){background:#334155}.clinic-switch span{display:block;font-size:12px;color:white}.clinic-switch strong{display:block;margin-top:3px}
+    .nav-caption{font-size:11px;font-weight:750;letter-spacing:1px;text-transform:uppercase;color:#cbd5e1;margin-bottom:10px}.nav-list{display:grid;gap:5px}.nav-list button{border:0;background:transparent;color:white;display:flex;gap:10px;align-items:center;text-align:left;padding:11px;border-radius:9px;font-weight:550}.nav-list button:hover:not(:disabled){background:#1e293b}.nav-list button.active{background:#134e4a;color:#99f6e4}.nav-icon{display:grid;place-items:center;width:23px;height:23px;border:1px solid #64748b;border-radius:6px;font-size:12px;flex-shrink:0}
+    .side-footer{margin-top:auto;border-top:1px solid #475569;padding-top:18px;display:grid;gap:12px}.side-footer p{font-size:12px;color:white}.side-footer button{color:white;background:#450a0a;border-color:#7f1d1d}.workspace{min-width:0}.topbar{background:white;border-bottom:1px solid var(--line);padding:16px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}.topbar .search{flex:1;min-width:180px}.topbar label{font-size:12px;font-weight:650}.topbar .role{width:150px}.menu-button{display:none}.page{padding:26px;max-width:1500px;margin:auto}
+    .card{background:white;border:1px solid var(--line);border-radius:var(--radius);padding:20px;min-width:0}.hero{background:#0f172a;color:white;border-radius:var(--radius);padding:24px}.hero p,.hero h1{color:white}.hero .caption{color:#ccfbf1}.grid{display:grid;gap:16px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}.metric{font-size:30px;font-weight:800;margin-top:6px;letter-spacing:-.8px}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.7px;font-weight:750}
+    .notice{border:1px solid #d97706;border-radius:10px;background:#fffbeb;padding:12px 14px;color:#000}.notice.info{border-color:#5eead4;background:#f0fdfa}.notice.error{border-color:#fca5a5;background:#fef2f2}.badge{display:inline-block;padding:3px 9px;border-radius:999px;background:#e2e8f0;color:#000;font-size:12px;font-weight:650}.badge.teal{background:#ccfbf1}.badge.amber{background:#fef3c7}.badge.blue{background:#dbeafe}.badge.red{background:#fee2e2}.badge.purple{background:#f3e8ff}
+    .toolbar{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.toolbar label{display:grid;gap:5px;font-size:13px;font-weight:650}.toolbar label:not(.wide){flex:0 1 180px}.toolbar .wide{flex:1;min-width:160px}.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:11px}table{width:100%;border-collapse:collapse;background:white;text-align:left}th{background:#f8fafc;text-transform:uppercase;font-size:11px;letter-spacing:.6px}th,td{padding:13px 15px;border-bottom:1px solid #e2e8f0;vertical-align:top}tbody tr:last-child td{border-bottom:0}td strong{display:block}td .caption{display:block;margin-top:3px}.table-actions{min-width:100px}.table-actions button{white-space:nowrap}
+    .list{display:grid;gap:12px}.list-item{border:1px solid var(--line);border-radius:10px;padding:14px;background:white}.list-item p{margin-top:5px}.avatar{width:44px;height:44px;display:grid;place-items:center;flex-shrink:0;border-radius:12px;background:#ccfbf1;color:#000;font-weight:800}.divider{height:1px;background:var(--line);margin:16px 0}.empty{padding:32px;text-align:center;background:#f8fafc;border-radius:10px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.form-grid label{display:grid;gap:5px;font-weight:650;font-size:13px}.form-grid .full{grid-column:1/-1}.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:12px 0}.toggle-row label{display:flex;gap:10px;align-items:center}.placeholder{background:repeating-linear-gradient(135deg,#f8fafc,#f8fafc 10px,#eef2f6 10px,#eef2f6 20px);border:1px dashed #94a3b8;border-radius:10px;display:grid;place-items:center;min-height:140px;padding:20px;text-align:center}
+    dialog{width:min(760px,calc(100vw - 30px));max-height:90vh;overflow:auto;border:1px solid var(--line);border-radius:18px;padding:0;color:#000;background:white}dialog::backdrop{background:#0f172a99}.dialog-head{padding:20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:16px}.dialog-body{padding:20px}.dialog-actions{margin-top:20px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.tabs{display:flex;gap:7px;margin:16px 0;flex-wrap:wrap}.tabs button.active{background:#ccfbf1;border-color:#0f766e}
+    #toast{position:fixed;right:20px;bottom:20px;z-index:100;background:#0f172a;color:white;border-radius:12px;box-shadow:0 8px 30px #0003;padding:15px 20px;max-width:min(460px,calc(100vw - 40px))}#toast[hidden]{display:none}.backdrop{display:none}details.design-help{margin-bottom:18px;border:1px solid var(--line);border-radius:10px;background:white;padding:12px 15px}summary{cursor:pointer;font-weight:650}details ul{padding-left:20px;margin-bottom:0}.screen-footer{margin-top:18px;font-size:12px;color:#000}.login-preview{max-width:460px;margin:60px auto}
+    @media(max-width:1100px){.grid.four{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar{gap:12px;padding:14px 18px}.page{padding:20px}}
+    @media(max-width:760px){.shell{grid-template-columns:minmax(0,1fr)}.sidebar{position:fixed;inset:0 auto 0 0;width:260px;z-index:30;transform:translateX(-100%);transition:transform .18s;overflow-y:auto}.sidebar.open{transform:translateX(0)}.menu-button{display:block}.backdrop.open{display:block;position:fixed;inset:0;z-index:29;background:#0f172a88}.grid.two,.grid.three,.grid.four,.form-grid{grid-template-columns:minmax(0,1fr)}.page{padding:16px}.topbar{padding:12px 16px}.topbar .search{min-width:140px}.topbar .role{width:145px}.hero{padding:20px}.card{padding:16px}h1{font-size:24px}.form-grid .full{grid-column:auto}.prototype-bar{padding:9px 16px}th,td{padding:10px}.toolbar label:not(.wide){flex:1 1 140px}.row.mobile-stack{align-items:stretch;flex-direction:column}.login-preview{margin:24px auto}}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+  <style>
+/* Fresh independent redesign: the original HTML is the sole starting UI. */
+:root{--ink:#192a35;--paper:#fff;--canvas:#f5f7f5;--line:#dde5e1;--nav:#142732;--accent:#087b70;--soft:#e9f7f0;--radius:17px;--muted:#56706e;--mint:#dbf2e7}
+body{font:15px/1.53 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--canvas)}
+button,select,input,textarea{font:inherit}button{border-color:#d1ded9;border-radius:10px;color:#1b3436;font-weight:680;min-height:40px}button:hover:not(:disabled){background:#eaf4ef}button.primary{background:var(--accent);border-color:var(--accent)}button.primary:hover:not(:disabled){background:#00665d}input,select,textarea{border-color:#b5c8c3;color:var(--ink);min-height:42px}input:focus-visible,textarea:focus-visible,select:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid #0a8a76;outline-offset:3px}
+.prototype-bar{background:#f8edcf;border-color:#dec48f;color:#665029;padding:7px 24px;font-size:12px;min-height:33px}
+.shell{grid-template-columns:254px minmax(0,1fr);min-height:calc(100vh - 33px)}
+.sidebar{background:var(--nav);padding:24px 14px 16px;gap:0;position:sticky;top:0;height:calc(100vh - 33px);overflow-y:auto}
+.brand{font-size:22px;letter-spacing:-.9px;padding:2px 8px 18px;display:flex;align-items:center}.brand span:not(.brand-mark){color:#91dfc8}.brand-mark{background:#2a514f;color:#c6f4e3;border-radius:12px;width:37px;height:37px;display:inline-grid;place-items:center;font-size:22px;margin-right:9px}
+.clinic-switch{margin:0 2px 20px;width:calc(100% - 4px);background:#203943;border:1px solid #37535b;border-radius:13px;padding:13px 14px;position:relative;padding-right:30px}.clinic-switch:after{content:'⌄';position:absolute;right:13px;top:23px;color:#b4d3ca;font-size:20px}.clinic-switch span{color:#a9c4bf;font-size:11px}.clinic-switch strong{font-size:13px;line-height:1.3}
+.sidebar-scroll{flex:1}.nav-caption{padding:0 11px;margin:14px 0 7px;font-size:10px;letter-spacing:1.4px;color:#95b2b4}.nav-list{gap:3px}.nav-list button{width:100%;border:0;min-height:42px;background:transparent;color:#d0e0e0;padding:10px 12px;border-radius:11px;font-weight:600;display:flex;gap:12px;font-size:13px}.nav-list button:hover:not(:disabled){background:#25424c}.nav-list button.active{color:#e7fff5;background:#25534f;box-shadow:inset 3px 0 0 #66dfb7}.nav-icon{border:0;width:23px;height:23px;font-size:19px;color:inherit;line-height:1;display:inline-grid;place-items:center}.nav-label{flex:1;text-align:left}.more-indicator{margin-left:auto;border:1px solid #55747b;background:#253d45;font-size:10px;padding:2px 7px;border-radius:999px;color:#d2e6dd}.nav-note{font-size:11px;line-height:1.4;color:#92b0ac;margin:5px 12px 12px}.sidebar-rule{border-top:1px solid #38525a;margin:16px 8px 5px}.side-footer{gap:11px;border-top:1px solid #38525a;padding:16px 10px 0}.side-footer p{color:#aec2c3}.side-footer button{background:transparent;border:1px solid #526973;color:#d6edeb;padding:7px 9px;font-size:12px;min-height:34px}.side-footer button:hover:not(:disabled){background:#32515b}
+.workspace{background:var(--canvas)}.topbar{padding:13px 30px;min-height:77px;gap:17px;border-bottom:1px solid #e0e8e3;background:#fff;position:sticky;top:0;z-index:10}.topbar .search{flex:1;max-width:460px;min-width:150px;font-size:11px;color:#4d6264}.topbar .search input{padding:7px 13px;background:#f5f8f6;border-color:#e2eae7;min-height:38px;font-size:13px;margin-top:5px}.topbar .role{width:112px;flex-shrink:0;font-size:11px;color:#4d6264}.topbar .role select{min-height:36px;padding:7px 8px;margin-top:5px;font-size:13px}.mode-area{display:grid;gap:4px;min-width:198px;flex-shrink:0}.mode-caption{font-size:10px;font-weight:750;letter-spacing:.8px;text-transform:uppercase;color:#526765}.mode-switch{display:flex;border-radius:11px;border:1px solid #c9dbd1;padding:3px;background:#eef4f0;gap:2px}.mode-switch button{border:0;background:transparent;color:#3b5553;min-height:32px;flex:1;padding:5px 10px;font-size:12px;font-weight:800}.mode-switch button.active{background:#fff;color:#006d60;box-shadow:0 1px 5px #163e3424}.topbar-tag{color:#35645a;background:#e7f5ec;font-size:11px;padding:6px 9px;border-radius:20px;white-space:nowrap;font-weight:750}.mode-help{background:none;border:0;text-decoration:underline;color:#4e7168;padding:0;font-size:11px;min-height:0;justify-self:start}
+.page{max-width:1470px;padding:30px 34px 54px}h1{font-size:28px;letter-spacing:-.85px;color:#172b33}h2{font-size:19px;letter-spacing:-.4px}h3{font-size:15px}p.subtext,.subtext{color:#55716e}small,.caption{color:#56706b}.eyebrow{color:#55716e;font-size:11px;letter-spacing:1.05px}.stack{gap:17px}.card{border:1px solid #dfe7e1;box-shadow:0 3px 14px rgba(24,50,45,.027);border-radius:17px;padding:22px}.card h2{color:#193038}.hero{background:linear-gradient(116deg,#16333d,#1d4c49);border-radius:20px;padding:29px;color:#fff}.hero h1{color:white}.hero p{color:#d0e7e0}.hero .caption{color:#b6d7cb}.metric{font-size:31px;color:#1c3438;letter-spacing:-.8px;font-weight:800}.hero .metric{color:white}.notice{border-radius:12px;background:#fff7e6;border-color:#eacb94;font-size:13px}.notice.info{background:#edf8f3;border-color:#b4ded0}.badge{padding:4px 9px;font-size:11px;border-radius:999px}.badge.teal{background:#dcf5e8;color:#0a604f}.badge.amber{color:#865310}.badge.red{color:#922d32}.badge.blue{color:#1c477f}.row{gap:11px}.row.between{align-items:center}
+.table-wrap{border-color:#dae6df}.table-wrap table{font-size:13px}th{background:#f3f7f4;color:#54706a}th,td{border-color:#e4ebe6}tbody tr:hover{background:#f7faf8}.list-item{border-color:#dce6df;border-radius:13px}.avatar{background:#e0f2e7;color:#0a6e5e;border-radius:12px}.tabs button.active{background:#e0f6eb;border-color:#228978;color:#075e52}
+.mode-explainer{border-radius:14px;background:#eaf5ef;border:1px solid #cce9dc;display:flex;align-items:center;gap:12px;padding:12px 15px;color:#24514b;font-size:13px}.mode-explainer strong{color:#123f38}.mode-explainer .mode-explainer-text{flex:1}.mode-explainer .dot{width:10px;height:10px;background:#2b9e80;border-radius:50%;flex-shrink:0}
+.kicker{font-size:11px;font-weight:780;letter-spacing:1.3px;color:#467869;text-transform:uppercase;margin-bottom:8px}.page-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.page-heading h1{margin-bottom:6px}.page-heading p{max-width:690px;color:#53716a}.page-heading .page-lead-action{min-width:145px}.page-heading .page-lead-action button{min-height:43px}.summary-label{font-size:12px;color:#5f7770}.summary-title{font-size:27px;font-weight:830;margin-top:4px;color:#163c35;letter-spacing:-.8px}.soft-card{background:#eff7f2;border-color:#cde6d9}
+.entry-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.entry-card{border:1px solid #d8e8de;background:#fff;border-radius:16px;padding:21px;text-align:left;display:grid;align-content:start;gap:9px;min-height:188px;box-shadow:0 3px 10px #214e3d09;color:#153e37;position:relative}.entry-card:hover:not(:disabled){border-color:#56af92;background:#f4fbf6;transform:translateY(-1px)}.entry-icon{font-size:23px;background:#e6f4eb;color:#0e715b;width:45px;height:45px;display:grid;place-items:center;border-radius:14px}.entry-card strong{font-size:17px}.entry-card span.entry-desc{color:#617772;font-size:13px;font-weight:480}.entry-card .arrow{color:#0b7866;font-size:19px;position:absolute;right:17px;top:19px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.section-head p{font-size:13px;color:#54706b}.task-stack{display:grid;gap:9px}.task-row{padding:13px 15px;border:1px solid #e0e9e3;background:white;border-radius:12px;display:flex;gap:13px;align-items:center}.task-index{font-size:11px;color:#0c725d;font-weight:830;background:#e7f5ea;flex-shrink:0;width:32px;height:32px;display:grid;place-items:center;border-radius:11px}.task-row .task-content{flex:1;min-width:0}.task-row .task-content p{color:#58716e;font-size:12px}.task-row strong{font-size:14px}.task-row button{white-space:nowrap}
+.quick-split{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(270px,.85fr);gap:16px}.help-strip{padding:16px 19px;background:#f0f6f2;border:1px dashed #bdd8ca;border-radius:14px}.help-strip p{font-size:13px;color:#4f6b62}.help-strip strong{color:#174f42}.mini-statrow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.mini-statrow .card{padding:18px}.mini-statrow .metric{font-size:27px}.mini-statrow .caption{font-size:11px}.attention-badge{border-radius:10px;background:#fff3d9;color:#73551a;font-size:11px;font-weight:780;padding:6px 9px}
+.record-cards{display:grid;gap:12px}.record-card{border:1px solid #dfe9e2;border-radius:15px;background:#fff;padding:18px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:13px}.record-card h3{font-size:17px}.record-card p{font-size:13px;color:#546d68}.record-card .record-card-actions{display:grid;gap:9px;justify-items:end}.record-card button{min-width:121px}.record-title{display:flex;align-items:center;gap:12px}.record-metadata{margin-top:9px;display:flex;gap:8px;flex-wrap:wrap}.metadata-chip{background:#f2f7f3;padding:4px 8px;border-radius:7px;color:#4e6861;font-size:11px}
+.advanced-toolbar{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.advanced-toolbar label{display:grid;gap:4px;min-width:140px;font-size:12px;font-weight:700}.advanced-toolbar input,.advanced-toolbar select{min-height:39px}.advanced-toolbar button{min-height:39px}.quick-filter{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.quick-filter button{min-height:36px;font-size:12px}.quick-filter button.selected{background:#e0f6e9;color:#076452;border-color:#228978}.mini-info{font-size:12px;color:#59736b}.preview-pill{display:inline-flex;align-items:center;gap:6px;background:#f0f7f2;padding:6px 10px;border-radius:20px;color:#447161;font-size:11px;font-weight:700}
+.simple-path{display:grid;gap:10px}.simple-path-step{display:flex;gap:11px;align-items:flex-start;padding:12px 14px;border-left:3px solid #48a98a;background:#f2f9f4;border-radius:0 9px 9px 0}.simple-path-step b{color:#13715d}.simple-path-step p{font-size:12px;color:#55746a}.guide-field{display:grid;gap:4px}.guide-hint{font-size:12px;color:#647d71;font-weight:450}.extra-fields{border:1px solid #d7e6dc;background:#f8fbf8;border-radius:12px;margin-top:12px;padding:11px 15px}.extra-fields summary{cursor:pointer;color:#1c6151;font-weight:740;padding:3px 0}.extra-fields .form-grid{margin-top:13px}.dialog-body .notice{font-size:12px}.dialog-body h3{color:#173b34}dialog{border-radius:19px;box-shadow:0 20px 70px #0b26384a}dialog::backdrop{background:#112c35a8}.dialog-head{padding:20px 24px}.dialog-body{padding:22px 24px}.dialog-actions{margin-top:23px}.dialog-actions button{min-height:42px}.form-grid label{font-weight:670;color:#21483d}.form-grid label small{font-weight:450;color:#5c736b}
+details.design-help{margin-bottom:0;background:#f5f8f5;border-color:#e2ebe5;color:#49665b;font-size:12px}details.design-help summary{font-size:12px}details.design-help[open]{margin-bottom:10px}.screen-footer{color:#70817e;border-top:1px solid #dee8e2;padding-top:12px}#toast{background:#173b36;box-shadow:0 12px 36px #10271e50}
+@media(min-width:761px){.sidebar{top:0;height:calc(100vh - 33px)}}
+@media(max-width:1150px){.topbar{gap:10px;padding:12px 18px}.page{padding:22px}.topbar-tag{display:none}.mini-statrow{grid-template-columns:repeat(2,minmax(0,1fr))}.entry-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:850px){.quick-split{grid-template-columns:1fr}.topbar .role{width:98px}.mode-area{min-width:165px}.shell{grid-template-columns:224px minmax(0,1fr)}}
+@media(max-width:760px){.shell{grid-template-columns:minmax(0,1fr)}.sidebar{height:100vh;position:fixed;top:0;width:min(290px,87vw);padding:22px 14px;z-index:30}.topbar{padding:10px 13px;gap:10px;position:static;min-height:0;display:grid;grid-template-columns:42px 1fr auto}.menu-button{display:block;grid-column:1;grid-row:1;min-width:40px}.topbar .search{grid-column:1 / -1;grid-row:2;max-width:none}.topbar .role{grid-row:1;grid-column:3;width:96px}.topbar .mode-area{grid-row:1;grid-column:2;min-width:0}.topbar-tag{display:none}.page{padding:16px}.entry-grid{grid-template-columns:1fr}.entry-card{min-height:128px}.quick-split{grid-template-columns:1fr}.mini-statrow{grid-template-columns:repeat(2,minmax(0,1fr))}.record-card{grid-template-columns:1fr}.record-card .record-card-actions{justify-items:stretch}.record-card button{width:100%}.page-heading h1{font-size:24px}.hero{padding:22px}.mode-explainer{align-items:flex-start}.card{padding:17px}.grid.two,.grid.three,.grid.four,.form-grid{grid-template-columns:1fr}.menu-button{background:#eaf5ed;border:1px solid #d0e8da;color:#156350;font-size:20px}.topbar .search input{min-height:41px;margin-top:3px}}
+@media(max-width:420px){.page-heading .page-lead-action{width:100%}.page-heading .page-lead-action button{width:100%}.mode-switch button{font-size:11px;padding:5px 4px}.topbar .role select{font-size:12px}.mini-statrow{grid-template-columns:1fr 1fr}.task-row{align-items:start;flex-wrap:wrap}.task-row .task-content{flex:1 1 calc(100% - 52px)}.task-row button{width:calc(100% - 45px);margin-left:45px;flex:0 0 auto}.dialog-body{padding:16px}.dialog-head{padding:16px}.preview-pill{display:none}}
+@media(prefers-reduced-motion:reduce){.entry-card:hover:not(:disabled){transform:none}}
+</style>
+  <style>
+    /* Unified final polish: original VetCloudPro identity, calmer surfaces, independent Quick/Advanced flows */
+    :root{--nav:#111c2f;--nav-hover:#1e2d45;--ink:#162637;--muted:#56677a;--line:#e1e8ee;--canvas:#f6f8fb;--soft:#edf8f5;--accent:#0c8276;--radius:14px}
+    body{font-size:14px;background:var(--canvas);color:var(--ink)}
+    .prototype-bar{background:#fff4d7;color:#735719;border-color:#ead6a0;font-size:11.5px;padding-left:20px}
+    .shell{grid-template-columns:246px minmax(0,1fr)}
+    .sidebar{background:var(--nav);padding:22px 13px 14px}.brand{font-size:21px}.brand-mark{width:35px;height:35px;background:#194e4e;color:#b6f4dd;border-radius:10px;font-size:19px}
+    .clinic-switch{background:#1b2c43;border-color:#304158;border-radius:11px;padding:11px 27px 11px 13px}.clinic-switch strong{color:#fff}.clinic-switch span{color:#b3c7d2}
+    .nav-list button{font-size:13px;border-radius:8px;color:#d5dee9;min-height:40px;padding:9px 10px;font-weight:580}.nav-list button:hover:not(:disabled){background:#21334b}.nav-list button.active{background:#144f4c;color:#c9fff0;box-shadow:none}.nav-icon{font-size:17px;width:23px;height:23px}.nav-caption{font-size:10px;color:#92a5bd;letter-spacing:1.12px;margin:12px 0 6px}.sidebar-rule{border-color:#2b3b51;margin:13px 8px 4px}.nav-note{color:#95abb8}.more-indicator{background:transparent;border-color:#39526a}
+    .footer-user{display:flex;align-items:center;gap:10px}.footer-user strong{font-size:12.5px}.footer-user p{font-size:11px}.footer-avatar{width:32px;height:32px;border-radius:50%;background:#20524f;color:#bdffe8;display:grid;place-items:center;font-weight:750;flex-shrink:0}
+    .topbar{min-height:70px;padding:10px 26px;gap:12px;background:#fff;border-bottom:1px solid #e3e9ed}.topbar .search{max-width:470px}.topbar .search input{background:#f7f9fb;border:1px solid #dae3eb;border-radius:9px;min-height:38px}.topbar .role{width:108px}
+    .header-visit{white-space:nowrap;min-height:39px;border-radius:9px;padding:9px 14px;font-size:12.5px}.header-visit span{font-size:17px;line-height:14px}
+    .mode-area{min-width:171px}.mode-switch{border-color:#d6e0e8;background:#f1f4f7;border-radius:9px}.mode-switch button{border-radius:7px;font-size:12px}.mode-switch button.active{color:#0a6e66}
+    .page{max-width:1450px;padding:29px 29px 52px}.card{border:1px solid #e1e8ee;box-shadow:0 2px 10px #243e5607;border-radius:13px;padding:21px}.card h2,h2{font-size:17px;color:#1b2d3f;letter-spacing:-.2px}.page-heading h1{color:#14263b;font-size:26px;font-weight:760}.page-heading p{color:#607184}.kicker{color:#137b70;letter-spacing:1.05px}.metric{color:#17344c;font-size:28px;font-weight:760}.soft-card{background:#f0f8f6}.mode-explainer{background:#f0f8f6;border-color:#d8eae5;color:#3f6560;padding:10px 13px;border-radius:11px}.mode-explainer .dot{background:#198579;width:8px;height:8px}.mode-explainer strong{color:#165a55}
+    .ui-quick-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.ui-action{min-height:147px;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:5px;padding:17px;border:1px solid #dce7e5;background:#fff;border-radius:13px;box-shadow:0 2px 7px #193a3106;position:relative;color:#1a3742}.ui-action:hover:not(:disabled){background:#f6fbf9;border-color:#79b8a8;transform:none}.ui-action-icon{height:35px;width:35px;border-radius:10px;background:#e5f5ef;color:#117768;display:grid;place-items:center;font-size:19px;margin-bottom:4px}.ui-action strong{font-size:14px;font-weight:760}.ui-action span:last-child{font-size:12px;color:#607381;font-weight:450;line-height:1.45}
+    .ui-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px}.ui-stats .card{padding:17px}.ui-stats .metric{font-size:26px}.ui-stats .eyebrow{font-size:10.5px}.ui-dual{display:grid;grid-template-columns:1fr 1fr;gap:15px;align-items:start}.ui-section{display:grid;gap:16px;align-content:start}.ui-section .section-head h2{font-size:17px}.section-head p{font-size:12px;color:#6a7986}.clean-list{display:grid}.clean-row{display:flex;justify-content:space-between;align-items:center;gap:14px;border-bottom:1px solid #e6edf0;padding:14px 0}.clean-row:last-child{border-bottom:0;padding-bottom:4px}.clean-row:first-child{padding-top:0}.clean-item{min-width:0;flex:1}.clean-item strong{font-size:13px;color:#223749}.clean-item p{font-size:12px;color:#64768a;margin-top:4px}.muted{font-weight:480;color:#697a8a}.clean-actions{display:flex;gap:7px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.clean-actions .badge{white-space:nowrap}.clean-actions button{white-space:nowrap}
+    .ui-bottom-strip{display:flex;align-items:center;gap:13px;background:#edf7f4;border:1px solid #d5e7e2;border-radius:12px;padding:14px 18px}.ui-bottom-strip div{flex:1}.ui-bottom-strip strong{font-size:13px;color:#1b4a45}.ui-bottom-strip p{font-size:12px;color:#5f7976;margin-top:2px}.ui-led{width:9px;height:9px;border-radius:50%;background:#0f8b76;flex:0 0 auto}
+    .badge{font-size:11px}.badge.amber{background:#fff2d3;color:#895b15}.badge.red{background:#ffe8e8;color:#963239}.badge.teal{background:#def6e9;color:#146f56}
+    .table-wrap{border-color:#dfe7eb}.table-wrap th{color:#607281;background:#f7f9fa;font-size:10.5px}.table-wrap td{font-size:12.5px}.table-wrap tbody tr:hover{background:#fbfdfc}.table-wrap small{display:block;color:#758593;font-size:11px;margin-top:3px}
+    .ui-dossier{display:grid;gap:15px}.ui-dossier-actions{display:flex;justify-content:flex-end;gap:8px}.ui-tabstrip{display:flex;gap:5px;overflow-x:auto;border-bottom:1px solid #e3e9ee;padding-bottom:3px}.ui-tabstrip button{background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;color:#5b6c7f;flex:0 0 auto;font-size:12px;min-height:40px;padding:8px 9px}.ui-tabstrip button.active{color:#0e756a;border-color:#0e8678;background:#f3faf8}.ui-dossier-panel{min-height:185px}.dossier-header{display:flex;align-items:center;gap:14px}.dossier-header>div{flex:1}.dossier-header p{color:#647589;font-size:12px}.ui-big-avatar{width:55px;height:55px;font-size:22px}.ui-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin:15px 0}.ui-info-grid>div{padding:15px;border:1px solid #e3eaf0;background:#fafcfd;border-radius:11px}.ui-info-grid strong{display:block;font-size:14px;margin:2px 0}.ui-info-grid p{font-size:12px;color:#637586}.ui-field-name{color:#637889;text-transform:uppercase;letter-spacing:.5px;font-size:10.5px!important;font-weight:700;margin-bottom:5px}.ui-timeline{border-left:2px solid #c9e9dc;margin-left:9px;display:grid;gap:18px;padding:6px 0}.ui-timeline-item{position:relative;padding:1px 0 2px 19px}.ui-timeline-mark{position:absolute;left:-8px;top:4px;width:14px;height:14px;border-radius:100%;background:#137a6d;border:3px solid #f4fbf8}.ui-timeline-item h3{margin:5px 0}.ui-timeline-item p{font-size:12.5px;margin:4px 0;color:#435669}
+    .ui-visit-intro{padding:13px 0 15px}.ui-visit-intro strong{font-size:14px}.ui-visit-intro p{color:#617587;font-size:12px;margin-top:3px}.required{color:#a93546}.ui-steps{display:flex;align-items:center;gap:6px;margin-bottom:20px}.ui-steps span{font-size:11px;background:#f2f5f7;color:#6c7e89;border-radius:8px;padding:8px 9px;flex:1;text-align:center;font-weight:700}.ui-steps span.active{background:#def5ea;color:#176d59}.ui-step-panel{display:grid;gap:16px}.ui-step-panel[hidden],.ui-review[hidden]{display:none!important}.ui-step-panel h3{font-size:16px}.ui-review{border:1px solid #dbe8e4;border-radius:12px;background:#f8fcfa;padding:15px;margin:12px 0}.ui-review-rows{display:grid;gap:8px}.ui-review-rows>div{display:grid;grid-template-columns:145px 1fr;gap:8px;border-bottom:1px solid #e6ede9;padding:7px 0;font-size:12px}.ui-review-rows>div:last-child{border:0}.ui-review-rows span{color:#657a83}.ui-review-rows strong{font-weight:650;overflow-wrap:anywhere}.ui-success{display:flex;gap:12px;align-items:center;margin:12px 0 17px}.ui-success>span{display:grid;place-items:center;background:#daf4e6;color:#10705e;height:42px;width:42px;border-radius:50%;font-size:22px;font-weight:800}.ui-success p{font-size:12px;color:#6e7e8a}
+    .dialog-body .notice{font-size:12px}.dialog-body .form-grid{margin-top:7px}.dialog-head{position:sticky;top:0;z-index:2;background:#fff;border-color:#e3eaec}.dialog-head h2{font-size:17px}dialog{width:min(820px,calc(100vw - 30px));max-height:91vh;border:1px solid #e0e7eb;border-radius:15px;box-shadow:0 22px 80px #112c3a40}.dialog-body{padding:22px 25px}.extra-fields{background:#f8fbfa;border-color:#dae8e3}.extra-fields summary{color:#285b52}.form-grid label{color:#213e47;font-size:12.5px}.form-grid label small{font-size:11px;color:#687989}
+    .help-strip{border-style:solid;background:#f3f8f6;border-color:#dbe9e2}.notice.info{background:#f0f8f5;border-color:#c8e6da}.screen-footer{font-size:11px}.empty.compact{padding:16px;font-size:12px}
+    @media(max-width:1280px){.ui-quick-actions{grid-template-columns:repeat(2,minmax(0,1fr))}.ui-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.header-visit{padding:8px 10px}}
+    @media(max-width:1050px){.ui-dual{grid-template-columns:1fr}.topbar{gap:8px;padding:10px 14px}.mode-area{min-width:145px}.topbar .search{min-width:150px}}
+    @media(max-width:760px){.shell{grid-template-columns:1fr}.sidebar{width:min(292px,87vw)}.topbar{position:static;display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:8px;padding:10px 12px}.topbar .menu-button{grid-column:1;grid-row:1}.topbar .mode-area{grid-column:2;grid-row:1}.topbar .role{grid-column:3;grid-row:1;width:92px}.topbar .search{grid-column:1/3;grid-row:2;min-width:0;max-width:none}.header-visit{grid-column:3;grid-row:2;align-self:end;min-height:40px;font-size:11px;padding:8px 9px}.header-visit span{display:none}.page{padding:16px}.ui-dual{grid-template-columns:1fr}.ui-quick-actions{grid-template-columns:1fr 1fr;gap:9px}.ui-action{padding:13px;min-height:141px}.ui-action span:last-child{font-size:11px}.ui-action strong{font-size:13px}.ui-action-icon{width:30px;height:30px;font-size:17px}.ui-info-grid{grid-template-columns:1fr}.ui-steps{gap:3px}.ui-steps span{padding:7px 5px;font-size:10px}.ui-review-rows>div{grid-template-columns:100px 1fr}.ui-bottom-strip{align-items:flex-start;flex-wrap:wrap}.ui-bottom-strip button{margin-left:auto}.ui-section{padding:16px}.clean-row{align-items:flex-start}.clean-actions{flex-direction:column;align-items:flex-end}.topbar .search input{margin-top:4px}}
+    @media(max-width:420px){.ui-stats{grid-template-columns:1fr 1fr}.ui-quick-actions{grid-template-columns:1fr 1fr}.ui-action{min-height:155px}.clean-row{flex-wrap:wrap}.clean-actions{flex-direction:row;margin-left:auto}.ui-dossier-actions{justify-content:stretch}.ui-dossier-actions button{flex:1}.dialog-body{padding:16px}.dialog-head{padding:15px}.page-heading h1{font-size:24px}.mode-area{min-width:0}}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important;transform:none!important}}
+  </style>
+</head>
+<body>
+  <div class="prototype-bar"><strong>VETCLOUDPRO · UNIFIED WORKSPACE PREVIEW</strong> · Fictional data · No backend or real transactions · Changes reset on reload.</div>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">✚</span>VetCloud<span>Pro</span></div>
+      <button class="clinic-switch" data-action="clinic"><span>Current clinic · preview only</span><strong>Sample Veterinary Clinic</strong></button>
+      <div class="sidebar-scroll"><nav class="nav-list" id="navigation" aria-label="Clinic sections"></nav></div>
+      <div class="side-footer"><div class="footer-user"><span class="footer-avatar" aria-hidden="true">D</span><div><strong>Demo staff</strong><p>Fictional staff account</p></div></div><button data-action="login">Login screen preview</button></div>
+    </aside>
+    <div class="backdrop" id="backdrop"></div>
+    <div class="workspace">
+      <header class="topbar">
+        <button class="menu-button" id="menu" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+        <label class="search">Search records<input id="search" type="search" placeholder="Search names, records, items…" autocomplete="off"></label>
+        <button class="header-visit primary" type="button" data-action="log-visit"><span aria-hidden="true">＋</span> Record visit</button>
+        <div class="mode-area"><span class="mode-caption">Workspace view</span><div class="mode-switch" role="group" aria-label="Workspace view"><button type="button" data-mode="quick" aria-pressed="true">Quick</button><button type="button" data-mode="advanced" aria-pressed="false">Advanced</button></div></div>
+        <label class="role">Preview role<select id="role"><option value="owner">Owner</option><option value="editor">Editor</option><option value="viewer">Viewer</option></select></label>
+      </header>
+      <main class="page" id="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <div class="dialog-head"><h2 id="dialog-title">Preview</h2><button id="close-dialog" aria-label="Close preview">✕</button></div>
+    <div class="dialog-body" id="dialog-content"></div>
+  </dialog>
+  <div id="toast" role="status" hidden></div>
+  <script>
+  'use strict';
+  // Disposable UI state only. Never copy this mock logic into production.
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const localDay = (offset = 0) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+  const dateText = value => new Date(value).toLocaleString([], { dateStyle:'medium', timeStyle:'short' });
+  const money = value => `PHP ${Number(value).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const state = {
+    view:'dashboard', role:'owner', query:'', ai:false, patientFilter:'Active', appointmentStatus:'scheduled', appointmentType:'all',
+    patients:[
+      {id:'PAT-DEMO-001',name:'Mochi',species:'Canine',breed:'Mixed breed',owner:'Sample Owner A',contact:'Contact placeholder',status:'Waiting',balance:850,weight:7.2},
+      {id:'PAT-DEMO-002',name:'Biscuit',species:'Feline',breed:'Domestic shorthair',owner:'Sample Owner B',contact:'Contact placeholder',status:'In Treatment',balance:1500,weight:3.4},
+      {id:'PAT-DEMO-003',name:'Pepper',species:'Canine',breed:'Mixed breed',owner:'Sample Owner C',contact:'Contact placeholder',status:'Discharged',balance:0,weight:12}
+    ],
+    appointments:[
+      {id:'APT-DEMO-001',patient:'PAT-DEMO-001',type:'Vaccination',date:`${localDay()}T09:00`,duration:30,status:'scheduled',notes:'Fictional scheduling note. No vaccine administration is recorded.',actual:''},
+      {id:'APT-DEMO-002',patient:'PAT-DEMO-002',type:'Follow-up',date:`${localDay(3)}T10:30`,duration:30,status:'scheduled',notes:'Example follow-up schedule.',actual:''},
+      {id:'APT-DEMO-003',patient:'PAT-DEMO-003',type:'Checkup',date:`${localDay(-3)}T14:00`,duration:30,status:'completed',notes:'Historical UI example only.',actual:`${localDay(-3)}T14:10`}
+    ],
+    inventory:[
+      {id:'ITM-DEMO-001',name:'Sample medicine A',category:'Medicine',stock:8,threshold:10,buy:120,sell:180},
+      {id:'ITM-DEMO-002',name:'Sample supply B',category:'Supplies',stock:35,threshold:10,buy:25,sell:40},
+      {id:'SRV-DEMO-001',name:'Consultation fee',category:'Service',stock:0,threshold:0,buy:0,sell:500}
+    ]
+  };
+  state.visitLog=[{id:'VIS-DEMO-001',patient:'PAT-DEMO-003',occurred:`${localDay(-3)}T14:10`,recorded:`${localDay(-3)}T17:45`,reason:'Routine wellness check',findings:'Example clinician observation.',treatment:'No treatment entered.',clinician:'Demo veterinarian',item:'',quantity:0,charge:'',payment:'',followup:''}];
+  state.appointments[1].date=`${localDay(-1)}T15:00`;
+  state.appointments.push({id:'APT-DEMO-004',patient:'PAT-DEMO-001',type:'Follow-up',date:`${localDay(4)}T10:30`,duration:30,status:'scheduled',notes:'Example future appointment.',actual:''});
+  state.mode='quick'; state.moreOpen=false; state.appointmentFrom=localDay(-30); state.appointmentTo=localDay(30); state.quickAppointmentScope='scheduled';
+  const views = [
+    ['dashboard','01','Dashboard'],['appointments','02','Appointments & Reminders'],['patients','03','Admission & Medical'],
+    ['inventory','04','Inventory Control'],['laboratory','05','Laboratory & AI'],['settings','06','Clinic Setup'],
+    ['account','07','Account Settings'],['staff','08','Staff & Payroll'],['team','09','Team & Invitations'],['audit','10','Clinical Audit']
+  ];
+  const types = ['Checkup','Vaccination','Deworming','Grooming','Surgery','Follow-up'];
+  const statuses = ['scheduled','completed','cancelled','no-show'];
+  const canEdit = () => state.role !== 'viewer';
+  const patient = id => state.patients.find(p => p.id === id);
+  const filtered = (rows, getText) => rows.filter(row => getText(row).toLowerCase().includes(state.query.toLowerCase()));
+  const badge = (text, tone='') => `<span class="badge ${tone}">${esc(text)}</span>`;
+  const disabled = allowed => allowed ? '' : 'disabled';
+  const options = (values, selected) => values.map(value => `<option value="${esc(value)}" ${value===selected?'selected':''}>${esc(value)}</option>`).join('');
+  const notice = (text, kind='') => `<div class="notice ${kind}">${text}</div>`;
+  const title = (heading, description, action='') => `<div class="row between"><div class="grow"><h1>${heading}</h1><p class="subtext">${description}</p></div>${action}</div>`;
+  const button = (label, action, id='', extra='') => `<button type="button" data-action="${action}" ${id?`data-id="${esc(id)}"`:''} ${extra}>${label}</button>`;
+  const stub = label => button(label,'stub','',`data-label="${esc(label)}"`);
+  function flash(message) { const toast=document.getElementById('toast'); toast.textContent=message; toast.hidden=false; clearTimeout(flash.timer); flash.timer=setTimeout(()=>toast.hidden=true,4500); }
+  function openDialog(heading, html) { document.getElementById('dialog-title').textContent=heading; document.getElementById('dialog-content').innerHTML=html; const dialog=document.getElementById('dialog'); if(!dialog.open) dialog.showModal(); }
+  function closeDialog() { document.getElementById('dialog').close(); }
+  function closeMenu() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('backdrop').classList.remove('open'); document.getElementById('menu').setAttribute('aria-expanded','false'); }
+  function nav() {
+    if ((['team','audit'].includes(state.view) && state.role!=='owner') || (state.view==='laboratory'&&!state.ai)) state.view='dashboard';
+    const menu=document.getElementById('navigation');
+    const labels={dashboard:['⌂','Overview'],patients:['♡','Patients'],appointments:['▣','Appointments'],inventory:['▦','Inventory'],laboratory:['◈','Laboratory & AI'],staff:['♙','Staff & Payroll'],settings:['⚙','Clinic setup'],account:['◉','My account'],team:['♧','Team & invitations'],audit:['≡','Clinical audit']};
+    const allowed=id=>!((id==='laboratory'&&!state.ai) || (['team','audit'].includes(id)&&state.role!=='owner'));
+    const entry=id=>`<button type="button" data-view="${id}" class="${state.view===id?'active':''}" ${state.view===id?'aria-current="page"':''}><span class="nav-icon" aria-hidden="true">${labels[id][0]}</span><span class="nav-label">${labels[id][1]}</span></button>`;
+    let html='<p class="nav-caption">EVERYDAY WORK</p>' + ['dashboard','patients','appointments','inventory'].map(entry).join('');
+    if(state.mode==='quick') {
+      const others=['laboratory','staff','settings','account','team','audit'].filter(allowed);
+      html+=`<div class="sidebar-rule"></div><button type="button" data-more class="${others.includes(state.view)?'active':''}" aria-expanded="${state.moreOpen}"><span class="nav-icon" aria-hidden="true">☷</span><span class="nav-label">More tools</span><span class="more-indicator">${state.moreOpen?'Hide':'Show'}</span></button>`;
+      if(state.moreOpen || others.includes(state.view)) html+='<p class="nav-caption">ADDITIONAL TOOLS</p>'+others.map(entry).join('');
+      html+='<p class="nav-note">Quick view highlights the tasks staff use most. Other tools stay available here.</p>';
+    } else {
+      html+='<div class="sidebar-rule"></div><p class="nav-caption">CLINIC OPERATIONS</p>'+['laboratory','staff'].filter(allowed).map(entry).join('');
+      html+='<p class="nav-caption" style="margin-top:17px">ADMINISTRATION</p>'+['settings','account','team','audit'].filter(allowed).map(entry).join('');
+    }
+    menu.innerHTML=html;
+    document.querySelector('.header-visit').disabled=!canEdit();
+    document.documentElement.dataset.mode=state.mode;
+    document.querySelectorAll('[data-mode]').forEach(btn=>{const active=btn.dataset.mode===state.mode;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',String(active));});
+  }
+  function help() { return `<details class="design-help"><summary>Prototype information and safety limitations</summary><ul><li>Fictional records; no backend, authentication, messaging, uploads, AI analysis or persistent storage.</li><li>Quick and Advanced change presentation, not the user's permissions or underlying data.</li><li>Scheduling completion does not mean a treatment, payment, or inventory transaction occurred.</li><li>Some controls are explicitly marked previews; changes to mock appointments and catalog items exist only until reload.</li></ul></details>`; }
+  const modeLine=()=>`<div class="mode-explainer"><span class="dot" aria-hidden="true"></span><div class="mode-explainer-text"><strong>${state.mode==='quick'?'Quick view':'Advanced view'}</strong> · ${state.mode==='quick'?'Clear steps and everyday tasks; all tools stay available.':'Detailed registers, filters and full forms; permissions stay identical.'}</div>${button('About modes','mode-info','','class="small"')}</div>`;
+  const heading=(kicker,name,description,action='')=>`<div class="page-heading"><div><div class="kicker">${kicker}</div><h1>${name}</h1><p>${description}</p></div>${action?`<div class="page-lead-action">${action}</div>`:''}</div>`;
+  const stat=(name,value,foot='Loaded fictional data')=>`<div class="card"><p class="eyebrow">${name}</p><div class="metric">${value}</div><p class="caption">${foot}</p></div>`;
+  const switchable=(quick,advanced)=>state.mode==='quick'?quick:advanced;
+  const scheduledDue=()=>state.appointments.filter(a=>a.status==='scheduled'&&a.date.slice(0,10)<=localDay()).sort((a,b)=>a.date.localeCompare(b.date));
+  const pendingLowStock=()=>state.inventory.filter(i=>i.category!=='Service'&&i.stock<=i.threshold);
+  const statusTag=a=>a.date.slice(0,10)<localDay()&&a.status==='scheduled'?badge('Overdue','amber'):badge(a.status,a.status==='scheduled'?'teal':'');
+  const sectionIntro=(name,sub='',action='')=>`<div class="section-head"><div><h2>${name}</h2>${sub?`<p>${sub}</p>`:''}</div>${action}</div>`;
+
+  function openWorkspaceModal(){openDialog('Quick or Advanced?',`<p><strong>Quick</strong> makes frequent tasks easier to spot, uses bigger patient cards and presents shorter forms with optional extra fields.</p><p style="margin-top:12px"><strong>Advanced</strong> provides dense tables, detailed filters and full forms on one screen.</p><div class="divider"></div>${notice('Both views use the same fictional records and the same role rules. Quick never bypasses validation or hides required confirmations. Your selection is only held in this demo page until reload.','info')}<div class="dialog-actions">${button('Got it','close','','class="primary"')}</div>`); }
+  function dashboard() {
+    const due=scheduledDue(), today=localDay();
+    const future=state.appointments.filter(a=>a.status==='scheduled'&&a.date.slice(0,10)>today);
+    const low=pendingLowStock();
+    const active=state.patients.filter(p=>p.status!=='Discharged');
+    const unpaid=state.patients.filter(p=>p.balance>0);
+    const countLabel=`${due.length} visit${due.length===1?'':'s'} due or overdue`;
+    const appointmentsList=due.map(a=>{const p=patient(a.patient); return `<div class="clean-row"><div class="clean-item"><strong>${esc(p?.name||'Unknown patient')} <span class="muted">· ${esc(a.type)}</span></strong><p>${esc(dateText(a.date))} · ${esc(p?.owner||'')}</p></div><div class="clean-actions">${statusTag(a)} ${button('Log visit','log-visit',a.patient,'class="small" '+disabled(canEdit()))}</div></div>`;}).join('')||'<div class="empty compact">No visits currently due in this sample.</div>';
+    const attentionList=[...low.map(i=>`<div class="clean-row"><div class="clean-item"><strong>${esc(i.name)}</strong><p>${i.stock} remaining · reorder threshold ${i.threshold}</p></div>${badge('Low stock','red')}</div>`),...unpaid.map(p=>`<div class="clean-row"><div class="clean-item"><strong>${esc(p.name)} <span class="muted">· ${esc(p.owner)}</span></strong><p>Sample outstanding balance: ${money(p.balance)}</p></div>${button('View billing','patient-billing',p.id,'class="small"')}</div>`)].join('')||'<div class="empty compact">No alerts in this sample.</div>';
+    const quick=`<div class="stack">
+      ${heading('WELCOME TO YOUR CLINIC','Good day. What needs doing?',`Sample Veterinary Clinic · ${esc(today)} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}`)}
+      ${modeLine()}
+      <div class="ui-quick-actions" aria-label="Common clinic tasks">
+        <button type="button" class="ui-action" data-action="log-visit" ${disabled(canEdit())}><span class="ui-action-icon">✚</span><strong>Record a visit</strong><span>Enter completed work, even from an earlier date.</span></button>
+        <button type="button" class="ui-action" data-action="navigate" data-id="patients"><span class="ui-action-icon">♡</span><strong>Find a patient</strong><span>Open their medical and owner information.</span></button>
+        <button type="button" class="ui-action" data-action="new-appointment" ${disabled(canEdit())}><span class="ui-action-icon">▣</span><strong>Book an appointment</strong><span>Create or reschedule a clinic visit.</span></button>
+        <button type="button" class="ui-action" data-action="navigate" data-id="inventory"><span class="ui-action-icon">▤</span><strong>Check stock</strong><span>Find supplies and see low-stock alerts.</span></button>
+      </div>
+      <div class="ui-dual">
+        <section class="card ui-section">${sectionIntro('Visits needing attention',countLabel,button('All appointments','navigate','appointments','class="small ghost"'))}<div class="clean-list">${appointmentsList}</div></section>
+        <section class="card ui-section">${sectionIntro('Things to review','Stock levels and loaded balances',button('Patient directory','navigate','patients','class="small ghost"'))}<div class="clean-list">${attentionList}</div></section>
+      </div>
+      <div class="ui-bottom-strip"><span class="ui-led"></span><div><strong>Need to enter several visits?</strong><p>Record one visit, review it, then choose <b>Save & log another</b>. Dates are always entered explicitly.</p></div>${button('Start recording','log-visit','','class="small" '+disabled(canEdit()))}</div>
+      <p class="mini-info">Fictional loaded records only. Balances are not payments received; no background synchronization or messaging occurs.</p>
+    </div>`;
+    const advanced=`<div class="stack">
+      ${heading('CLINIC OPERATIONS','Overview',`${esc(today)} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)} · Fictional loaded snapshot`,button('New appointment','new-appointment','','class="primary" '+disabled(canEdit())))}
+      ${modeLine()}
+      <div class="ui-stats">${stat('Due / overdue visits',due.length,'Scheduled for today or earlier')}${stat('Active patients',active.length,'Waiting or in treatment')}${stat('Low-stock alerts',low.length,'At or under reorder threshold')}${stat('Outstanding balances',money(unpaid.reduce((v,p)=>v+p.balance,0)),'Loaded sample balances, not collections')}</div>
+      <div class="ui-dual">
+        <section class="card ui-section">${sectionIntro('Today & overdue',`${due.length} scheduled visits requiring review`,button('Full schedule','navigate','appointments','class="small ghost"'))}<div class="clean-list">${appointmentsList}</div></section>
+        <section class="card ui-section">${sectionIntro('Needs attention','Inventory and balances requiring follow-up')}<div class="clean-list">${attentionList}</div></section>
+      </div>
+      <section class="card ui-section">${sectionIntro('Recent entered visits','Occurred time is different from recorded time',button('Patients & history','navigate','patients','class="small ghost"'))}<div class="table-wrap"><table><thead><tr><th>Patient</th><th>Occurred (staff-entered)</th><th>Recorded (mock time)</th><th>Record summary</th></tr></thead><tbody>${state.visitLog.slice().reverse().map(v=>`<tr><td><strong>${esc(patient(v.patient)?.name||'Unknown')}</strong><small>${esc(v.id)}</small></td><td>${esc(dateText(v.occurred))}</td><td>${esc(dateText(v.recorded))}</td><td>${esc(v.reason||v.findings||'Clinical entry')}</td></tr>`).join('')||'<tr><td colspan="4">No visits recorded in this preview.</td></tr>'}</tbody></table></div></section>
+      ${notice('These counts cover fictional loaded records only. Scheduling, clinical notes, stock use, charges and payment are distinct operations.','info')}
+    </div>`;
+    return state.mode==='quick'?quick:advanced;
+  }
+    function appointments() {
+    const base=filtered(state.appointments,a=>`${patient(a.patient)?.name} ${patient(a.patient)?.owner} ${a.type} ${a.id}`);
+    const rows=base.filter(a=>(state.appointmentStatus==='all'||a.status===state.appointmentStatus)&&(state.mode==='quick'||state.appointmentType==='all'||a.type===state.appointmentType)&&(state.mode==='quick'||(a.date.slice(0,10)>=state.appointmentFrom&&a.date.slice(0,10)<=state.appointmentTo)));
+    const advance=state.mode==='advanced';
+    return `<div class="stack">${heading('PATIENT CARE','Appointments',advance?'Detailed scheduling records and status filters.':'Check upcoming visits or schedule a new appointment.',button('New appointment','new-appointment','','class="primary" '+disabled(canEdit())))}${modeLine()}
+      ${notice('Schedule status is separate from actual medical treatment, stock use and payment. No messages are sent from this demo.','info')}
+      ${advance?`<section class="card stack"><div class="section-head"><h2>Filter schedule</h2>${button('Refresh preview','refresh','','class="small"')}</div><div class="advanced-toolbar"><label>From<input type="date" id="appointment-from" value="${esc(state.appointmentFrom)}"></label><label>Through<input type="date" id="appointment-to" value="${esc(state.appointmentTo)}"></label><label>Status<select id="appointment-status">${options(['all',...statuses],state.appointmentStatus)}</select></label><label>Visit type<select id="appointment-type">${options(['all',...types],state.appointmentType)}</select></label></div><p class="mini-info">${rows.length} matching local records · device timezone ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}</p></section>
+      <section class="card stack"><div class="section-head"><h2>Appointment register</h2><span class="preview-pill">Demo data · not live</span></div><div class="table-wrap"><table><thead><tr><th>Patient / owner</th><th>Visit</th><th>Scheduled</th><th>Status</th><th>Actual visit</th><th>Actions</th></tr></thead><tbody>${rows.map(a=>{let p=patient(a.patient);return `<tr><td><strong>${esc(p?.name)}</strong><small>${esc(p?.owner)} · ${esc(p?.id)}</small></td><td>${esc(a.type)}<small>${a.duration} minutes</small></td><td>${esc(dateText(a.date))}</td><td>${badge(a.status,a.status==='scheduled'?'teal':'')}</td><td>${a.actual?esc(dateText(a.actual)):'—'}</td><td>${button('Log visit','log-visit',a.patient,'class="small" '+disabled(canEdit()))} ${button('Edit','edit-appointment',a.id,'class="small" '+disabled(canEdit()))} ${button('Patient','patient',a.patient,'class="small"')}</td></tr>`}).join('')||'<tr><td colspan="6">No matching appointments.</td></tr>'}</tbody></table></div></section>`:
+      `<section class="card stack"><div class="section-head"><div><h2>Your appointments</h2><p class="mini-info">Showing ${rows.length} sample appointment${rows.length===1?'':'s'}</p></div><div class="quick-filter"><button type="button" data-appointment-scope="scheduled" class="${state.appointmentStatus==='scheduled'?'selected':''}">Scheduled</button><button type="button" data-appointment-scope="all" class="${state.appointmentStatus==='all'?'selected':''}">All</button></div></div><div class="record-cards">${rows.map(a=>{const p=patient(a.patient);return `<article class="record-card"><div><div class="record-title"><span class="entry-icon" aria-hidden="true">▣</span><div><h3>${esc(p?.name)}</h3><p>${esc(a.type)} · ${esc(dateText(a.date))}</p></div></div><div class="record-metadata"><span class="metadata-chip">Owner: ${esc(p?.owner)}</span><span class="metadata-chip">${esc(a.status)}</span><span class="metadata-chip">${a.duration} min</span></div></div><div class="record-card-actions">${button('Log visit','log-visit',a.patient,'class="primary" '+disabled(canEdit()))}${button('Patient record','patient',a.patient,'class="small"')}${button('Edit appointment','edit-appointment',a.id,'class="small" '+disabled(canEdit()))}</div></article>`}).join('')||'<div class="empty">There are no appointments matching your current view. Try All or create a sample appointment.</div>'}</div></section>`}
+      <div class="help-strip"><strong>Helpful reminder:</strong><p>An appointment describes when work was planned. Recording a completed medical visit is a separate clinical action.</p></div></div>`;
+  }
+  function patients() {
+    const rows=filtered(state.patients,p=>`${p.id} ${p.name} ${p.owner} ${p.species} ${p.breed}`).filter(p=>state.patientFilter==='Active'?p.status!=='Discharged':p.status==='Discharged');
+    const advance=state.mode==='advanced';
+    return `<div class="stack">${heading('PATIENT CARE','Patients',advance?'Search the patient directory and examine record details.':'Find a pet and open its record.',button('Add patient','admission','','class="primary" '+disabled(canEdit())))}${modeLine()}
+      ${advance?`<div class="mini-statrow">${stat('Active patients',state.patients.filter(p=>p.status!=='Discharged').length)}${stat('Discharged',state.patients.filter(p=>p.status==='Discharged').length)}${stat('Loaded balances',money(state.patients.reduce((n,p)=>n+p.balance,0)))}${stat('Total sample records',state.patients.length)}</div>`:''}
+      <section class="card stack"><div class="section-head"><div><h2>${advance?'Patient directory':'Select a patient'}</h2><p class="mini-info">Search for a name or owner using the search field at the top.</p></div>${advance?stub('Export patient PDF'):''}</div><div class="quick-filter">${['Active','Discharged'].map(value=>`<button data-patient-filter="${value}" class="${state.patientFilter===value?'selected':''}">${value}</button>`).join('')}</div>
+      ${advance?`<div class="table-wrap"><table><thead><tr><th>Patient</th><th>Owner</th><th>Status</th><th>Balance</th><th>Action</th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="row"><span class="avatar">${esc(p.name[0])}</span><div><strong>${esc(p.name)}</strong><small>${esc(p.id)} · ${esc(p.species)} · ${esc(p.breed)}</small></div></div></td><td>${esc(p.owner)}<small>${esc(p.contact)}</small></td><td>${badge(p.status,p.status==='Waiting'?'amber':'teal')}</td><td>${money(p.balance)}</td><td>${button('View dossier','patient',p.id,'class="small"')} ${button('Log visit','log-visit',p.id,'class="small" '+disabled(canEdit()))}</td></tr>`).join('')||'<tr><td colspan="5">No matching patients.</td></tr>'}</tbody></table></div>`:
+      `<div class="record-cards">${rows.map(p=>`<article class="record-card"><div><div class="record-title"><span class="avatar" aria-hidden="true">${esc(p.name[0])}</span><div><h3>${esc(p.name)}</h3><p>${esc(p.species)} · ${esc(p.breed)}</p></div></div><div class="record-metadata"><span class="metadata-chip">Owner: ${esc(p.owner)}</span><span class="metadata-chip">${esc(p.status)}</span><span class="metadata-chip">Balance: ${money(p.balance)}</span></div></div><div class="record-card-actions">${button('Open patient','patient',p.id,'class="primary"')}${button('Log visit','log-visit',p.id,'class="small" '+disabled(canEdit()))}</div></article>`).join('')||'<div class="empty">No patients found. Try a different name or choose a different status.</div>'}</div>`}</section>
+      ${!advance?`<div class="help-strip"><strong>Tip:</strong><p>Choose Open patient to view owner contact, clinical status, and sample billing information. The pet record stays separate from each visit.</p></div>`:notice('Patient creation, treatment and payment are different operations. The preview does not write clinical records.','info')}
+      </div>`;
+  }
+  function inventory() {
+    const rows=filtered(state.inventory,i=>`${i.id} ${i.name} ${i.category}`);
+    const low=state.inventory.filter(i=>i.category!=='Service'&&i.stock<=i.threshold);
+    const advance=state.mode==='advanced';
+    return `<div class="stack">${heading('CLINIC SUPPLIES','Inventory',advance?'Stock thresholds, catalog pricing and item records.':'See what is available and what needs restocking.',button('Add inventory item','inventory-form','','class="primary" '+disabled(canEdit())))}${modeLine()}
+      ${advance?`<div class="mini-statrow">${stat('Loaded catalog items',state.inventory.length)}${stat('Low stock items',low.length)}${stat('Service entries',state.inventory.filter(i=>i.category==='Service').length)}${stat('Stocked item types',state.inventory.filter(i=>i.category!=='Service').length)}</div>`:
+      `<section class="card stack soft-card"><div class="section-head"><div><p class="eyebrow">REQUIRES ATTENTION</p><h2>${low.length} item${low.length===1?'':'s'} at or below reorder level</h2></div>${badge('Sample stock','amber')}</div>${low.map(i=>`<div class="task-row"><div class="task-index">!</div><div class="task-content"><strong>${esc(i.name)}</strong><p>${i.stock} remaining · reorder at ${i.threshold}</p></div></div>`).join('')||'<p>No low stock examples.</p>'}</section>`}
+      <section class="card stack"><div class="section-head"><div><h2>${advance?'Item catalog':'All supplies & services'}</h2><p class="mini-info">${rows.length} matching local examples</p></div>${advance?stub('Export inventory PDF'):''}</div>
+      ${advance?`<div class="table-wrap"><table><thead><tr><th>Item / code</th><th>Category</th><th>Available / threshold</th><th>Buy</th><th>Sell</th><th>Action</th></tr></thead><tbody>${rows.map(i=>`<tr><td><strong>${esc(i.name)}</strong><small>${esc(i.id)}</small></td><td>${esc(i.category)}</td><td>${i.category==='Service'?'Not stocked':`${i.stock} / ${i.threshold} ${i.stock<=i.threshold?badge('Low','red'):''}`}</td><td>${money(i.buy)}</td><td>${money(i.sell)}</td><td>${button('Edit','inventory-form',i.id,'class="small" '+disabled(canEdit()))}</td></tr>`).join('')||'<tr><td colspan="6">No matching items.</td></tr>'}</tbody></table></div>`:
+      `<div class="record-cards">${rows.map(i=>`<article class="record-card"><div><div class="record-title"><span class="entry-icon">▦</span><div><h3>${esc(i.name)}</h3><p>${esc(i.category)}</p></div></div><div class="record-metadata"><span class="metadata-chip">${i.category==='Service'?'Service (no stock)':`Available: ${i.stock}`}</span><span class="metadata-chip">Price: ${money(i.sell)}</span>${i.category!=='Service'&&i.stock<=i.threshold?`<span class="metadata-chip" style="background:#fff0e8;color:#953b26">Low stock</span>`:''}</div></div><div class="record-card-actions">${button('View / edit','inventory-form',i.id,'class="small" '+disabled(canEdit()))}</div></article>`).join('')||'<div class="empty">No matching inventory items.</div>'}</div>`}</section>
+      ${notice('This UI-only prototype does not dispense items, process stock movements or charge patients. Editing sample items changes only the in-page example.','info')}</div>`;
+  }
+  function laboratory() {
+    return `<div class="stack">${title('Laboratory & AI','Representative layout only. Clinical analysis is NOT implemented.')}
+      ${notice('<strong>DEMO OUTPUT ONLY:</strong> no medical analysis, interpretation, extraction or diagnosis is performed. Do not enter real clinical data.')}
+      <div class="grid two"><div class="card stack"><h2>Document / lab image input</h2><div class="placeholder">Image or document preview placeholder<br>No file is opened or uploaded.</div>${stub('Choose sample document')}${stub('Preview example output')}</div>
+      <div class="card stack"><h2>Result review area</h2><div class="placeholder">No clinical findings are generated.<br>Use this space to redesign source/result/review hierarchy.</div><p>In a future workflow, extracted values would be drafts requiring clinician review—not automatic medical truth.</p></div></div>
+      <div class="card stack"><h2>Provider connection</h2><p>A provider connection check is separate from clinical functionality.</p>${stub('Preview connection status')}</div></div>`;
+  }
+  function settings() {
+    return `<div class="stack">${title('Clinic Settings & Import Portal','Owner policy, offline privacy and import previews.')}
+      <div class="card stack"><h2>Offline device privacy</h2><p>Memory-only is the real app's default. Trusted-device caching requires explicit consent. Offline clinical writes are not queued.</p>
+        <label class="row"><input type="checkbox" id="mock-consent">Preview trusted-device consent (does not enable storage)</label><div class="row">${stub('Enable on next start')}${stub('Disable, sign out & clear device data')}</div></div>
+      <div class="card stack"><h2>Image storage controls</h2><p>Owner upload pause is an operational safeguard, not a strict global storage quota.</p>${button('Preview upload pause','stub','','data-label="Owner upload pause" '+disabled(state.role==='owner'))}</div>
+      <div class="card stack"><h2>AI provider connection</h2><div class="toggle-row"><div><strong>Enable AI features</strong><p>Prototype toggle changes navigation only. It does not call a provider.</p></div><label><input type="checkbox" id="ai-toggle" ${state.ai?'checked':''} ${disabled(state.role==='owner')}>Enabled</label></div>
+      ${notice('Current lab extraction and summaries are demonstrations. The end-of-day assistant is planned, not implemented.')}
+      <div class="form-grid"><label>Provider<select disabled><option>Not connected — mockup</option></select></label><label>API credential<input disabled placeholder="No credentials belong in this file"></label></div><div class="row">${stub('Save provider settings')}${stub('Test connection')}${stub('Clear provider settings')}</div></div>
+      <div class="card stack"><h2>Inventory CSV import</h2><p>Current app import limits: 2 MB / 500 rows, with honest partial-failure reporting.</p><div class="placeholder">CSV input preview only — this file never reads an uploaded file.</div>${stub('Preview import review')}</div></div>`;
+  }
+  function account() {
+    return `<div class="stack">${title('Account Settings','Clinic profile, account information and recovery entry points.')}
+      <div class="grid two"><div class="card stack"><h2>Clinic profile</h2><label>Clinic name<input value="Sample Veterinary Clinic" disabled></label><p>Owner-only rename in the real app; no change is made here.</p>${button('Preview rename','stub','','data-label="Clinic rename" '+disabled(state.role==='owner'))}</div>
+      <div class="card stack"><h2>Signed-in account</h2><p>Demo staff member · designer@example.com</p><p>Preview role: ${esc(state.role)}</p>${stub('Send password reset')}</div></div>
+      <div class="card stack"><h2>Clinic JSON backup</h2><p>Owner export includes records and image object keys, not image bytes or one-click restoration.</p>${button('Preview backup download','stub','','data-label="Clinic backup" '+disabled(state.role==='owner'))}${notice('Full recovery requires verified image backups and rehearsed restoration. A downloaded JSON file is not proof of complete recovery.')}</div></div>`;
+  }
+  function staff() {
+    return `<div class="stack">${title('Staff & Payroll','Roster and owner-only payroll information.')}
+      <div class="card stack"><div class="row between"><h2>Staff roster</h2>${button('Add staff','stub','','data-label="Staff form" '+disabled(canEdit()))}</div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th>Position</th><th>Status</th><th>Action</th></tr></thead><tbody><tr><td>Sample Veterinarian</td><td>Veterinarian</td><td>Clinician</td><td>${badge('Active','teal')}</td><td>${stub('View profile')}</td></tr><tr><td>Sample Team Member</td><td>Employee</td><td>Clinic staff</td><td>${badge('Active','teal')}</td><td>${stub('View profile')}</td></tr></tbody></table></div></div>
+      ${state.role==='owner'?`<div class="grid two"><div class="card stack"><h2>Payroll period</h2><label>Period<select><option>Example current period</option></select></label><div class="row">${stub('Create period')}${stub('Close period')}</div><p>Sample payout figures are omitted; this is not a payroll calculation engine.</p></div><div class="card stack"><h2>Ledger integrity</h2>${badge('Sample status only','blue')}<p>The real ledger uses append-only entries and hash-chain checks. It is not compliance-certified.</p>${stub('Verify ledger')}</div></div><div class="card stack"><h2>Payroll ledger</h2><div class="empty">No payroll transactions exist in this prototype.</div><div class="row">${stub('Preview advance')}${stub('Preview repayment')}${stub('Preview payout')}</div></div>`:notice('Pay rates, payroll periods and payroll ledger details are owner-only in the real app.','info')}</div>`;
+  }
+  function team() {
+    return `<div class="stack">${title('Team & Invitations','Owner-only membership and invitation controls.')}
+      <div class="card stack"><h2>Invite someone</h2><div class="form-grid"><label>Email<input placeholder="person@example.com" type="email"></label><label>Role<select><option>Viewer</option><option>Editor</option></select></label></div>${stub('Preview invitation')}${notice('This preview cannot create or send an invitation. Real verification-email delivery remains a separate verification gap.')}</div>
+      <div class="card stack"><h2>Members</h2>${[['Demo owner','owner'],['Demo editor','editor'],['Demo viewer','viewer']].map(([name,role])=>`<div class="list-item row between"><div><strong>${name}</strong><p>${role}@example.com</p></div><div class="row">${badge(role,role==='owner'?'teal':'')}${role==='owner'?'':`${stub('Change role')}${stub('Make owner')}${stub('Remove')}`}</div></div>`).join('')}<p>Never use a design exercise to change actual clinic ownership or membership.</p></div></div>`;
+  }
+  function audit() {
+    return `<div class="stack">${title('Clinical audit trail','Owner-only metadata, not a full medical-content snapshot.')}
+      ${notice('Immutable application audit events record actor, action, record and revision. Project administrators can bypass rules. This is not a compliance certification.','info')}
+      <div class="card stack"><div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Record</th><th>Revision</th><th>Actor</th></tr></thead><tbody>${[['create','appointments/APT-DEMO-001',1],['update','patients/PAT-DEMO-002',2],['update','inventory/ITM-DEMO-001',3]].map(([action,record,rev])=>`<tr><td>Fictional server time</td><td>${action}</td><td>${record}</td><td>${rev}</td><td>demo-actor</td></tr>`).join('')}</tbody></table></div>${stub('Load more audit events')}</div></div>`;
+  }
+  function searchHub(){
+    const q=state.query.toLowerCase();
+    const pats=state.patients.filter(p=>`${p.name} ${p.owner} ${p.id} ${p.species}`.toLowerCase().includes(q));
+    const appts=state.appointments.filter(a=>`${patient(a.patient)?.name} ${patient(a.patient)?.owner} ${a.type} ${a.id}`.toLowerCase().includes(q));
+    const items=state.inventory.filter(i=>`${i.name} ${i.category} ${i.id}`.toLowerCase().includes(q));
+    return `<div class="stack">${heading('LOOKUP','Search results',`Results for “${esc(state.query)}” across the fictional clinic records.`)}
+      ${modeLine()}<div class="grid three">
+      <section class="card stack"><h2>Patients · ${pats.length}</h2>${pats.map(p=>`<div class="task-row"><div class="task-content"><strong>${esc(p.name)}</strong><p>${esc(p.owner)}</p></div>${button('Open','patient',p.id,'class="small"')}</div>`).join('')||'<p class="mini-info">No patient matches.</p>'}</section>
+      <section class="card stack"><h2>Appointments · ${appts.length}</h2>${appts.map(a=>`<div class="task-row"><div class="task-content"><strong>${esc(patient(a.patient)?.name)}</strong><p>${esc(a.type)} · ${esc(dateText(a.date))}</p></div>${button('Visit','navigate','appointments','class="small"')}</div>`).join('')||'<p class="mini-info">No appointment matches.</p>'}</section>
+      <section class="card stack"><h2>Inventory · ${items.length}</h2>${items.map(i=>`<div class="task-row"><div class="task-content"><strong>${esc(i.name)}</strong><p>${i.stock} sample units</p></div>${button('Item','navigate','inventory','class="small"')}</div>`).join('')||'<p class="mini-info">No item matches.</p>'}</section></div>
+      <div class="help-strip"><strong>How to search:</strong><p>Clear the search field to return to the dashboard. The other screens search within their own records.</p></div></div>`;
+  }
+  function render() {
+    nav();
+    const screens={dashboard,appointments,patients,inventory,laboratory,settings,account,staff,team,audit};
+    document.getElementById('main').innerHTML=(state.view==='dashboard' && state.query.trim()?searchHub():screens[state.view]())+help()+`<p class="screen-footer">VetCloudPro · UI-only design preview · ${esc(state.mode)} view · ${esc(state.role)} role · mock records reset on reload</p>`;
+    document.getElementById('search').placeholder=state.view==='patients'?'Search patient or owner…':state.view==='inventory'?'Search inventory…':state.view==='appointments'?'Search appointment or owner…':'Search a patient, appointment or item…';
+  }
+  function showPatient(id, tab='overview') {
+    const p=patient(id); if(!p) return;
+    const visits=state.visitLog.filter(v=>v.patient===id).sort((a,b)=>b.occurred.localeCompare(a.occurred));
+    const appts=state.appointments.filter(a=>a.patient===id).sort((a,b)=>b.date.localeCompare(a.date));
+    const tabSpec=[['overview','Overview'],['timeline','Clinical timeline'],['vaccines','Vaccines & prevention'],['appointments','Appointments'],['billing','Billing'],['labs','Lab & files']];
+    const bodies={
+      overview:`<div class="dossier-header"><span class="avatar ui-big-avatar" aria-hidden="true">${esc(p.name[0])}</span><div><h2>${esc(p.name)}</h2><p>${esc(p.species)} · ${esc(p.breed)} · ${esc(p.id)}</p></div>${badge(p.status,p.status==='Waiting'?'amber':'teal')}</div><div class="ui-info-grid"><div><p class="ui-field-name">Pet details</p><strong>${p.weight} kg</strong><p>Sample clinical status: ${esc(p.status)}</p></div><div><p class="ui-field-name">Owner & contact</p><strong>${esc(p.owner)}</strong><p>${esc(p.contact)}</p></div><div><p class="ui-field-name">Visits on record</p><strong>${visits.length} demo visit${visits.length===1?'':'s'}</strong><p>Logged separately from appointments</p></div><div><p class="ui-field-name">Outstanding (sample)</p><strong>${money(p.balance)}</strong><p>Not proof of payments received</p></div></div><div class="help-strip"><strong>What should happen next?</strong><p>Record a new visit, review history, or open the appointment tab. A visit note never automatically changes stock or payments.</p></div>`,
+      timeline:`<div class="ui-timeline">${visits.map(v=>`<article class="ui-timeline-item"><span class="ui-timeline-mark" aria-hidden="true"></span><div><p class="ui-field-name">${esc(dateText(v.occurred))} · ${esc(v.id)}</p><h3>${esc(v.reason||'Clinical visit')}</h3><p><strong>Observations:</strong> ${esc(v.findings||'Not entered')}</p><p><strong>Treatment notes:</strong> ${esc(v.treatment||'Not entered')}</p>${v.clinician?`<p><strong>Clinician:</strong> ${esc(v.clinician)}</p>`:''}<p class="caption">Entry recorded in sample: ${esc(dateText(v.recorded))}. This is not a server audit timestamp.</p>${v.item||v.charge||v.payment?`<div class="notice info">Related stock/financial details are proposed demo notes only, not transactions.</div>`:''}</div></article>`).join('')||'<div class="empty">No completed clinical entries in this sample. Appointments do not create treatment records.</div>'}</div>`,
+      vaccines:`<div class="notice info">Scheduled vaccinations are <strong>not</strong> evidence of vaccine administration. Actual product, dose, staff and administered time would require a separate validated clinical record.</div><div class="ui-info-grid"><div><p class="ui-field-name">Confirmed administrations</p><strong>None in this demo</strong><p>No vaccine or deworming administration is inferred.</p></div><div><p class="ui-field-name">Vaccination appointments</p><strong>${appts.filter(a=>a.type==='Vaccination').length} scheduled/history sample</strong><p>Open Appointments to check the actual schedule.</p></div></div>`,
+      appointments:`<div class="clean-list">${appts.map(a=>`<div class="clean-row"><div class="clean-item"><strong>${esc(a.type)} · ${esc(dateText(a.date))}</strong><p>${a.duration} min · planned visit</p></div>${statusTag(a)}</div>`).join('')||'<div class="empty compact">No appointments for this patient.</div>'}</div><p class="mini-info">Scheduled and actual work times are distinct. Completion alone does not confirm administration or payment.</p>`,
+      billing:`<div class="ui-info-grid"><div><p class="ui-field-name">Loaded sample balance</p><div class="metric">${money(p.balance)}</div><p>Charges/receivables, not collected payment</p></div><div><p class="ui-field-name">Payments and receipts</p><strong>Ledger not implemented in prototype</strong><p>No financial transaction is created by this demo.</p></div></div>${notice('Payments, voids, refunds and stock-linked charges require explicit, auditable workflows in the production application. This preview cannot collect or clear a balance.','info')}`,
+      labs:`<div class="placeholder">Document and laboratory result preview area<br>No files are opened, uploaded, extracted or medically analyzed.</div><p class="mini-info">Manual lab results should remain accessible independently of any future AI feature.</p>`
+    };
+    openDialog('Patient dossier · '+p.name,`<div class="ui-dossier">${notice('Fictional record. All proposed actions remain local to this design demo.','info')}<div class="ui-dossier-actions">${button('Record a visit','log-visit',p.id,'class="primary" '+disabled(canEdit()))}${button('New appointment','new-appointment','','class="small" '+disabled(canEdit()))}</div><div class="ui-tabstrip" role="group" aria-label="Patient dossier sections">${tabSpec.map(([value,label])=>`<button type="button" data-action="patient-tab" data-id="${esc(id)}" data-tab="${value}" class="${value===tab?'active':''}" aria-pressed="${value===tab}">${label}</button>`).join('')}</div><div class="ui-dossier-panel">${bodies[tab]||bodies.overview}</div></div>`);
+  }
+    function appointmentForm(id) {
+    if(!canEdit()) return flash('Viewer preview is read-only.');
+    const a=state.appointments.find(row=>row.id===id);
+    const advanced=state.mode==='advanced';
+    const basics=`<label>Patient<select name="patient" ${a?'disabled':''}>${state.patients.map(p=>`<option value="${p.id}" ${a?.patient===p.id?'selected':''}>${esc(p.name)} · ${esc(p.owner)}</option>`).join('')}</select><small>Choose the correct patient before continuing.</small></label>
+       <label>Visit type<select name="type">${options(types,a?.type||'Checkup')}</select></label>
+       <label>When is the appointment?<input name="date" type="datetime-local" required value="${esc(a?.date||`${localDay()}T09:00`)}"></label>
+       <label>How long? (minutes)<input name="duration" type="number" min="5" max="480" required value="${a?.duration||30}"></label>`;
+    const extras=`<label>Status<select name="status" id="form-status">${options(statuses,a?.status||'scheduled')}</select></label>
+       <label>Actual visit date/time<input name="actual" type="datetime-local" value="${esc(a?.actual||'')}"><small>Needed when marking completed. Not the entry time.</small></label>
+       <label class="full">Scheduling notes<textarea name="notes" maxlength="2000">${esc(a?.notes||'')}</textarea></label>`;
+    const formContent=advanced?`<div class="form-grid" style="margin-top:16px">${basics}${extras}</div>`:`<div class="form-grid" style="margin-top:16px">${basics}</div><details class="extra-fields" ${a?.status==='completed'?'open':''}><summary>More options · status, visit time and notes</summary><div class="form-grid">${extras}</div></details>`;
+    openDialog(a?'Edit appointment — mockup':'New appointment — mockup',`${notice('This only updates fictional sample appointments in the page. It does not book anything online, send reminders, or record treatment.','info')}
+      ${!advanced?`<div class="simple-path" style="margin-top:13px"><div class="simple-path-step"><b>1</b><div><strong>Choose the pet and visit type</strong><p>Make sure you have the correct patient.</p></div></div><div class="simple-path-step"><b>2</b><div><strong>Pick the date and time</strong><p>Additional options are available below if needed.</p></div></div></div>`:''}
+      <form id="appointment-form" data-id="${esc(id||'')}">${formContent}<div class="dialog-actions"><button type="button" data-action="close">Cancel</button><button class="primary">Apply sample change</button></div></form>`);
+  }
+  function inventoryForm(id) {
+    if(!canEdit()) return flash('Viewer preview is read-only.');
+    const i=state.inventory.find(row=>row.id===id);
+    const advanced=state.mode==='advanced';
+    const basics=`<label>Item name<input name="name" required maxlength="100" value="${esc(i?.name||'')}"></label><label>Category<select name="category">${options(['Medicine','Supplies','Service','Grooming'],i?.category||'Supplies')}</select></label><label>Available stock<input name="stock" type="number" min="0" required value="${i?.stock??0}"></label><label>Selling price (PHP)<input name="sell" type="number" min="0" step=".01" required value="${i?.sell??0}"></label>`;
+    const extras=`<label>Reorder threshold<input name="threshold" type="number" min="0" required value="${i?.threshold??10}"></label><label>Buying price (PHP)<input name="buy" type="number" min="0" step=".01" required value="${i?.buy??0}"></label>`;
+    openDialog('Inventory item — mockup',`${notice('No purchase, dispensing, clinical charge, payment or real inventory write occurs.','info')}
+      ${!advanced?`<p class="mini-info" style="margin-top:13px">Start with the item name, stock and price. Optional fields are available below.</p>`:''}
+      <form id="inventory-form" data-id="${esc(id||'')}"><div class="form-grid" style="margin-top:16px">${basics}</div>
+      ${advanced?`<div class="form-grid" style="margin-top:13px">${extras}</div>`:`<details class="extra-fields"><summary>More item details · thresholds and cost</summary><div class="form-grid">${extras}</div></details>`}
+      <div class="dialog-actions"><button type="button" data-action="close">Cancel</button><button class="primary">Apply sample change</button></div></form>`);
+  }
+  function logVisitForm(patientId='') {
+    if(!canEdit()) return flash('Viewer access is read-only. Quick/Advanced does not change permissions.');
+    const hasPatient=state.patients.some(p=>p.id===patientId);
+    const advanced=state.mode==='advanced';
+    state.pendingVisit=null;
+    const patientField=`<label>Patient *<select name="patient" required>${state.patients.map(p=>`<option value="${esc(p.id)}" ${hasPatient&&p.id===patientId?'selected':''}>${esc(p.name)} · ${esc(p.owner)} (${esc(p.id)})</option>`).join('')}</select><small>Confirm the correct pet before recording anything.</small></label>`;
+    const dateField=`<label>When did the visit actually happen? *<input type="datetime-local" name="occurred" required value=""><small>Enter the true occurrence date and time; no default is assumed.</small></label>`;
+    const purposeField=`<label>Reason for visit *<input name="reason" required maxlength="150" placeholder="e.g. Recheck / vaccination appointment"></label>`;
+    const clinicalFields=`<label>Clinician (if known)<input name="clinician" maxlength="100" placeholder="Optional staff-entered name"></label><label class="full">Observed findings<textarea name="findings" maxlength="2000" placeholder="Only observations actually recorded by staff"></textarea></label><label class="full">Treatment / care notes<textarea name="treatment" maxlength="2000" placeholder="Do not use AI-generated medical conclusions"></textarea></label>`;
+    const relatedFields=`<label>Dispensed item (optional proposed entry)<select name="item"><option value="">None</option>${state.inventory.filter(i=>i.category!=='Service').map(i=>`<option value="${esc(i.id)}">${esc(i.name)}</option>`).join('')}</select><small>Review only; does not reduce stock.</small></label><label>Quantity (if item selected)<input type="number" name="quantity" min="1" max="9999" step="1" value=""><small>No stock change is posted.</small></label><label>Charge amount (PHP, optional draft)<input type="number" name="charge" min="0" step="0.01" placeholder="No charge recorded"></label><label>Payment amount (PHP, optional draft)<input type="number" name="payment" min="0" step="0.01" placeholder="No payment processed"></label><label>Proposed follow-up date (optional)<input type="date" name="followup"><small>Does not schedule an appointment.</small></label>`;
+    const quick=`<div class="ui-steps" aria-label="Visit recording steps"><span class="active" data-step-label="1">1 · Patient & time</span><span data-step-label="2">2 · Clinical notes</span><span data-step-label="3">3 · Review</span></div><form id="visit-form" novalidate><section data-visit-step="1" class="ui-step-panel"><h3>Which patient, and when?</h3><p class="mini-info">You can record work completed earlier today or on a previous date.</p><div class="form-grid">${patientField}${dateField}${purposeField}</div><div class="dialog-actions"><button type="button" data-action="close">Cancel</button><button type="button" class="primary" data-action="visit-next">Continue to notes</button></div></section><section data-visit-step="2" class="ui-step-panel" hidden><h3>What happened during the visit?</h3><p class="mini-info">Record only what staff know. Stock and financial transactions are separate.</p><div class="form-grid">${clinicalFields}</div><details class="extra-fields"><summary>Optional draft details · item, amount, follow-up</summary><div class="form-grid">${relatedFields}</div></details><div class="dialog-actions"><button type="button" data-action="visit-back">Back</button><button type="button" class="primary" data-action="visit-review">Review before saving</button></div></section><section data-visit-step="3" class="ui-step-panel" hidden><h3>Review your entry</h3><div class="ui-review" id="visit-review-content"></div><div class="notice info">Only a fictional visit note will be added to the in-memory demo. Stock, billing, payments, follow-up booking and audit are <strong>not</strong> recorded.</div><div class="dialog-actions"><button type="button" data-action="visit-back">Edit details</button><button type="submit" class="primary">Save demo visit</button></div></section></form>`;
+    const adv=`<form id="visit-form" novalidate><h3>Visit details</h3><div class="form-grid">${patientField}${dateField}${purposeField}${clinicalFields}</div><details class="extra-fields" open><summary>Related draft details · no transactions</summary><div class="form-grid">${relatedFields}</div></details><div id="visit-review-content" hidden class="ui-review"></div><div class="dialog-actions"><button type="button" data-action="close">Cancel</button><button type="button" class="primary" data-action="visit-review">Review all details</button></div></form>`;
+    openDialog('Record a clinical visit · '+(advanced?'Advanced':'Guided'),`${notice('Design prototype only. No real medical record, charge, payment, inventory movement, calendar booking or server audit is created.','info')}<div class="ui-visit-intro"><strong>${advanced?'Full entry form':'Guided visit entry'}</strong><p>Actual occurrence time is entered by staff. The separate mock entry timestamp is generated only when the sample visit is saved.</p></div>${advanced?adv:quick}`);
+    const form=document.getElementById('visit-form');
+    form.dataset.step='1'; form.dataset.view=advanced?'advanced':'quick';
+  }
+  function visitFormValues(form) {
+    const data=new FormData(form);
+    return {patient:String(data.get('patient')||''),occurred:String(data.get('occurred')||''),reason:String(data.get('reason')||'').trim(),clinician:String(data.get('clinician')||'').trim(),findings:String(data.get('findings')||'').trim(),treatment:String(data.get('treatment')||'').trim(),item:String(data.get('item')||''),quantity:Number(data.get('quantity')||0),charge:String(data.get('charge')||''),payment:String(data.get('payment')||''),followup:String(data.get('followup')||'')};
+  }
+  function validateVisit(form,step=3) {
+    const values=(form.dataset.view==='advanced'&&state.pendingVisit)?state.pendingVisit:visitFormValues(form);
+    if(!patient(values.patient)) return 'Choose a valid patient.';
+    if(!values.occurred || !Number.isFinite(new Date(values.occurred).getTime())) return 'Enter the actual date and time when the visit happened.';
+    if(new Date(values.occurred).getTime()>Date.now()+60000) return 'A completed visit cannot have an occurrence date in the future.';
+    if(!values.reason) return 'Enter the reason for the visit.';
+    if(values.item && (!Number.isInteger(values.quantity)||values.quantity<1)) return 'Enter a valid whole-number quantity for the proposed dispensed item.';
+    if(!values.item && values.quantity) return 'Choose an item for the entered quantity, or clear the quantity.';
+    for(const name of ['charge','payment']) if(values[name]!=='' && (!Number.isFinite(Number(values[name])) || Number(values[name])<0)) return 'Amounts must be zero or greater.';
+    return '';
+  }
+  function setVisitStep(step) {
+    const form=document.getElementById('visit-form'); if(!form)return;
+    const advanced=form.dataset.view==='advanced';
+    if(advanced){return;}
+    form.dataset.step=String(step);
+    document.querySelectorAll('[data-visit-step]').forEach(panel=>panel.hidden=Number(panel.dataset.visitStep)!==step);
+    document.querySelectorAll('[data-step-label]').forEach(label=>label.classList.toggle('active',Number(label.dataset.stepLabel)===step));
+    document.getElementById('dialog-content').scrollTop=0;
+  }
+  function reviewVisit() {
+    const form=document.getElementById('visit-form'); if(!form)return;
+    const issue=validateVisit(form); if(issue){flash(issue);return;}
+    const v=visitFormValues(form),p=patient(v.patient),i=state.inventory.find(row=>row.id===v.item);
+    state.pendingVisit={...v};
+    const summary=`<div class="ui-review-rows"><div><span>Patient</span><strong>${esc(p?.name)} · ${esc(p?.owner)}</strong></div><div><span>Visit occurred</span><strong>${esc(dateText(v.occurred))}</strong></div><div><span>Reason</span><strong>${esc(v.reason)}</strong></div><div><span>Observed findings</span><strong>${esc(v.findings||'Not entered')}</strong></div><div><span>Treatment notes</span><strong>${esc(v.treatment||'Not entered')}</strong></div>${v.clinician?`<div><span>Clinician</span><strong>${esc(v.clinician)}</strong></div>`:''}${i?`<div><span>Proposed stock entry</span><strong>${esc(i.name)} × ${v.quantity} · not dispensed</strong></div>`:''}${v.charge!==''?`<div><span>Charge draft</span><strong>${money(v.charge)} · not billed</strong></div>`:''}${v.payment!==''?`<div><span>Payment draft</span><strong>${money(v.payment)} · not collected</strong></div>`:''}${v.followup?`<div><span>Follow-up draft</span><strong>${esc(v.followup)} · not scheduled</strong></div>`:''}</div>`;
+    const area=document.getElementById('visit-review-content'); if(area){area.innerHTML=summary;area.hidden=false;}
+    if(form.dataset.view==='quick'){setVisitStep(3);} else {
+      form.querySelector('.dialog-actions').innerHTML='<button type="button" data-action="visit-edit">Edit entry</button><button type="submit" class="primary">Save demo visit</button>';
+      form.querySelectorAll('input,select,textarea').forEach(el=>{el.disabled=true;});
+    }
+  }
+  function saveVisit(form) {
+    if(!canEdit()) return flash('Viewer preview is read-only.');
+    const issue=validateVisit(form); if(issue){flash(issue);return;}
+    const v=(form.dataset.view==='advanced'&&state.pendingVisit)?state.pendingVisit:visitFormValues(form);
+    state.pendingVisit=null;
+    const mockTime=new Date();
+    const record={...v,id:`VIS-MOCK-${String(state.visitLog.length+1).padStart(3,'0')}`,recorded:`${mockTime.getFullYear()}-${String(mockTime.getMonth()+1).padStart(2,'0')}-${String(mockTime.getDate()).padStart(2,'0')}T${String(mockTime.getHours()).padStart(2,'0')}:${String(mockTime.getMinutes()).padStart(2,'0')}`};
+    state.visitLog.push(record); render();
+    const p=patient(record.patient);
+    openDialog('Sample visit added',`<div class="ui-success"><span aria-hidden="true">✓</span><div><h2>Visit added to this demo</h2><p>${esc(p?.name)} · ${esc(dateText(record.occurred))}</p></div></div><div class="notice info"><strong>Nothing was saved to a server.</strong> This in-page clinical note does not change an appointment, stock, patient balance, payments or audit history.</div><div class="dialog-actions">${button('View patient timeline','patient-timeline',record.patient,'class="small"')}${button('Save & log another','log-visit','','class="primary"')}${button('Finish','close','','class="small"')}</div>`);
+  }
+  function admissionForm(){
+    if(!canEdit())return flash('Viewer preview is read-only.');
+    openDialog('Add patient · demo record',`${notice('Fictional patient creation only. No real account, clinic or patient record is created.','info')}<form id="admission-form" class="stack" style="margin-top:16px"><div class="form-grid"><label>Patient name *<input name="name" required maxlength="100" placeholder="Pet name"></label><label>Species *<select name="species" required><option>Canine</option><option>Feline</option><option>Other</option></select></label><label>Breed<input name="breed" maxlength="100" placeholder="Optional breed"></label><label>Owner name *<input name="owner" required maxlength="100" placeholder="Fictional owner"></label><label>Owner contact<input name="contact" maxlength="100" placeholder="Fictional contact only"></label><label>Weight (kg)<input name="weight" min="0" step="0.01" type="number" placeholder="Optional"></label></div><div class="dialog-actions"><button type="button" data-action="close">Cancel</button><button type="submit" class="primary">Add demo patient</button></div></form>`);
+  }
+  function loginPreview() {
+    openDialog('Login screen preview',`<div class="login-preview stack"><div class="brand" style="color:#102b37">VetCloud<span style="color:#0f766e">Pro</span></div><h1>Secure staff login</h1><p>Presentation only. No account is authenticated.</p><label>Email<input value="designer@example.com" disabled></label><label>Password<input placeholder="No password needed or stored" disabled></label>${button('Return to demo','close','','class="primary"')}<p class="caption">Real authentication, invitation verification and device privacy remain in the React app.</p></div>`);
+  }
+    document.addEventListener('click',event=>{
+    const control=event.target.closest('button'); if(!control || control.disabled) return;
+    if(control.dataset.mode){state.mode=control.dataset.mode;state.moreOpen=false;render();flash(state.mode==='quick'?'Quick view enabled. Same records and permissions.':'Advanced view enabled. Same records and permissions.');return;}
+    if(control.hasAttribute('data-more')){state.moreOpen=!state.moreOpen;nav();return;}
+    if(control.dataset.appointmentScope){state.appointmentStatus=control.dataset.appointmentScope;render();return;}
+    if(control.dataset.action==='mode-info'){openWorkspaceModal();return;}
+  });
+  document.addEventListener('change',event=>{
+    if(event.target.id==='appointment-from'){state.appointmentFrom=event.target.value||localDay(-30);render();}
+    if(event.target.id==='appointment-to'){state.appointmentTo=event.target.value||localDay(30);render();}
+  });
+  document.addEventListener('click',event=>{
+    const target=event.target.closest('button'); if(!target||target.disabled) return;
+    if(target.dataset.view||target.dataset.action==='navigate') {
+      state.view=target.dataset.view||target.dataset.id; state.query=''; document.getElementById('search').value=''; closeMenu(); render(); document.getElementById('main').focus(); return;
+    }
+    if(target.dataset.patientFilter) { state.patientFilter=target.dataset.patientFilter; render(); return; }
+    const {action,id}=target.dataset;
+    if(action==='close') closeDialog();
+    if(action==='patient') showPatient(id);
+    if(action==='patient-billing') showPatient(id,'billing');
+    if(action==='patient-timeline') showPatient(id,'timeline');
+    if(action==='log-visit') logVisitForm(id||'');
+    if(action==='visit-next'){const f=document.getElementById('visit-form'); const e=validateVisit(f,1);if(e)flash(e);else setVisitStep(2);}
+    if(action==='visit-back'){const f=document.getElementById('visit-form');setVisitStep(Number(f?.dataset.step||2)-1);}
+    if(action==='visit-review') reviewVisit();
+    if(action==='visit-edit'){state.pendingVisit=null;const f=document.getElementById('visit-form');f.querySelectorAll('input,select,textarea').forEach(el=>el.disabled=false);f.querySelector('.dialog-actions').innerHTML='<button type="button" data-action="close">Cancel</button><button type="button" class="primary" data-action="visit-review">Review all details</button>';const r=document.getElementById('visit-review-content');if(r)r.hidden=true;}
+    if(action==='patient-tab') showPatient(id,target.dataset.tab);
+    if(action==='new-appointment') appointmentForm();
+    if(action==='edit-appointment') appointmentForm(id);
+    if(action==='inventory-form') inventoryForm(id);
+    if(action==='reminder') { const a=state.appointments.find(a=>a.id===id); openDialog('Manual reminder preview',`<div class="notice info">No message is sent or copied to an external service.</div><p style="margin-top:16px">Hello ${esc(patient(a.patient)?.owner)}, ${esc(patient(a.patient)?.name)} has a ${esc(a.type.toLowerCase())} appointment on ${esc(dateText(a.date))}. Please contact the clinic to confirm.</p><p class="subtext">In the real app, staff review the recipient and send manually.</p>`); }
+    if(action==='refresh') { render(); flash('Mock screen refreshed. No server query was made.'); }
+    if(action==='stub') flash(`${target.dataset.label||target.textContent.trim()}: visual placeholder only. No real action was performed.`);
+    if(action==='clinic') openDialog('Clinic picker preview',`<div class="list-item"><h3>Sample Veterinary Clinic</h3><p>Role preview: ${esc(state.role)}</p>${badge('Fictional clinic','teal')}</div><p class="subtext">No clinic is created, selected in Firebase or transferred.</p>`);
+    if(action==='login') loginPreview();
+    if(action==='admission') admissionForm();
+  });
+  document.addEventListener('change',event=>{
+    const element=event.target;
+    if(element.id==='role') { state.role=element.value; render(); }
+    if(element.id==='appointment-status') { state.appointmentStatus=element.value; render(); }
+    if(element.id==='appointment-type') { state.appointmentType=element.value; render(); }
+    if(element.id==='ai-toggle') { state.ai=element.checked; render(); flash('AI navigation preview changed. No AI provider is connected.'); }
+    if(element.id==='mock-consent') flash('Consent checkbox preview only. No browser storage was enabled.');
+  });
+  document.addEventListener('submit',event=>{
+    event.preventDefault();
+    const form=event.target; if(!canEdit()) return flash('Viewer preview is read-only.');
+    const data=new FormData(form);
+    if(form.id==='visit-form') {if(form.dataset.view==='advanced'&&!document.querySelector('#visit-review-content:not([hidden])'))return flash('Review the visit before saving.');if(form.dataset.view==='quick'&&form.dataset.step!=='3')return flash('Finish the review first.');saveVisit(form);return;}
+    if(form.id==='admission-form'){const name=String(data.get('name')||'').trim(),owner=String(data.get('owner')||'').trim();if(!name||!owner)return flash('Patient and owner names are required.');const p={id:`PAT-MOCK-${String(state.patients.length+1).padStart(3,'0')}`,name,species:String(data.get('species')||'Other'),breed:String(data.get('breed')||'Not specified'),owner,contact:String(data.get('contact')||'Not entered'),status:'Waiting',balance:0,weight:Number(data.get('weight')||0)};state.patients.push(p);state.view='patients';state.patientFilter='Active';state.query='';document.getElementById('search').value='';closeDialog();render();showPatient(p.id);flash('Sample patient added locally. No server write.');return;}
+    if(form.id==='appointment-form') {
+      const previous=state.appointments.find(a=>a.id===form.dataset.id);
+      if(data.get('status')==='completed'&&!data.get('actual')) return flash('Choose an actual visit time for the completed preview.');
+      if(data.get('status')==='completed'&&new Date(String(data.get('actual'))).getTime()>Date.now()+60000) return flash('A completed visit cannot have an actual time in the future.');
+      const value={id:previous?.id||`APT-MOCK-${state.appointments.length+1}`,patient:previous?.patient||String(data.get('patient')),type:String(data.get('type')),date:String(data.get('date')),duration:Number(data.get('duration')),status:String(data.get('status')),notes:String(data.get('notes')),actual:data.get('status')==='completed'?String(data.get('actual')):''};
+      state.appointments=[...state.appointments.filter(a=>a.id!==value.id),value]; closeDialog(); render(); flash('Local mock appointment updated. Nothing was saved, booked or sent.');
+    }
+    if(form.id==='inventory-form') {
+      const value={id:form.dataset.id||`ITM-MOCK-${state.inventory.length+1}`,name:String(data.get('name')),category:String(data.get('category')),stock:Number(data.get('stock')),threshold:Number(data.get('threshold')),buy:Number(data.get('buy')),sell:Number(data.get('sell'))};
+      state.inventory=[...state.inventory.filter(i=>i.id!==value.id),value]; closeDialog(); render(); flash('Local mock item updated. No real stock changed.');
+    }
+  });
+  document.getElementById('search').addEventListener('input',event=>{state.query=event.target.value;render();});
+  document.getElementById('close-dialog').addEventListener('click',closeDialog);
+  document.getElementById('backdrop').addEventListener('click',closeMenu);
+  document.getElementById('menu').addEventListener('click',()=>{const open=document.getElementById('sidebar').classList.toggle('open');document.getElementById('backdrop').classList.toggle('open',open);document.getElementById('menu').setAttribute('aria-expanded',String(open));});
+  render();
+  </script>
+</body>
+</html>

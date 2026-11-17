@@ -41,6 +41,7 @@ firestore-debug.log
 
 # vercel
 .vercel
+.wrangler/
 
 # typescript
 *.tsbuildinfo

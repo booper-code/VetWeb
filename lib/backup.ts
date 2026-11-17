@@ -4,11 +4,14 @@ const CLINIC_COLLECTIONS = [
   'patients',
   'inventory',
   'consultations',
+  'appointments',
   'staff',
   'payProfiles',
   'payrollPeriods',
   'payrollLedger',
-  'payrollMeta'
+  'payrollMeta',
+  'auditHeads',
+  'auditEvents'
 ] as const;
 
 const slugify = (value: string) =>
@@ -34,11 +37,16 @@ export const exportClinicBackup = async ({
   if (!db || !fs) throw new Error('Firebase is not available.');
 
   const readAll = async (path: string[]) => {
-    const snapshot = await fs.getDocs(fs.collection(db, path[0], ...path.slice(1)));
-    return snapshot.docs.map((document: { id: string; data: () => unknown }) => ({
-      id: document.id,
-      ...(document.data() as Record<string, unknown>)
-    }));
+    const records: Record<string, unknown>[] = [];
+    let cursor: import('firebase/firestore').QueryDocumentSnapshot | undefined;
+    for (;;) {
+      const constraints: import('firebase/firestore').QueryConstraint[] = [fs.orderBy(fs.documentId()), fs.limit(200)];
+      if (cursor) constraints.push(fs.startAfter(cursor));
+      const snapshot = await fs.getDocs(fs.query(fs.collection(db, path[0], ...path.slice(1)), ...constraints));
+      records.push(...snapshot.docs.map(document => ({ ...document.data(), id: document.id })));
+      if (snapshot.size < 200) return records;
+      cursor = snapshot.docs.at(-1);
+    }
   };
 
   const clinicSnapshot = await fs.getDoc(fs.doc(db, 'clinics', clinicId));

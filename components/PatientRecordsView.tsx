@@ -1,16 +1,22 @@
 "use client";
 
 import React, { useState } from 'react';
-import { PawPrint, TestTube, Search, Plus, Activity, User, Sparkles, FileSpreadsheet, PlusCircle, X, ZoomIn, Phone, CreditCard, Stethoscope, Trash2, Download, Loader2 } from 'lucide-react';
-import type { InventoryItem, PatientBillableItem, PatientRecord, Consultation } from '@/types';
+import { PawPrint, TestTube, Search, Activity, User, Sparkles, FileSpreadsheet, PlusCircle, X, ZoomIn, CreditCard, Stethoscope, Trash2, Download, Loader2 } from 'lucide-react';
+import type { InventoryItem, PatientBillableItem, PatientRecord, Consultation, ConsultationDraft } from '@/types';
 import { compressImageFileToBlob, PROFILE_IMAGE_OPTIONS, DOCUMENT_IMAGE_OPTIONS } from '@/lib/images';
 import { imageStorageConfigured, openStoredImage, uploadPatientImage } from '@/lib/imageStore';
 import { StoredImage } from '@/components/StoredImage';
 import { exportPatientsPdf } from '@/lib/pdf';
+import { PageControls } from '@/components/PageControls';
+import { WorkspaceModeStrip } from '@/components/WorkspaceModeStrip';
+import { ClinicalActivity } from '@/components/ClinicalActivity';
+import type { PageStatus } from '@/lib/useClinicPages';
 
 type PendingImage = { blob: Blob; previewUrl: string };
 
-export const PatientRecordsView = ({ 
+export const PatientRecordsView = ({
+  initialPatientId,
+  initialTreatmentLink,
   patients, 
   consultations,
   inventory,
@@ -20,10 +26,18 @@ export const PatientRecordsView = ({
   searchQuery,
   onCreatePatient,
   onUpdatePatient,
-  onUpdateInventoryItem,
+  onSaveBilling,
+  onSaveConsultation,
   onDeletePatient,
-  triggerToast
-}: { 
+  triggerToast,
+  paging,
+  canEdit = true,
+  mode = 'quick',
+  staffUid = '',
+  staffName = ''
+}: {
+  initialPatientId?: string;
+  initialTreatmentLink?: { patientId: string; appointmentId: string; occurredAt: string } | null;
   patients: PatientRecord[]; 
   consultations: Consultation[];
   inventory: InventoryItem[];
@@ -33,10 +47,16 @@ export const PatientRecordsView = ({
   onCreatePatient: (name: string, species: string, breed: string, gender: PatientRecord['gender'], owner: string, contact: string, weight: number, admissionTypes: string[], reason: string, pictures?: string[]) => Promise<boolean>;
   onUpdatePatient: (record: PatientRecord) => Promise<boolean>;
   searchQuery: string;
-  onUpdateInventoryItem: (item: InventoryItem) => Promise<void>;
-  onDeletePatient: (id: string) => void;
+  onSaveBilling: (patient: PatientRecord, inventory: InventoryItem[]) => Promise<boolean>;
+  onSaveConsultation: (patient: PatientRecord, draft: ConsultationDraft) => Promise<boolean>;
+  onDeletePatient: (id: string) => Promise<boolean>;
   onToggleStatus: (id: string) => void;
   triggerToast: (msg: string) => void;
+  paging?: { active: PageStatus; discharged: PageStatus; load: (kind: 'Active' | 'Discharged') => void };
+  canEdit?: boolean;
+  mode?: 'quick' | 'advanced';
+  staffUid?: string;
+  staffName?: string;
 }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [isSavingPatient, setIsSavingPatient] = useState(false);
@@ -71,17 +91,23 @@ export const PatientRecordsView = ({
   const [selectedAdmissions, setSelectedAdmissions] = useState<string[]>(['Medical Checkup']);
   
   const [newPatientImage, setNewPatientImage] = useState<PendingImage | null>(null);
-  const [showFullReport, setShowFullReport] = useState(false);
+  const [showFullReport, setShowFullReport] = useState(() =>
+    patients.some(patient => patient.id === initialPatientId));
 
   // FIXED: Declared missing constant
   const admissionOptions = ['Grooming', 'Medical Checkup', 'Surgery', 'Confinement'];
 
   // Drawer & Verification State
-  const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
+  const [selectedPatientSnapshot, setSelectedPatient] = useState<PatientRecord | null>(() =>
+    patients.find(patient => patient.id === initialPatientId) ?? null);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<PatientRecord | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [patientDirectoryFilter, setPatientDirectoryFilter] = useState<'Active' | 'Discharged'>('Active');
+  const [patientDirectoryFilter, setPatientDirectoryFilter] = useState<'Active' | 'Discharged'>(() =>
+    patients.find(patient => patient.id === initialPatientId)?.status === 'Discharged' ? 'Discharged' : 'Active');
+  const selectedPatient = selectedPatientSnapshot && !isEditing
+    ? patients.find(patient => patient.id === selectedPatientSnapshot.id) ?? selectedPatientSnapshot
+    : selectedPatientSnapshot;
   // Billing Module Calculation States
 
   // Payables / Dossier Billing State
@@ -269,48 +295,9 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
   }
 };
   
-  const startEditing = () => {
-    setEditForm(selectedPatient);
-    setIsEditing(true);
-    setShowDeleteConfirm(false);
-  };
-
-  const cancelEditing = () => {
-    setIsEditing(false);
-    setEditForm(null);
-    setShowDeleteConfirm(false);
-  };
-
-  const saveEdits = () => {
-    if (editForm) {
-      onUpdatePatient(editForm);
-      setSelectedPatient(editForm); // Update view with edited metrics
-      setIsEditing(false);
-    }
-  };
-
   const handleEditChange = (field: keyof PatientRecord, value: PatientRecord[keyof PatientRecord]) => {
     if (editForm) {
       setEditForm({ ...editForm, [field]: value });
-    }
-  };
-
-  const toggleEditAdmission = (type: string) => {
-    if (!editForm) return;
-    const currentTypes = editForm.admissionTypes;
-    if (currentTypes.includes(type)) {
-      setEditForm({ ...editForm, admissionTypes: currentTypes.filter(t => t !== type) });
-    } else {
-      setEditForm({ ...editForm, admissionTypes: [...currentTypes, type] });
-    }
-  };
-
-  const handleConfirmDelete = () => {
-    if (selectedPatient) {
-      onDeletePatient(selectedPatient.id);
-      setSelectedPatient(null);
-      setIsEditing(false);
-      setShowDeleteConfirm(false);
     }
   };
 
@@ -377,22 +364,17 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
     0
   );
 
-  const applyBillablesToPatient = () => {
-    if (!selectedPatient || selectedBillableDetails.length === 0) return;
-
-    // ✅ STEP 1: Deduct inventory stock FIRST
-    selectedBillableDetails.forEach(entry => {
-      const item = entry.item;
-
-      if (item.category === 'Medicine' || item.category === 'Supplies') {
-        const updatedItem = {
-          ...item,
-          stock: Math.max(0, item.stock - entry.quantity)
-        };
-
-        onUpdateInventoryItem(updatedItem);
-      }
-    });
+  const applyBillablesToPatient = async () => {
+    if (!canEdit || isSavingPatient || !selectedPatient || selectedBillableDetails.length === 0) return;
+    if (selectedBillableDetails.some(entry => !Number.isSafeInteger(entry.quantity) || entry.quantity < 1 ||
+      !Number.isFinite(entry.unitPrice) || entry.unitPrice < 0 ||
+      ((entry.item.category === 'Medicine' || entry.item.category === 'Supplies') && entry.quantity > entry.item.stock))) {
+      triggerToast('Choose whole positive quantities within available stock. Nothing was saved.');
+      return;
+    }
+    const stockChanges = selectedBillableDetails
+      .filter(entry => entry.item.category === 'Medicine' || entry.item.category === 'Supplies')
+      .map(entry => ({ ...entry.item, stock: entry.item.stock - entry.quantity }));
 
     // ✅ STEP 2: Create billable records
     const newBillableItems: PatientBillableItem[] = selectedBillableDetails.map(entry => ({
@@ -416,7 +398,11 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
       ]
     };
 
-    onUpdatePatient(updatedRecord);
+    setIsSavingPatient(true);
+    let saved = false;
+    try { saved = await onSaveBilling(updatedRecord, stockChanges); }
+    finally { setIsSavingPatient(false); }
+    if (!saved) return;
     setSelectedPatient(updatedRecord);
 
     // ✅ STEP 4: Reset UI
@@ -426,7 +412,7 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
     triggerToast(`Added PHP ${billableSubtotal.toFixed(2)} to patient payables.`);
   };
   const removeBillableFromPatient = async (billableItem: PatientBillableItem) => {
-    if (!selectedPatient) return;
+    if (!canEdit || isSavingPatient || !selectedPatient) return;
 
     const confirmed = window.confirm(
       `Remove "${billableItem.itemName}" from this patient's billing history?`
@@ -434,7 +420,7 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
 
     if (!confirmed) return;
 
-    // Restore inventory stock if billable was medicine or supplies
+    const stockChanges: InventoryItem[] = [];
     if (billableItem.category === 'Medicine' || billableItem.category === 'Supplies') {
       const inventoryItem = inventory.find(
         item => item.itemCode === billableItem.itemCode
@@ -446,7 +432,10 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
           stock: inventoryItem.stock + billableItem.quantity
         };
 
-        await onUpdateInventoryItem(restoredItem);
+        stockChanges.push(restoredItem);
+      } else {
+        triggerToast('Load the referenced inventory item before removing this stock-linked bill. Nothing was changed.');
+        return;
       }
     }
 
@@ -460,7 +449,11 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
       billableItems: updatedBillableItems
     };
 
-    await onUpdatePatient(updatedRecord);
+    setIsSavingPatient(true);
+    let saved = false;
+    try { saved = await onSaveBilling(updatedRecord, stockChanges); }
+    finally { setIsSavingPatient(false); }
+    if (!saved) return;
     setSelectedPatient(updatedRecord);
 
     triggerToast(`Removed ${billableItem.itemName} from billing history.`);
@@ -495,35 +488,41 @@ const visiblePatients =
 
   return (
     <div className="space-y-6 relative">
+      {!canEdit && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        Read-only workspace. Changes require an online owner or editor.
+      </p>}
+      <WorkspaceModeStrip mode={mode} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">
+          <h2 className="text-2xl font-bold text-ink">
             Admission &amp; Patient Records
           </h2>
-          <p className="text-slate-500 font-medium">
+          <p className="font-medium text-muted">
             Unifies client cards, patient profiles, and workflow tagging in one screen.
+            {paging && ' Search and PDF exports cover loaded records only.'}
           </p>
         </div>
         <button
           type="button"
           onClick={handleExportPdf}
           disabled={isExporting || patients.length === 0}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          className="vc-btn ml-auto"
         >
           {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-          Export PDF
+            Export {paging ? 'loaded records ' : ''}PDF
         </button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         {/* --- LEFT COLUMN: ADMISSION FORM --- */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm h-fit">
-          <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <Activity className="text-teal-600 w-5 h-5" />
+        <div className="h-fit rounded-[14px] border border-line bg-white p-6 shadow-[0_2px_10px_#243e5607]">
+          <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-ink">
+            <Activity className="w-5 h-5 text-accent" />
             Add Patient
           </h3>
 
           <form onSubmit={handleAdmitPatient} className="space-y-4">
+            <fieldset disabled={!canEdit || isSavingPatient} className="contents">
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">
                 Patient Name *
@@ -637,7 +636,7 @@ const visiblePatients =
 
                   <label
                     htmlFor="newPatientImageUpload"
-                    className="cursor-pointer inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm"
+                    className="vc-btn vc-btn-primary cursor-pointer text-xs"
                   >
                     <PlusCircle className="w-4 h-4" />
                     {newPatientImage ? 'Change Patient Photo' : 'Upload Patient Photo'}
@@ -724,19 +723,20 @@ const visiblePatients =
             <button
               type="submit"
               disabled={isSavingPatient || pendingImages > 0}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md"
+              className="vc-btn vc-btn-primary w-full py-3 text-xs"
             >
               Admit Patient to Directory
             </button>
+            </fieldset>
           </form>
         </div>
 
         {/* --- RIGHT COLUMN: ACTIVE DIRECTORY TABLE --- */}
-<div className="xl:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-fit">
+<div className="flex h-fit flex-col overflow-hidden rounded-[14px] border border-line bg-white shadow-[0_2px_10px_#243e5607] xl:col-span-2">
   <div className="p-6 border-b border-slate-200 bg-slate-50/50 space-y-4">
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <h3 className="text-lg font-bold text-slate-800">
+        <h3 className="text-lg font-bold text-ink">
           Patient Directory
         </h3>
         <p className="text-xs text-slate-500 mt-1">
@@ -754,10 +754,13 @@ const visiblePatients =
         <button
           key={filter}
           type="button"
-          onClick={() => setPatientDirectoryFilter(filter)}
+          onClick={() => {
+            setPatientDirectoryFilter(filter);
+            if (paging && filter === 'Discharged' && !paging.discharged.loaded) paging.load(filter);
+          }}
           className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${
             patientDirectoryFilter === filter
-              ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+              ? 'border-accent bg-accent text-white shadow-sm'
               : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
           }`}
         >
@@ -768,15 +771,9 @@ const visiblePatients =
       ))}
     </div>
   </div>
-          <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
-            <h3 className="text-lg font-bold text-slate-800">
-              Active Patient Directory
-            </h3>
-
-            <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full">
-              {activePatients.length} Records
-            </span>
-          </div>
+          {paging && <PageControls label={patientDirectoryFilter === 'Active' ? 'active patients' : 'discharged patients'}
+            status={patientDirectoryFilter === 'Active' ? paging.active : paging.discharged}
+            onLoad={() => paging.load(patientDirectoryFilter)} />}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -902,6 +899,7 @@ const visiblePatients =
                 )}
                 <button 
                   type="button"
+                  aria-label="Close dossier"
                   disabled={isSavingPatient || pendingImages > 0}
                   onClick={() => {
                     setShowFullReport(false);
@@ -922,7 +920,7 @@ const visiblePatients =
                 // ==========================================
                 // --- EDIT MODE VIEW ---
                 // ==========================================
-                <fieldset disabled={isSavingPatient} className="space-y-6 animate-in fade-in duration-200">
+                <fieldset disabled={!canEdit || isSavingPatient} className="space-y-6 animate-in fade-in duration-200">
                   {/* Patient Profile Picture Editor */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
@@ -955,7 +953,7 @@ const visiblePatients =
 
                       <label
                         htmlFor="editPatientProfilePictureUpload"
-                        className="cursor-pointer inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm"
+                        className="vc-btn vc-btn-primary cursor-pointer text-xs"
                       >
                         <PlusCircle className="w-4 h-4" />
                         {editForm.profilePicture || editForm.pictures?.[0]
@@ -1433,9 +1431,15 @@ const visiblePatients =
                         </div>
                         <button 
                           type="button"
-                          onClick={() => {
+                          disabled={!canEdit || isSavingPatient}
+                          onClick={async () => {
+                            if (!canEdit || !window.confirm('Clear this patient’s outstanding balance? This does not remove billing history.')) return;
                             const updated = { ...selectedPatient, balance: 0 };
-                            if (typeof onUpdatePatient === 'function') onUpdatePatient(updated);
+                            setIsSavingPatient(true);
+                            let saved = false;
+                            try { saved = await onUpdatePatient(updated); }
+                            finally { setIsSavingPatient(false); }
+                            if (!saved) return;
                             setSelectedPatient(updated);
                             if (typeof triggerToast === 'function') triggerToast(`Ledger balance cleared.`);
                           }}
@@ -1447,6 +1451,22 @@ const visiblePatients =
                     </div>
                   </div>
                   
+                {/* SECTION: Structured clinical activity / treatments */}
+                <ClinicalActivity
+                  patient={selectedPatient}
+                  consultations={consultations}
+                  inventory={inventory}
+                  canEdit={canEdit}
+                  staffUid={staffUid}
+                  staffName={staffName}
+                  appointmentId={initialTreatmentLink?.patientId === selectedPatient.id
+                    ? initialTreatmentLink.appointmentId : null}
+                  initialOccurredAt={initialTreatmentLink?.patientId === selectedPatient.id
+                    ? initialTreatmentLink.occurredAt : undefined}
+                  onSave={draft => onSaveConsultation(selectedPatient, draft)}
+                  triggerToast={triggerToast}
+                />
+
                 {/* SECTION 0: Patient Payables / Billing */}
                 <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
@@ -1456,7 +1476,8 @@ const visiblePatients =
                         Patient Payables
                       </h4>
                       <p className="text-xs text-slate-500 mt-1">
-                        Search medicines and services, check needed items, set quantity, then add them to the patient ledger.
+                        Search loaded medicines and services, select whole quantities, then save the ledger and stock together.
+                        Apply at most two stock items per operation.
                       </p>
                     </div>
 
@@ -1593,7 +1614,7 @@ const visiblePatients =
 
                         <button
                           type="button"
-                          disabled={selectedBillableDetails.length === 0}
+                          disabled={!canEdit || isSavingPatient || selectedBillableDetails.length === 0}
                           onClick={applyBillablesToPatient}
                           className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all disabled:opacity-50"
                         >
@@ -1631,7 +1652,8 @@ const visiblePatients =
 
                               <button
                                 type="button"
-                                onClick={() => removeBillableFromPatient(item)}
+                                disabled={!canEdit || isSavingPatient}
+                                onClick={() => void removeBillableFromPatient(item)}
                                 className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -1755,10 +1777,14 @@ const visiblePatients =
       <div className="flex flex-1 gap-3 bg-red-50 border border-red-200 p-2 rounded-xl animate-in fade-in zoom-in-95 duration-200">
         <button
           type="button"
-          onClick={() => {
-            if (!selectedPatient) return;
-
-            onDeletePatient(selectedPatient.id);
+          disabled={!canEdit || isSavingPatient}
+          onClick={async () => {
+            if (!selectedPatient || !canEdit) return;
+            setIsSavingPatient(true);
+            let removed = false;
+            try { removed = await onDeletePatient(selectedPatient.id); }
+            finally { setIsSavingPatient(false); }
+            if (!removed) return;
             setShowFullReport(false);
             setSelectedPatient(null);
             setEditForm(null);
@@ -1786,7 +1812,7 @@ const visiblePatients =
     ) : (
       <button
         type="button"
-        disabled={isSavingPatient || pendingImages > 0}
+        disabled={!canEdit || isSavingPatient || pendingImages > 0}
         onClick={() => setShowDeleteConfirm(true)}
         className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-3 rounded-xl text-sm transition-all shadow-sm flex items-center justify-center gap-2"
         title="Permanently delete this patient record"
@@ -1797,7 +1823,7 @@ const visiblePatients =
 
     <button
       type="button"
-      disabled={isSavingPatient || pendingImages > 0}
+      disabled={!canEdit || isSavingPatient || pendingImages > 0}
       onClick={() => {
         setIsEditing(false);
         setShowDeleteConfirm(false);
@@ -1809,7 +1835,7 @@ const visiblePatients =
 
     <button
       type="button"
-      disabled={isSavingPatient || pendingImages > 0}
+      disabled={!canEdit || isSavingPatient || pendingImages > 0}
       onClick={async () => {
         if (!editForm) return;
         setIsSavingPatient(true);
@@ -1833,6 +1859,7 @@ const visiblePatients =
                 <>
                   <button 
                     type="button"
+                    disabled={!canEdit}
                     onClick={() => {
                       setEditForm(JSON.parse(JSON.stringify(selectedPatient)));
                       setIsEditing(true);

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Package, AlertCircle, TrendingUp, PlusCircle, X, Trash2, Download, Loader2 } from 'lucide-react';
 import type { InventoryItem } from '@/types';
 import { exportInventoryPdf } from '@/lib/pdf';
+import { WorkspaceModeStrip } from '@/components/WorkspaceModeStrip';
 
 export const InventoryControlView = ({ 
   inventory, 
@@ -12,7 +13,10 @@ export const InventoryControlView = ({
   onUpdateInventoryItem,
   onDeleteInventoryItem,
   searchQuery,
-  triggerToast
+  triggerToast,
+  partialData = false,
+  canEdit = true,
+  mode = 'quick'
 }: { 
   inventory: InventoryItem[]; 
   clinicName: string;
@@ -21,9 +25,14 @@ export const InventoryControlView = ({
   onDeleteInventoryItem: (itemCode: string) => Promise<void>;
   searchQuery: string;
   triggerToast: (msg: string) => void;
+  partialData?: boolean;
+  canEdit?: boolean;
+  mode?: 'quick' | 'advanced';
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [isExporting, setIsExporting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const handleExportPdf = async () => {
     setIsExporting(true);
@@ -47,10 +56,13 @@ export const InventoryControlView = ({
   const [threshold, setThreshold] = useState<number | ''>('');
 
   // States for the Inventory Edit Slide-out Drawer
-  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [selectedItemSnapshot, setSelectedItem] = useState<InventoryItem | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<InventoryItem | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const selectedItem = selectedItemSnapshot && !isEditing
+    ? inventory.find(item => item.itemCode === selectedItemSnapshot.itemCode) ?? selectedItemSnapshot
+    : selectedItemSnapshot;
 
   
 const filteredInventory = inventory.filter(item => {
@@ -61,17 +73,24 @@ const filteredInventory = inventory.filter(item => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEdit || saving) return;
+    setSaveError('');
 
     const isService = category === 'Service' || category === 'Grooming';
 
     if (!itemName.trim() || sellingPrice === '') return;
 
     if (!isService && buyingPrice === '') return;
+    if (![sellingPrice, isService ? 0 : buyingPrice, stock || 0, threshold || 0]
+      .every(value => Number.isFinite(Number(value)) && Number(value) >= 0)) {
+      setSaveError('Prices, stock and thresholds must be non-negative numbers.');
+      return;
+    }
 
     const finalStock = isService ? 999 : Number(stock) || 0;
     const finalThreshold = isService ? 0 : Number(threshold) || 0;
     const prefix = isService ? 'SRV' : 'ITM';
-    const nextCode = `${prefix}-00${140 + inventory.length + 1}`;
+    const nextCode = `${prefix}-${crypto.randomUUID()}`;
 
     const newItem: InventoryItem = {
       itemCode: nextCode,
@@ -84,7 +103,12 @@ const filteredInventory = inventory.filter(item => {
     };
 
     console.log('[UI] submitting new inventory', newItem.itemCode);
-    await onAddInventoryItem(newItem);
+    setSaving(true);
+    try { await onAddInventoryItem(newItem); }
+    catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save. Your input has been kept.');
+      return;
+    } finally { setSaving(false); }
 
     // Reset Form
     setItemName('');
@@ -95,17 +119,28 @@ const filteredInventory = inventory.filter(item => {
   };
 
   const handleSaveEdits = async () => {
-    if (!editForm) return;
+    if (!editForm || !canEdit || saving) return;
+    setSaveError('');
     console.log('[UI] saving edits for', editForm.itemCode);
-    await onUpdateInventoryItem(editForm);
+    setSaving(true);
+    try { await onUpdateInventoryItem(editForm); }
+    catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save. Your input has been kept.');
+      return;
+    } finally { setSaving(false); }
     setSelectedItem(editForm);
     setIsEditing(false);
   };
 
   const handleDeleteItem = async () => {
-    if (!selectedItem) return;
+    if (!selectedItem || !canEdit || saving) return;
     console.log('[UI] deleting', selectedItem.itemCode);
-    await onDeleteInventoryItem(selectedItem.itemCode);
+    setSaving(true);
+    try { await onDeleteInventoryItem(selectedItem.itemCode); }
+    catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not delete. Nothing was removed.');
+      return;
+    } finally { setSaving(false); }
     setSelectedItem(null);
     setIsEditing(false);
     setShowDeleteConfirm(false);
@@ -115,6 +150,11 @@ const filteredInventory = inventory.filter(item => {
 
   return (
     <div className="space-y-6 relative">
+      {!canEdit && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Inventory is read-only. Changes require an online owner or editor.</p>}
+      {saveError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
+      {partialData && <p role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        Search, counts and PDF exports cover loaded inventory only. Load more items below to expand the list.
+      </p>}
         
       {/* --- SLIDE-OUT INVENTORY DETAILS & EDIT DRAWER --- */}
       {selectedItem && 
@@ -334,12 +374,12 @@ const filteredInventory = inventory.filter(item => {
                   <button onClick={() => setIsEditing(false)} className="flex-1 bg-white border border-slate-300 text-slate-900 font-bold py-3 rounded-xl hover:bg-slate-50 transition-colors shadow-sm">
                     Cancel Edits
                   </button>
-                  <button onClick={handleSaveEdits} className="flex-1 bg-teal-600 text-white font-bold py-3 rounded-xl hover:bg-teal-700 transition-colors shadow-md shadow-teal-600/20">
+                  <button disabled={!canEdit || saving} onClick={handleSaveEdits} className="flex-1 bg-teal-600 text-white font-bold py-3 rounded-xl hover:bg-teal-700 transition-colors shadow-md shadow-teal-600/20">
                     Save Changes
                   </button>
                 </>
               ) : (
-                <button onClick={() => { setEditForm(selectedItem); setIsEditing(true); }} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-colors shadow-md">
+                <button disabled={!canEdit} onClick={() => { setEditForm(selectedItem); setIsEditing(true); }} className="vc-btn vc-btn-primary w-full py-3">
                   Edit Item Details
                 </button>
               )}
@@ -348,16 +388,17 @@ const filteredInventory = inventory.filter(item => {
         </div>
                 }
 
+      <WorkspaceModeStrip mode={mode} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Inventory & Service Control</h2>
-          <p className="text-slate-500 font-medium">Consolidates legacy items, medicines, and surgical procedures into one cohesive catalog.</p>
+          <h2 className="text-2xl font-bold text-ink">Inventory & Service Control</h2>
+          <p className="font-medium text-muted">Consolidates legacy items, medicines, and surgical procedures into one cohesive catalog.</p>
         </div>
         <button
           type="button"
           onClick={handleExportPdf}
           disabled={isExporting || inventory.length === 0}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          className="vc-btn ml-auto"
         >
           {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
           Export PDF
@@ -372,8 +413,8 @@ const filteredInventory = inventory.filter(item => {
             onClick={() => setSelectedCategory(cat)}
             className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${
               selectedCategory === cat
-                ? 'bg-slate-900 text-white border-slate-900 shadow-md'
-                : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                ? 'border-accent bg-accent text-white shadow-sm'
+                : 'border-line bg-white text-muted hover:bg-soft'
             }`}
           >
             {cat}
@@ -383,13 +424,14 @@ const filteredInventory = inventory.filter(item => {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* --- LEFT FORM: ADD ITEM / SERVICE --- */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
-          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2 border-b border-slate-100 pb-4">
+        <div className="h-fit rounded-[14px] border border-line bg-white p-6 shadow-[0_2px_10px_#243e5607]">
+          <h3 className="mb-6 flex items-center gap-2 border-b border-line pb-4 text-lg font-bold text-ink">
             <PlusCircle className="text-teal-600 w-5 h-5" />
             New Item / Service
           </h3>
           
           <form onSubmit={handleSubmit} className="space-y-4">
+            <fieldset disabled={!canEdit || saving} className="contents">
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">Name / Procedure Description *</label>
               <input 
@@ -492,15 +534,16 @@ const filteredInventory = inventory.filter(item => {
 
             <button 
               type="submit" 
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl text-sm transition-colors mt-4 shadow-md text-slate-900"
+              className="vc-btn vc-btn-primary mt-4 w-full py-3"
             >
               Add to Catalog
             </button>
+            </fieldset>
           </form>
         </div>
 
         {/* --- RIGHT: DYNAMIC DIRECTORY VIEW --- */}
-        <div className="xl:col-span-2 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+        <div className="flex flex-col overflow-hidden rounded-[14px] border border-line bg-white shadow-[0_2px_10px_#243e5607] xl:col-span-2">
           <div className="p-6 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
             <h3 className="text-lg font-bold text-slate-800">Unified Catalog List</h3>
             <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full">

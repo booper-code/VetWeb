@@ -13,6 +13,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function verifiedEmail() {
+      return signedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
+    }
+
     function memberPath(clinicId, uid) {
       return /databases/$(database)/documents/clinics/$(clinicId)/members/$(uid);
     }
@@ -49,7 +55,9 @@ service cloud.firestore {
     }
 
     function isClinicOwner(clinicId) {
-      return clinicRoleIs(clinicId, 'owner');
+      // Check the pre-write owner so a complete transfer remains authorized.
+      return clinicRoleIs(clinicId, 'owner')
+        && get(clinicPath(clinicId)).data.ownerId == request.auth.uid;
     }
 
     // Creating a clinic is allowed only when the same atomic batch also creates
@@ -101,7 +109,7 @@ service cloud.firestore {
     // must mark it accepted while creating the two corresponding memberships.
     function validInviteClaim(clinicId, uid, inviteId, role) {
       let path = invitationPath(clinicId, inviteId);
-      return signedIn()
+      return verifiedEmail()
         && uid == request.auth.uid
         && inviteId is string
         && get(path).data.clinicId == clinicId
@@ -117,7 +125,7 @@ service cloud.firestore {
     function validInviteAcceptanceUpdate(clinicId, inviteId) {
       let memberAfter = getAfter(memberPath(clinicId, request.auth.uid));
       let indexAfter = getAfter(userClinicPath(request.auth.uid, clinicId));
-      return signedIn()
+      return verifiedEmail()
         && resource.data.clinicId == clinicId
         && resource.data.status == 'pending'
         && resource.data.email == request.auth.token.email
@@ -155,9 +163,18 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['aiEnabled'])
             && request.resource.data.aiEnabled is bool
           ) || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['imageUploadsEnabled'])
+            && request.resource.data.imageUploadsEnabled is bool
+          ) || (
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerId'])
+            && resource.data.ownerId == request.auth.uid
+            && request.resource.data.ownerId is string
             && request.resource.data.ownerId != resource.data.ownerId
+            && get(memberPath(clinicId, request.resource.data.ownerId)).data.role in ['editor', 'viewer']
             && getAfter(memberPath(clinicId, request.resource.data.ownerId)).data.role == 'owner'
+            && getAfter(memberPath(clinicId, resource.data.ownerId)).data.role == 'editor'
+            && getAfter(userClinicPath(request.resource.data.ownerId, clinicId)).data.role == 'owner'
+            && getAfter(userClinicPath(resource.data.ownerId, clinicId)).data.role == 'editor'
           )
         );
       allow delete: if false;
@@ -196,6 +213,7 @@ service cloud.firestore {
         allow update: if isClinicOwner(clinicId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
           && request.resource.data.role in ['owner', 'editor', 'viewer']
+          && getAfter(userClinicPath(memberUid, clinicId)).data.role == request.resource.data.role
           && (
             request.resource.data.role != 'owner'
             || getAfter(clinicPath(clinicId)).data.ownerId == memberUid
@@ -207,12 +225,13 @@ service cloud.firestore {
 
         allow delete: if isClinicOwner(clinicId)
           && memberUid != request.auth.uid
-          && resource.data.role != 'owner';
+          && resource.data.role != 'owner'
+          && !existsAfter(userClinicPath(memberUid, clinicId));
       }
 
       match /invitations/{inviteId} {
         allow get: if isClinicOwner(clinicId)
-          || (signedIn()
+          || (verifiedEmail()
             && resource.data.email == request.auth.token.email
             && resource.data.status == 'pending'
             && request.time < resource.data.expiresAt);
@@ -253,19 +272,219 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // Metadata only: a permanent head prevents replay and deleted-ID reuse.
+      // All three writes validate the same before/after entity transition.
+      function auditedMutation(entityType, entityId) {
+        let entity = /databases/$(database)/documents/clinics/$(clinicId)/$(entityType)/$(entityId);
+        let head = /databases/$(database)/documents/clinics/$(clinicId)/auditHeads/$(entityType + '_' + entityId);
+        let next = getAfter(head).data;
+        let event = /databases/$(database)/documents/clinics/$(clinicId)/auditEvents/$(next.eventId);
+        let oldRevision = exists(entity) ? get(entity).data.get('revision', 0) : 0;
+        return canEditClinic(clinicId)
+          && entityType in ['patients', 'inventory', 'consultations', 'appointments']
+          && next.keys().hasOnly(['actorUid', 'action', 'entityType', 'entityId', 'time', 'seq', 'eventId'])
+          && next.actorUid == request.auth.uid
+          && next.entityType == entityType && next.entityId == entityId
+          && next.time == request.time
+          && next.seq is int && next.seq == oldRevision + 1
+          && next.eventId is string
+          && !exists(event) && getAfter(event).data == next
+          && (exists(head) ? get(head).data.seq == oldRevision : oldRevision == 0)
+          && (
+            (next.action == 'create' && !exists(entity) && !exists(head)
+              && existsAfter(entity) && getAfter(entity).data.revision == next.seq)
+            || (next.action == 'update' && exists(entity) && existsAfter(entity)
+              && getAfter(entity).data.revision == next.seq)
+            || (next.action == 'delete' && exists(entity) && !existsAfter(entity))
+          );
+      }
+
+      match /auditHeads/{headId} {
+        // Editors need point reads for transactions; only owners may enumerate.
+        allow get: if canEditClinic(clinicId);
+        allow list: if isClinicOwner(clinicId);
+        allow create, update: if headId == request.resource.data.entityType + '_' + request.resource.data.entityId
+          && auditedMutation(request.resource.data.entityType, request.resource.data.entityId);
+        allow delete: if false;
+      }
+
+      match /auditEvents/{eventId} {
+        allow read: if isClinicOwner(clinicId);
+        allow create: if request.resource.data.eventId == eventId
+          && request.resource.data == getAfter(
+            /databases/$(database)/documents/clinics/$(clinicId)/auditHeads/$(request.resource.data.entityType + '_' + request.resource.data.entityId)
+          ).data
+          && auditedMutation(request.resource.data.entityType, request.resource.data.entityId);
+        allow update, delete: if false;
+      }
+
       match /patients/{patientId} {
         allow read: if isClinicMember(clinicId);
-        allow create, update, delete: if canEditClinic(clinicId);
+        allow create, update, delete: if auditedMutation('patients', patientId);
       }
 
       match /inventory/{itemId} {
         allow read: if isClinicMember(clinicId);
-        allow create, update, delete: if canEditClinic(clinicId);
+        allow create, update, delete: if auditedMutation('inventory', itemId);
+      }
+
+      // Firestore rules cannot loop over arbitrary lists, so the critical stock
+      // invariant uses a bounded stockMoves list of at most two entries. Each
+      // move must be applied to the matching inventory document in the same
+      // audited transaction. Service/grooming lines never appear here.
+      function stockMoveApplied(move) {
+        let item = /databases/$(database)/documents/clinics/$(clinicId)/inventory/$(move.itemCode);
+        return move is map
+          && move.keys().hasOnly(['itemCode', 'quantity'])
+          && move.itemCode is string && move.itemCode.size() > 0 && move.itemCode.size() <= 200
+          && move.itemCode.matches('^[^/]+$')
+          && move.quantity is int && move.quantity >= 1 && move.quantity <= 10000
+          && exists(item) && existsAfter(item)
+          && getAfter(item).data.stock == get(item).data.stock - move.quantity
+          && getAfter(item).data.get('revision', 0) == get(item).data.get('revision', 0) + 1;
+      }
+
+      function stockMovesApplied(data) {
+        return data.stockMoves is list && data.stockMoves.size() <= 2
+          && (data.stockMoves.size() < 1 || stockMoveApplied(data.stockMoves[0]))
+          && (data.stockMoves.size() < 2 || stockMoveApplied(data.stockMoves[1]));
+      }
+
+      function consultationPatientMatches(data) {
+        let patient = /databases/$(database)/documents/clinics/$(clinicId)/patients/$(data.patientId);
+        return exists(patient)
+          && data.patient == get(patient).data.name
+          && data.client == get(patient).data.get('ownerName', '');
+      }
+
+      function consultationAppointmentMatches(data) {
+        let appointment = /databases/$(database)/documents/clinics/$(clinicId)/appointments/$(data.appointmentId);
+        return data.appointmentId == null
+          || (data.appointmentId is string && data.appointmentId.size() > 0
+            && exists(appointment) && get(appointment).data.patientId == data.patientId
+            && get(appointment).data.status == 'completed');
+      }
+
+      function validStructuredConsultation(data) {
+        return data.patientId is string && data.patientId.size() > 0 && data.patientId.size() <= 1500
+          && data.patientId.matches('^[^/]+$')
+          && data.keys().hasAll([
+            'appointmentId', 'occurredAt', 'recordedAt', 'staffUid', 'staffName',
+            'treatments', 'stockMoves'
+          ])
+          && data.stockMoves is list && data.stockMoves.size() <= 2
+          && consultationPatientMatches(data)
+          && (data.appointmentId == null
+            || (data.appointmentId is string && data.appointmentId.size() > 0
+              && consultationAppointmentMatches(data)));
+      }
+
+      function validConsultation(data, consultationId) {
+        return data.id == consultationId
+          && data.keys().hasAll(['id', 'date', 'client', 'patient', 'type', 'status', 'notes'])
+          && data.keys().hasOnly([
+            'id', 'revision', 'date', 'client', 'patient', 'type', 'status', 'notes',
+            'patientId', 'appointmentId', 'occurredAt', 'recordedAt', 'staffUid',
+            'staffName', 'treatments', 'stockMoves'
+          ])
+          && data.date is string && data.date.size() <= 40
+          && data.client is string && data.client.size() <= 200
+          && data.patient is string && data.patient.size() > 0 && data.patient.size() <= 150
+          && data.type is string && data.type.size() > 0 && data.type.size() <= 60
+          && data.status in ['Draft', 'Completed']
+          && data.notes is string && data.notes.size() <= 5000
+          && (
+            !data.keys().hasAny(['patientId'])
+            || (validStructuredConsultation(data)
+              && data.occurredAt is timestamp
+              && data.occurredAt >= timestamp.date(2000, 1, 1)
+              && data.occurredAt <= request.time
+              && data.recordedAt is timestamp
+              && data.staffUid is string && data.staffUid == request.auth.uid
+              && data.staffName is string && data.staffName.size() > 0 && data.staffName.size() <= 150
+              && data.treatments is list && data.treatments.size() <= 12)
+          );
       }
 
       match /consultations/{consultationId} {
         allow read: if isClinicMember(clinicId);
-        allow create, update, delete: if canEditClinic(clinicId);
+        allow create: if validConsultation(request.resource.data, consultationId)
+          && (!request.resource.data.keys().hasAny(['patientId'])
+            || (request.resource.data.recordedAt == request.time
+              && stockMovesApplied(request.resource.data)))
+          && auditedMutation('consultations', consultationId);
+        allow update: if validConsultation(request.resource.data, consultationId)
+          && (!request.resource.data.keys().hasAny(['treatments'])
+            || request.resource.data.treatments == resource.data.treatments)
+          && (!request.resource.data.keys().hasAny(['stockMoves'])
+            || request.resource.data.stockMoves == resource.data.stockMoves)
+          && (!request.resource.data.keys().hasAny(['recordedAt'])
+            || request.resource.data.recordedAt == resource.data.recordedAt)
+          && auditedMutation('consultations', consultationId);
+        allow delete: if false;
+      }
+
+      function validAppointment(data, appointmentId) {
+        return data.keys().hasAll([
+            'id', 'revision', 'patientId', 'patientName', 'ownerName', 'ownerContact', 'ownerEmail',
+            'type', 'status', 'dueAt', 'durationMinutes', 'notes', 'occurredAt',
+            'createdAt', 'updatedAt', 'createdBy', 'updatedBy'
+          ])
+          && data.keys().hasOnly([
+            'id', 'revision', 'patientId', 'patientName', 'ownerName', 'ownerContact', 'ownerEmail',
+            'type', 'status', 'dueAt', 'durationMinutes', 'notes', 'occurredAt',
+            'createdAt', 'updatedAt', 'createdBy', 'updatedBy'
+          ])
+          && data.id == appointmentId
+          && data.patientId is string && data.patientId.size() > 0 && data.patientId.size() <= 1500
+          && data.patientId.matches('^[^/]+$')
+          && data.patientName is string && data.patientName.size() > 0 && data.patientName.size() <= 150
+          && data.ownerName is string && data.ownerName.size() <= 200
+          && data.ownerContact is string && data.ownerContact.size() <= 100
+          && data.ownerEmail is string && data.ownerEmail.size() <= 254
+          && data.type in ['Checkup', 'Vaccination', 'Deworming', 'Grooming', 'Surgery', 'Follow-up']
+          && data.status in ['scheduled', 'completed', 'cancelled', 'no-show']
+          && data.dueAt is timestamp
+          && data.dueAt >= timestamp.date(2000, 1, 1) && data.dueAt < timestamp.date(2101, 1, 1)
+          && data.durationMinutes is int && data.durationMinutes >= 5 && data.durationMinutes <= 480
+          && data.notes is string && data.notes.size() <= 2000
+          && ((data.status == 'completed' && data.occurredAt is timestamp
+              && data.occurredAt >= timestamp.date(2000, 1, 1) && data.occurredAt <= request.time)
+            || (data.status != 'completed' && data.occurredAt == null))
+          && data.createdAt is timestamp && data.createdBy is string
+          && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+      }
+
+      function appointmentPatientMatches(data) {
+        let patient = /databases/$(database)/documents/clinics/$(clinicId)/patients/$(data.patientId);
+        return exists(patient)
+          && data.patientName == get(patient).data.name
+          && data.ownerName == get(patient).data.get('ownerName', '')
+          && data.ownerContact == get(patient).data.get('ownerContact', '')
+          && data.ownerEmail == get(patient).data.get('ownerEmail', '');
+      }
+
+      match /appointments/{appointmentId} {
+        allow read: if isClinicMember(clinicId);
+        allow create: if validAppointment(request.resource.data, appointmentId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.createdBy == request.auth.uid
+          && appointmentPatientMatches(request.resource.data)
+          && auditedMutation('appointments', appointmentId);
+        allow update: if validAppointment(request.resource.data, appointmentId)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.patientId == resource.data.patientId
+          && (appointmentPatientMatches(request.resource.data) || (
+            !exists(/databases/$(database)/documents/clinics/$(clinicId)/patients/$(resource.data.patientId))
+            && request.resource.data.patientName == resource.data.patientName
+            && request.resource.data.ownerName == resource.data.ownerName
+            && request.resource.data.ownerContact == resource.data.ownerContact
+            && request.resource.data.ownerEmail == resource.data.ownerEmail
+          ))
+          && auditedMutation('appointments', appointmentId);
+        // Cancel instead of erasing scheduling history.
+        allow delete: if false;
       }
 
       // Roster is visible to every clinic member, but only owners and editors

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { PawPrint, Loader2, AlertCircle, Lock, Mail, ShieldCheck, ChevronRight } from 'lucide-react';
 import { initializeFirebase } from '@/lib/firebase';
 import type { ClinicSessionUser } from '@/types';
+import { sendInvitationVerification } from '@/lib/invitation-verification';
 
 export const LoginScreen = ({
   onLoginSuccess
@@ -50,6 +51,16 @@ export const LoginScreen = ({
         await updateProfile(credential.user, { displayName: displayName.trim() });
       }
 
+      if (isCreatingAccount) {
+        try {
+          await sendInvitationVerification(credential.user.uid);
+        } catch (verificationError) {
+          // The account exists already. Let the workspace offer a retry rather
+          // than presenting this as a failed signup or blocking existing access.
+          console.warn('[Auth] Verification email could not be sent:', verificationError);
+        }
+      }
+
       onLoginSuccess({
         uid: credential.user.uid,
         email: credential.user.email || normalizedEmail,
@@ -89,15 +100,12 @@ export const LoginScreen = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background glow effects */}
-      <div className="absolute top-[-120px] left-[-120px] w-96 h-96 bg-teal-500/20 rounded-full blur-3xl" />
-      <div className="absolute bottom-[-140px] right-[-140px] w-96 h-96 bg-emerald-500/20 rounded-full blur-3xl" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(20,184,166,0.18),_transparent_35%),radial-gradient(circle_at_bottom,_rgba(16,185,129,0.14),_transparent_40%)]" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-canvas p-4">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[320px] bg-[radial-gradient(circle_at_top_left,_rgba(12,130,118,0.10),_transparent_60%)]" />
 
-      <div className="relative z-10 w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 bg-white/95 backdrop-blur-xl rounded-3xl overflow-hidden shadow-2xl border border-white/20">
+      <div className="relative z-10 grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-[18px] border border-line bg-white shadow-[0_24px_70px_#0b26381f] lg:grid-cols-2">
         {/* Left branding panel */}
-        <div className="hidden lg:flex flex-col justify-between bg-slate-900 p-10 text-white relative overflow-hidden">
+        <div className="relative hidden flex-col justify-between overflow-hidden bg-nav p-10 text-white lg:flex">
           <div className="absolute inset-0 bg-gradient-to-br from-teal-500/20 via-transparent to-emerald-500/10" />
 
           <div className="relative z-10">
@@ -144,8 +152,8 @@ export const LoginScreen = ({
         </div>
 
         {/* Right auth panel */}
-        <div className="p-8 sm:p-12 flex flex-col justify-center">
-          <div className="max-w-md w-full mx-auto">
+        <div className="flex flex-col justify-center p-7 sm:p-12">
+          <div className="mx-auto w-full max-w-md">
             <div className="flex items-center gap-3 mb-8 lg:hidden">
               <div className="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center">
                 <PawPrint className="w-7 h-7 text-teal-600" />
@@ -182,10 +190,11 @@ export const LoginScreen = ({
             <form onSubmit={handleAuth} className="space-y-5">
               {isCreatingAccount && (
                 <div>
-                  <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+                  <label htmlFor="signupName" className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
                     Your Name
                   </label>
                   <input
+                    id="signupName"
                     type="text"
                     required
                     maxLength={100}
@@ -197,7 +206,7 @@ export const LoginScreen = ({
                 </div>
               )}
               <div>
-                <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+                <label htmlFor="loginEmail" className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
                     Email
                 </label>
                 <div className="relative">
@@ -205,6 +214,7 @@ export const LoginScreen = ({
                     <Mail className="h-5 w-5 text-slate-400" />
                   </div>
                   <input
+                    id="loginEmail"
                     type="email"
                     required
                     className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
@@ -216,7 +226,7 @@ export const LoginScreen = ({
               </div>
 
               <div>
-                <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+                <label htmlFor="loginPassword" className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
                   Password
                 </label>
                 <div className="relative">
@@ -224,6 +234,7 @@ export const LoginScreen = ({
                     <Lock className="h-5 w-5 text-slate-400" />
                   </div>
                   <input
+                    id="loginPassword"
                     type="password"
                     required
                     className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
@@ -237,7 +248,7 @@ export const LoginScreen = ({
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-4 rounded-2xl text-sm transition-all shadow-xl shadow-slate-900/20 flex items-center justify-center gap-2 disabled:opacity-70"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent py-3.5 text-sm font-black text-white shadow-lg shadow-teal-900/15 transition-all hover:bg-accent-strong disabled:opacity-70"
               >
                 {isLoading ? (
                   <>

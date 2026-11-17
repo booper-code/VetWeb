@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { isStoredImageKey, resolveStoredImageUrl } from '@/lib/imageStore';
+import { safeDirectImageUrl } from '@/lib/imageValue';
 
 const EMPTY_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
@@ -44,7 +45,7 @@ export const StoredImage = ({
     };
   }, [value]);
 
-  const src = !value ? EMPTY_PIXEL : !isStoredImageKey(value) ? value
+  const src = !value ? EMPTY_PIXEL : !isStoredImageKey(value) ? safeDirectImageUrl(value) ?? EMPTY_PIXEL
     : resolved?.key === value ? resolved.url : EMPTY_PIXEL;
-  return <img src={src} alt={alt} className={className} loading={loading} />;
+  return <img src={src} alt={alt} className={className} loading={loading} referrerPolicy="no-referrer" />;
 };

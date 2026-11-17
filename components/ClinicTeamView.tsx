@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, Crown, Loader2, MailPlus, RefreshCw, Shield, Trash2, UserRound, X } from 'lucide-react';
 import type { ClinicInvitation, ClinicMember, ClinicRole, ClinicSessionUser } from '@/types';
 import {
@@ -28,6 +28,11 @@ export const ClinicTeamView = ({
   onOwnershipTransferred: (nextRole: ClinicRole) => void;
   triggerToast: (message: string) => void;
 }) => {
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [members, setMembers] = useState<ClinicMember[]>([]);
   const [invitations, setInvitations] = useState<ClinicInvitation[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -168,13 +173,17 @@ export const ClinicTeamView = ({
     setError('');
     try {
       await transferClinicOwnership(clinicId, user.uid, member.uid);
-      triggerToast('Ownership transferred. You now have editor access.');
+      // The parent checks workspace scope. A same-clinic tab change must still
+      // downgrade its role even after this view unmounts.
       onOwnershipTransferred('editor');
+      if (!mounted.current) return;
+      triggerToast('Ownership transferred. You now have editor access.');
     } catch (transferError) {
+      if (!mounted.current) return;
       console.error('[Clinic team] Failed to transfer ownership:', transferError);
       setError(transferError instanceof Error ? transferError.message : 'Could not transfer ownership.');
     } finally {
-      setIsWorking(false);
+      if (mounted.current) setIsWorking(false);
     }
   };
 

@@ -10,6 +10,7 @@
 
 import type { PatientRecord } from '@/types';
 import { initializeFirebase } from '@/lib/firebase';
+import { safeDirectImageUrl, safeSignedImageUrl } from '@/lib/imageValue';
 
 const WORKER_URL = (process.env.NEXT_PUBLIC_IMAGE_WORKER_URL ?? '').replace(/\/+$/, '');
 const BATCH_SIZE = 50;
@@ -100,32 +101,11 @@ export const uploadPatientImage = async ({
   return data.key;
 };
 
-/** Best-effort delete; a failure only leaves an unreferenced object behind. */
-export const deleteStoredImage = async (key: string | null | undefined): Promise<void> => {
-  if (!WORKER_URL || !isStoredImageKey(key)) return;
-
-  try {
-    const token = await getIdToken();
-    const response = await fetch(`${WORKER_URL}/file`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ key })
-    });
-
-    if (!response.ok) {
-      console.warn(
-        '[Images] Could not delete stored image:',
-        key,
-        await readErrorMessage(response, `status ${response.status}`)
-      );
-    }
-  } catch (error) {
-    console.warn('[Images] Best-effort image delete failed:', error);
-  }
-};
+// There is deliberately no client-side delete helper. The Worker's
+// `DELETE /file` endpoint is disabled until a reference-aware cleanup process
+// exists, so a delete call would only fail. Removing an image from a patient
+// document leaves the R2 object in place on purpose; see
+// workers/image-service/README.md before adding deletion back.
 
 type Waiter = { resolve: (url: string | null) => void; reject: (error: unknown) => void };
 
@@ -169,7 +149,7 @@ const flushPending = async () => {
   try {
     const urls = await requestSignedUrls(batch);
     for (const [key, waiters] of entries) {
-      const url = typeof urls[key] === 'string' ? urls[key] : null;
+      const url = safeSignedImageUrl(urls[key], WORKER_URL, key);
       waiters.forEach(waiter => waiter.resolve(url));
     }
   } catch (error) {
@@ -194,7 +174,7 @@ const scheduleFlush = () => {
  * image. Returns the input unchanged for data and external URLs.
  */
 export const resolveStoredImageUrl = (value: string): Promise<string | null> => {
-  if (!isStoredImageKey(value)) return Promise.resolve(value);
+  if (!isStoredImageKey(value)) return Promise.resolve(safeDirectImageUrl(value));
   if (!WORKER_URL) return Promise.resolve(null);
 
   return new Promise((resolve, reject) => {
@@ -208,7 +188,9 @@ export const resolveStoredImageUrl = (value: string): Promise<string | null> => 
 /** Opens a signed image in a new tab without triggering the popup blocker. */
 export const openStoredImage = async (value: string): Promise<void> => {
   if (!isStoredImageKey(value)) {
-    window.open(value, '_blank', 'noopener,noreferrer');
+    const safeUrl = safeDirectImageUrl(value);
+    if (!safeUrl) throw new Error('This image URL is not supported.');
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
     return;
   }
 
