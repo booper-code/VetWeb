@@ -2,7 +2,6 @@
 
 import { CalendarDays, Package, PawPrint, Plus } from 'lucide-react';
 import type { Appointment, Consultation, InventoryItem, PatientRecord } from '@/types';
-import { WorkspaceModeStrip } from '@/components/WorkspaceModeStrip';
 
 type WorkspaceView = 'quick' | 'advanced';
 
@@ -110,6 +109,7 @@ export const DashboardHome = ({
   ).length;
 
   const recentConsultations = consultations.slice(-5).reverse();
+  const recentLegacyConsultations = recentConsultations.filter(item => !item.patientId);
 
   const recentBillables = patients
     .flatMap(patient => (patient.billableItems || []).map(billable => ({
@@ -132,8 +132,6 @@ export const DashboardHome = ({
     else onNavigate?.('patients');
   };
 
-  const modeStrip = <WorkspaceModeStrip mode={mode} />;
-
   const scheduleMeta = (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="vc-note">
@@ -153,7 +151,7 @@ export const DashboardHome = ({
     <>
       {appointmentsBusy && <p role="status" className="vc-note">Loading appointments…</p>}
       {appointmentsError && (
-        <p role="alert" className="rounded-[10px] border border-red-200 bg-red-50 p-3 text-[12px] text-red-900">
+        <p role="alert" className="rounded-[10px] border border-danger-stroke bg-danger-wash p-3 text-[12px] text-danger-text-max">
           {appointmentsError}
         </p>
       )}
@@ -237,7 +235,7 @@ export const DashboardHome = ({
     return (
       <div className="flex flex-col gap-[17px]">
         {partialData && (
-          <p role="note" className="rounded-[12px] border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900">
+          <p role="note" className="rounded-[12px] border border-warning-stroke bg-warning-wash p-3 text-[12.5px] text-warning-text-deep">
             Loaded-page summary only, not clinic-wide totals. Patient history, inventory and
             consultations load in bounded pages.
           </p>
@@ -254,8 +252,6 @@ export const DashboardHome = ({
             </p>
           </div>
         </div>
-
-        {modeStrip}
 
         <div className="vc-action-grid" aria-label="Common clinic tasks">
           <button type="button" onClick={onRecordVisit} disabled={!canEdit} className="vc-action-card">
@@ -317,6 +313,30 @@ export const DashboardHome = ({
           </button>
         </div>
 
+        {recentLegacyConsultations.length > 0 && (
+          <details className="vc-card">
+            <summary className="cursor-pointer text-sm font-bold">Recent legacy consultations</summary>
+            <ul className="vc-clean-list mt-4">
+              {recentLegacyConsultations.map(item => (
+                <li key={item.id} className="vc-clean-row">
+                  <div className="vc-clean-item">
+                    <strong>{item.patient} · {item.type}</strong>
+                    <p>{item.id} · {item.date}</p>
+                  </div>
+                  <div className="vc-clean-actions">
+                    <span className={item.status === 'Draft' ? 'vc-badge vc-badge-amber' : 'vc-badge vc-badge-teal'}>
+                      {item.status}
+                    </span>
+                    <button type="button" onClick={() => onToggleStatus(item.id)} disabled={!canEdit} className="vc-btn vc-btn-sm">
+                      Change state
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+
         <p className="vc-note">
           Loaded records only. Balances are not payments received; no background synchronization or messaging occurs.
         </p>
@@ -327,7 +347,7 @@ export const DashboardHome = ({
   return (
     <div className="flex flex-col gap-[17px]">
       {partialData && (
-        <p role="note" className="rounded-[12px] border border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-900">
+        <p role="note" className="rounded-[12px] border border-warning-stroke bg-warning-wash p-3 text-[12.5px] text-warning-text-deep">
           Loaded-page summary only, not clinic-wide totals. Patient history, inventory and
           consultations load in bounded pages.
         </p>
@@ -351,8 +371,6 @@ export const DashboardHome = ({
           </button>
         </div>
       </div>
-
-      {modeStrip}
 
       <div className="vc-stat-grid">
         <div className="vc-stat">

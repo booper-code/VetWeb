@@ -1,0 +1,129 @@
+/* Legacy light values are fallbacks on the roles below. In dark mode, related
+   surfaces, content, and intent colors share this palette. */
+/* The existing print/export flow keeps the light palette regardless of choice. */
+@media screen {
+  :root[data-theme="dark"] {
+    --color-muted: #a7b7ca;
+    --color-line: #36465e;
+    --color-nav: #0f172a;
+    --color-nav-hover: #1e293b;
+    --color-accent: #0d766e;
+    --color-accent-strong: #10665f;
+    --color-soft: #183438;
+    --color-mint: #21443d;
+    --theme-heading: var(--theme-ink);
+    --night-outline: #36465e;
+    --night-hairline: #303f55;
+    --night-panel: #1e293b;
+    --night-subtle: #243448;
+    --night-raised: #293a50;
+    --night-pressed: #354960;
+    --night-field: #1b293b;
+    --night-field-line: #687e98;
+    --night-copy: #d0dbe9;
+    --night-secondary: #b0bed0;
+    --night-hint: #9eafc3;
+    --night-brand: #74ead8;
+    --night-brand-bg: #1c3a40;
+    --night-brand-tint: #21474b;
+    --night-brand-line: #406e71;
+    --night-success: #86e9b9;
+    --night-success-bg: #1e3b34;
+    --night-success-line: #397360;
+    --night-warning: #fcd386;
+    --night-warning-bg: #3a3229;
+    --night-warning-tint: #493c2d;
+    --night-warning-line: #82663d;
+    --night-danger: #ffb4b8;
+    --night-danger-bg: #412d39;
+    --night-danger-tint: #503443;
+    --night-danger-line: #8a5266;
+    --night-info: #a9d0ff;
+    --night-info-bg: #223950;
+    --night-info-line: #496c91;
+    --night-feature: #ddc4ff;
+    --night-feature-bg: #3b3150;
+    --night-feature-line: #74608f;
+    --night-focus: #5eead4;
+    --night-shadow: #02061745;
+  }
+}
+
+:root[data-theme-changing] :where(.vc-btn, .vc-action-card, .transition, .transition-all, .transition-colors) {
+  transition-duration: 0s;
+}
+
+/* Tailwind v4 inlines the role reference so the active document's values win.
+   No stock palette entries, deliberate inverse text, or media are remapped. */
+@theme inline {
+  --color-panel: var(--night-panel, #fff);
+  --color-panel-subtle: var(--night-subtle, var(--color-slate-50));
+  --color-panel-raised: var(--night-raised, var(--color-slate-100));
+  --color-panel-pressed: var(--night-pressed, var(--color-slate-200));
+  --color-field-panel: var(--night-field, #fff);
+  --color-field-subtle: var(--night-field, var(--color-slate-50));
+  --color-field-outline: var(--night-field-line, var(--color-slate-200));
+  --color-field-line: var(--night-field-line, #e1e8ee);
+  --color-search-field: var(--night-field, #f7f9fb);
+  --color-search-line: var(--night-field-line, #dae3eb);
+  --color-control-line: var(--night-field-line, #d6e0e8);
+  --color-menu-tint: var(--night-brand-bg, #eaf5ed);
+  --color-menu-line: var(--night-brand-line, #d0e8da);
+  --color-menu-text: var(--night-brand, #156350);
+  --color-role-text: var(--night-copy, #314d52);
+  --color-role-label: var(--night-hint, #526765);
+  --color-hairline: var(--night-hairline, var(--color-slate-100));
+  --color-outline-soft: var(--night-outline, var(--color-slate-200));
+  --color-outline: var(--night-field-line, var(--color-slate-300));
+  --color-outline-strong: var(--night-field-line, var(--color-slate-400));
+  --color-content-title: var(--theme-heading, var(--color-slate-900));
+  --color-content-strong: var(--theme-heading, var(--color-slate-950));
+  --color-content-heading: var(--theme-heading, var(--color-slate-800));
+  --color-content-copy: var(--night-copy, var(--color-slate-700));
+  --color-content-secondary: var(--night-secondary, var(--color-slate-600));
+  --color-content-hint: var(--night-hint, var(--color-slate-500));
+  --color-content-faint: var(--night-hint, var(--color-slate-400));
+  --color-content-emphasis: var(--theme-heading, #000);
+  --color-brand-wash: var(--night-brand-bg, var(--color-teal-50));
+  --color-brand-tint: var(--night-brand-tint, var(--color-teal-100));
+  --color-brand-stroke-soft: var(--night-brand-line, var(--color-teal-100));
+  --color-brand-stroke: var(--night-brand-line, var(--color-teal-200));
+  --color-brand-stroke-strong: var(--night-brand-line, var(--color-teal-300));
+  --color-brand-outline: var(--night-brand-line, #c8e6da);
+  --color-brand-mark: var(--night-brand, var(--color-teal-500));
+  --color-brand-text: var(--night-brand, var(--color-teal-600));
+  --color-brand-text-strong: var(--night-brand, var(--color-teal-700));
+  --color-brand-text-deep: var(--night-brand, var(--color-teal-800));
+  --color-brand-text-max: var(--night-brand, var(--color-teal-900));
+  --color-success-wash: var(--night-success-bg, var(--color-emerald-50));
+  --color-success-stroke-soft: var(--night-success-line, var(--color-emerald-100));
+  --color-success-stroke: var(--night-success-line, var(--color-emerald-200));
+  --color-success-icon: var(--night-success, var(--color-emerald-600));
+  --color-success-text: var(--night-success, var(--color-emerald-700));
+  --color-warning-wash: var(--night-warning-bg, var(--color-amber-50));
+  --color-warning-tint: var(--night-warning-tint, var(--color-amber-100));
+  --color-warning-stroke: var(--night-warning-line, var(--color-amber-200));
+  --color-warning-icon: var(--night-warning, var(--color-amber-700));
+  --color-warning-text: var(--night-warning, var(--color-amber-800));
+  --color-warning-text-deep: var(--night-warning, var(--color-amber-900));
+  --color-warning-text-max: var(--night-warning, var(--color-amber-950));
+  --color-danger-wash: var(--night-danger-bg, var(--color-red-50));
+  --color-danger-tint: var(--night-danger-tint, var(--color-red-100));
+  --color-danger-stroke: var(--night-danger-line, var(--color-red-200));
+  --color-danger-stroke-strong: var(--night-danger-line, var(--color-red-300));
+  --color-danger-mark: var(--night-danger, var(--color-red-500));
+  --color-danger-icon: var(--night-danger, var(--color-red-600));
+  --color-danger-text: var(--night-danger, var(--color-red-700));
+  --color-danger-text-deep: var(--night-danger, var(--color-red-800));
+  --color-danger-text-max: var(--night-danger, var(--color-red-900));
+  --color-info-wash: var(--night-info-bg, var(--color-blue-50));
+  --color-info-stroke: var(--night-info-line, var(--color-blue-200));
+  --color-info-text: var(--night-info, var(--color-blue-700));
+  --color-feature-wash: var(--night-feature-bg, var(--color-purple-100));
+  --color-feature-stroke-soft: var(--night-feature-line, var(--color-purple-100));
+  --color-feature-stroke: var(--night-feature-line, var(--color-purple-200));
+  --color-feature-icon: var(--night-feature, var(--color-purple-600));
+  --color-feature-text: var(--night-feature, var(--color-purple-700));
+  --color-feature-text-deep: var(--night-feature, var(--color-purple-800));
+  --color-feature-text-max: var(--night-feature, var(--color-purple-950));
+}

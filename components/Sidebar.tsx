@@ -1,14 +1,11 @@
 "use client";
 
-import { useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   Activity, Briefcase, Building2, CalendarDays, ChevronDown, LayoutDashboard,
   LogOut, Package, PawPrint, Settings, TestTube, UserCog, Users
 } from 'lucide-react';
 import type { ClinicRole } from '@/types';
-
-type WorkspaceView = 'quick' | 'advanced';
 
 type NavItem = {
   id: string;
@@ -26,7 +23,6 @@ export const Sidebar = ({
   currentClinicRole,
   isDemo,
   aiEnabled,
-  mode = 'quick',
   onSwitchClinic,
   onLogout
 }: {
@@ -39,11 +35,9 @@ export const Sidebar = ({
   currentClinicRole: ClinicRole | null;
   isDemo: boolean;
   aiEnabled: boolean;
-  mode?: WorkspaceView;
   onSwitchClinic: () => void;
   onLogout: () => void;
 }) => {
-  const [moreOpen, setMoreOpen] = useState(false);
   const currentEmail = currentUser?.match(/\((.*?)\)/)?.[1] || '';
   const displayName = currentUser?.split(' (')[0] || 'Clinic Account';
   const initial = (displayName.trim()[0] || 'V').toUpperCase();
@@ -66,9 +60,6 @@ export const Sidebar = ({
     ...(currentClinicRole === 'owner' ? [{ id: 'team', label: 'Team & invitations', icon: Users }] : []),
     ...(currentClinicRole === 'owner' ? [{ id: 'audit', label: 'Clinical audit', icon: Activity }] : []),
   ];
-
-  const moreItems = [...clinicItems, ...adminItems];
-  const moreExpanded = mode === 'quick' ? (moreOpen || moreItems.some(item => item.id === activeTab)) : true;
 
   const go = (tab: string) => {
     setActiveTab(tab);
@@ -145,53 +136,20 @@ export const Sidebar = ({
           {everydayItems.map(renderItem)}
         </nav>
 
-        {mode === 'quick' ? (
-          <>
-            <div className="mx-2 my-3 border-t border-[#2b3b51]" />
-            <button
-              type="button"
-              onClick={() => setMoreOpen(open => !open)}
-              aria-expanded={moreExpanded}
-              className="flex w-full items-center gap-3 rounded-[9px] px-2.5 py-2.5 text-left text-[13px] font-semibold text-[#d5dee9] hover:bg-nav-hover hover:text-white"
-            >
-              <span aria-hidden="true" className="grid h-[18px] w-[18px] place-items-center text-[17px] leading-none">☷</span>
-              <span className="flex-1">More tools</span>
-              <span className="rounded-full border border-[#39526a] px-2 py-0.5 text-[10px] font-bold text-[#b7cbd6]">
-                {moreExpanded ? 'Hide' : 'Show'}
-              </span>
-            </button>
-            {moreExpanded && (
-              <>
-                <p className="px-2.5 pb-1.5 pt-2 text-[10px] font-bold uppercase tracking-[1.3px] text-[#92a5bd]">
-                  Additional tools
-                </p>
-                <nav aria-label="Additional tools" className="grid gap-[3px]">
-                  {moreItems.map(renderItem)}
-                </nav>
-              </>
-            )}
-            <p className="px-3 pb-2 pt-3 text-[11px] leading-snug text-[#92b0ac]">
-              Quick view highlights the tasks staff use most. Other tools stay available here.
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="mx-2 my-3 border-t border-[#2b3b51]" />
-            <p className="px-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-[1.3px] text-[#92a5bd]">
-              Clinic operations
-            </p>
-            <nav aria-label="Clinic operations" className="grid gap-[3px]">
-              {clinicItems.map(renderItem)}
-            </nav>
-            <div className="mx-2 my-3 border-t border-[#2b3b51]" />
-            <p className="px-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-[1.3px] text-[#92a5bd]">
-              Administration
-            </p>
-            <nav aria-label="Administration" className="grid gap-[3px]">
-              {adminItems.map(renderItem)}
-            </nav>
-          </>
-        )}
+        <div className="mx-2 my-3 border-t border-[#2b3b51]" />
+        <p className="px-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-[1.3px] text-[#92a5bd]">
+          Clinic operations
+        </p>
+        <nav aria-label="Clinic operations" className="grid gap-[3px]">
+          {clinicItems.map(renderItem)}
+        </nav>
+        <div className="mx-2 my-3 border-t border-[#2b3b51]" />
+        <p className="px-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-[1.3px] text-[#92a5bd]">
+          Administration
+        </p>
+        <nav aria-label="Administration" className="grid gap-[3px]">
+          {adminItems.map(renderItem)}
+        </nav>
       </div>
 
       <div className="mt-4 shrink-0 border-t border-[#2b3b51] bg-nav px-2 pt-4">

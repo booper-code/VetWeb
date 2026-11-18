@@ -50,21 +50,21 @@ export function AuditLogView({ clinicId, searchQuery }: { clinicId: string; sear
   const q = searchQuery.trim().toLowerCase();
   const visible = events.filter(event => `${event.action} ${event.entityType} ${event.entityId} ${event.actorUid}`.toLowerCase().includes(q));
   return <section className="space-y-4">
-    <h2 className="text-2xl font-bold text-slate-900">Clinical audit trail</h2>
-    <p className="text-sm text-slate-600">Owner-only mutation metadata for patients, inventory, consultations and appointments. Events cannot be edited or deleted through application rules. This is not a regulatory compliance certification.</p>
-    <p className="text-xs text-slate-500">Search covers the {events.length} loaded events. Newest events first.</p>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+    <h2 className="text-2xl font-bold text-content-title">Clinical audit trail</h2>
+    <p className="text-sm text-content-secondary">Owner-only mutation metadata for patients, inventory, consultations and appointments. Events cannot be edited or deleted through application rules. This is not a regulatory compliance certification.</p>
+    <p className="text-xs text-content-hint">Search covers the {events.length} loaded events. Newest events first.</p>
+    {error && <p role="alert" className="text-danger-text">{error}</p>}
+    <div className="overflow-x-auto rounded-xl border border-outline-soft bg-panel">
       <table className="w-full text-left text-sm">
         <thead><tr>{['Time', 'Action', 'Record', 'Revision', 'Actor UID'].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead>
-        <tbody>{visible.map(event => <tr key={event.id} className="border-t border-slate-100">
+        <tbody>{visible.map(event => <tr key={event.id} className="border-t border-hairline">
           <td className="p-3">{event.time?.toDate?.().toLocaleString() ?? 'Pending'}</td>
           <td className="p-3">{event.action}</td><td className="max-w-xs break-all p-3">{event.entityType}/{event.entityId}</td>
           <td className="p-3">{event.seq}</td><td className="max-w-xs break-all p-3 font-mono text-xs">{event.actorUid}</td>
         </tr>)}</tbody>
       </table>
     </div>
-    {!visible.length && !busy && <p className="text-slate-600">No matching loaded events.</p>}
+    {!visible.length && !busy && <p className="text-content-secondary">No matching loaded events.</p>}
     {(more || error) && <button type="button" disabled={busy} onClick={() => void load()}
       className="rounded-xl bg-slate-900 px-4 py-2 font-bold text-white disabled:opacity-50">
       {busy ? 'Loading audit events…' : error ? 'Retry audit events' : 'Load more audit events'}

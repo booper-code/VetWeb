@@ -5,6 +5,7 @@ import { PawPrint, Loader2, AlertCircle, Lock, Mail, ShieldCheck, ChevronRight }
 import { initializeFirebase } from '@/lib/firebase';
 import type { ClinicSessionUser } from '@/types';
 import { sendInvitationVerification } from '@/lib/invitation-verification';
+import { ThemeSelector } from '@/components/ThemeSelector';
 
 export const LoginScreen = ({
   onLoginSuccess
@@ -103,7 +104,7 @@ export const LoginScreen = ({
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-canvas p-4">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[320px] bg-[radial-gradient(circle_at_top_left,_rgba(12,130,118,0.10),_transparent_60%)]" />
 
-      <div className="relative z-10 grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-[18px] border border-line bg-white shadow-[0_24px_70px_#0b26381f] lg:grid-cols-2">
+      <div className="relative z-10 grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-[18px] border border-line bg-panel shadow-[0_24px_70px_#0b26381f] lg:grid-cols-2">
         {/* Left branding panel */}
         <div className="relative hidden flex-col justify-between overflow-hidden bg-nav p-10 text-white lg:flex">
           <div className="absolute inset-0 bg-gradient-to-br from-teal-500/20 via-transparent to-emerald-500/10" />
@@ -132,19 +133,19 @@ export const LoginScreen = ({
           <div className="relative z-10 grid grid-cols-3 gap-3">
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-2xl font-black text-teal-300">24/7</p>
-              <p className="text-[10px] text-slate-400 uppercase font-bold mt-1">
+              <p className="text-[10px] text-content-faint uppercase font-bold mt-1">
                 Clinic Ready
               </p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-2xl font-black text-teal-300">LAB</p>
-              <p className="text-[10px] text-slate-400 uppercase font-bold mt-1">
+              <p className="text-[10px] text-content-faint uppercase font-bold mt-1">
                 Diagnostics
               </p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-2xl font-black text-teal-300">POS</p>
-              <p className="text-[10px] text-slate-400 uppercase font-bold mt-1">
+              <p className="text-[10px] text-content-faint uppercase font-bold mt-1">
                 Billing
               </p>
             </div>
@@ -155,25 +156,28 @@ export const LoginScreen = ({
         <div className="flex flex-col justify-center p-7 sm:p-12">
           <div className="mx-auto w-full max-w-md">
             <div className="flex items-center gap-3 mb-8 lg:hidden">
-              <div className="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center">
-                <PawPrint className="w-7 h-7 text-teal-600" />
+              <div className="w-12 h-12 rounded-2xl bg-brand-wash border border-brand-stroke flex items-center justify-center">
+                <PawPrint className="w-7 h-7 text-brand-text" />
               </div>
               <div>
-                <h1 className="text-xl font-black text-slate-900">
-                  VetCloud<span className="text-teal-600">Pro</span>
+                <h1 className="text-xl font-black text-content-title">
+                  VetCloud<span className="text-brand-text">Pro</span>
                 </h1>
               </div>
             </div>
 
             <div className="mb-8">
-              <div className="w-14 h-14 rounded-2xl bg-slate-900 flex items-center justify-center mb-5 shadow-lg">
-                <ShieldCheck className="w-7 h-7 text-teal-300" />
+              <div className="mb-5 flex items-start justify-between gap-3">
+                <div className="w-14 h-14 rounded-2xl bg-slate-900 flex items-center justify-center shadow-lg">
+                  <ShieldCheck className="w-7 h-7 text-teal-300" />
+                </div>
+                <ThemeSelector />
               </div>
 
-                <h2 className="text-3xl font-black text-slate-900 tracking-tight">
+                <h2 className="text-3xl font-black text-content-title tracking-tight">
                 {isCreatingAccount ? 'Create your account' : 'Secure Staff Login'}
                 </h2>
-                <p className="text-sm text-slate-500 mt-2 font-medium">
+                <p className="text-sm text-content-hint mt-2 font-medium">
                 {isCreatingAccount
                   ? 'Create an account, then set up your clinic or accept an invitation.'
                   : 'Sign in to choose a clinic or accept an invitation.'}
@@ -181,7 +185,7 @@ export const LoginScreen = ({
             </div>
 
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-medium mb-6 flex items-start gap-3">
+              <div className="bg-danger-wash border border-danger-stroke text-danger-text px-4 py-3 rounded-xl text-sm font-medium mb-6 flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 flex-shrink-0" />
                 <p>{error}</p>
               </div>
@@ -190,7 +194,7 @@ export const LoginScreen = ({
             <form onSubmit={handleAuth} className="space-y-5">
               {isCreatingAccount && (
                 <div>
-                  <label htmlFor="signupName" className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+                  <label htmlFor="signupName" className="text-xs font-black text-content-hint uppercase tracking-wider block mb-2">
                     Your Name
                   </label>
                   <input
@@ -198,7 +202,7 @@ export const LoginScreen = ({
                     type="text"
                     required
                     maxLength={100}
-                    className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
+                    className="w-full px-4 py-3.5 bg-field-subtle border border-field-outline rounded-2xl text-sm font-bold text-content-title focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
                     placeholder="Your full name"
                     value={displayName}
                     onChange={event => setDisplayName(event.target.value)}
@@ -206,18 +210,18 @@ export const LoginScreen = ({
                 </div>
               )}
               <div>
-                <label htmlFor="loginEmail" className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+                <label htmlFor="loginEmail" className="text-xs font-black text-content-hint uppercase tracking-wider block mb-2">
                     Email
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Mail className="h-5 w-5 text-slate-400" />
+                    <Mail className="h-5 w-5 text-content-faint" />
                   </div>
                   <input
                     id="loginEmail"
                     type="email"
                     required
-                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
+                    className="w-full pl-12 pr-4 py-3.5 bg-field-subtle border border-field-outline rounded-2xl text-sm font-bold text-content-title focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
                     placeholder="you@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -226,18 +230,18 @@ export const LoginScreen = ({
               </div>
 
               <div>
-                <label htmlFor="loginPassword" className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-2">
+                <label htmlFor="loginPassword" className="text-xs font-black text-content-hint uppercase tracking-wider block mb-2">
                   Password
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Lock className="h-5 w-5 text-slate-400" />
+                    <Lock className="h-5 w-5 text-content-faint" />
                   </div>
                   <input
                     id="loginPassword"
                     type="password"
                     required
-                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
+                    className="w-full pl-12 pr-4 py-3.5 bg-field-subtle border border-field-outline rounded-2xl text-sm font-bold text-content-title focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -264,18 +268,18 @@ export const LoginScreen = ({
               </button>
             </form>
 
-            <p className="text-center text-sm text-slate-500 mt-5">
+            <p className="text-center text-sm text-content-hint mt-5">
               {isCreatingAccount ? 'Already have an account?' : 'New to VetCloudPro?'}{' '}
               <button
                 type="button"
                 onClick={toggleAccountMode}
-                className="font-bold text-teal-700 hover:text-teal-800"
+                className="font-bold text-brand-text-strong hover:text-brand-text-deep"
               >
                 {isCreatingAccount ? 'Sign in' : 'Create an account'}
               </button>
             </p>
 
-            <p className="text-center text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-8">
+            <p className="text-center text-[10px] text-content-faint font-bold uppercase tracking-widest mt-8">
               Protected Clinic Workspace
             </p>
           </div>

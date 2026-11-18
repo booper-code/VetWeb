@@ -78,20 +78,20 @@ const handleAnalyze = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <TestTube className="text-teal-600" />
+        <h2 className="text-2xl font-bold text-content-heading flex items-center gap-2">
+          <TestTube className="text-brand-text" />
           Laboratory & AI Diagnostics
         </h2>
-        <p className="text-slate-500 font-medium">Bridges clinical tests and diagnostics directly with AI powered context analysis.</p>
-        <p className="mt-2 text-sm font-bold text-amber-800">Demo only: this screen displays predefined example results and does not analyze the input. Do not use it for clinical decisions.</p>
+        <p className="text-content-hint font-medium">Bridges clinical tests and diagnostics directly with AI powered context analysis.</p>
+        <p className="mt-2 text-sm font-bold text-warning-text">Demo only: this screen displays predefined example results and does not analyze the input. Do not use it for clinical decisions.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Input Section */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-          <label className="text-sm font-bold text-slate-800 mb-2">Machine Lab Output / Notes</label>
+        <div className="bg-panel p-6 rounded-2xl border border-outline-soft shadow-sm flex flex-col">
+          <label className="text-sm font-bold text-content-heading mb-2">Machine Lab Output / Notes</label>
           <textarea 
-            className="w-full flex-1 min-h-[300px] p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none resize-none"
+            className="w-full flex-1 min-h-[300px] p-4 bg-field-subtle border border-field-outline rounded-xl text-sm text-content-title focus:ring-2 focus:ring-teal-500 outline-none resize-none"
             placeholder="e.g. Hematology scan values: WBC 21.0 H, HGB 10.1 L, PLT 110 L. Patient shows poor appetite and fever."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
@@ -99,7 +99,7 @@ const handleAnalyze = () => {
           
           {/* Image Preview Area */}
           {attachedImage && (
-            <div className="relative mt-4 w-32 h-32 rounded-xl border border-slate-200 overflow-hidden group shadow-sm">
+            <div className="relative mt-4 w-32 h-32 rounded-xl border border-outline-soft overflow-hidden group shadow-sm">
               <img src={attachedImage} alt="Attached Lab Scan" className="w-full h-full object-cover" />
               <button 
                 onClick={() => setAttachedImage(null)}
@@ -122,9 +122,9 @@ const handleAnalyze = () => {
               />
               <label 
                 htmlFor="labImageUpload" 
-                className="cursor-pointer w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-all border border-slate-200"
+                className="cursor-pointer w-full flex items-center justify-center gap-2 px-4 py-3 bg-panel-raised hover:bg-panel-pressed text-content-copy font-bold rounded-xl text-sm transition-all border border-outline-soft"
               >
-                <PlusCircle className="w-4 h-4 text-slate-500" />
+                <PlusCircle className="w-4 h-4 text-content-hint" />
                 Attach Scan/X-Ray
               </label>
             </div>
@@ -153,7 +153,7 @@ const handleAnalyze = () => {
                 {analysisResult}
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3 py-16">
+              <div className="h-full flex flex-col items-center justify-center text-content-hint space-y-3 py-16">
                 <Sparkles className="w-10 h-10 opacity-20" />
                 <p className="text-center text-sm">Awaiting clinical records for processing.<br/>Synthesized diagnostics will populate here.</p>
               </div>

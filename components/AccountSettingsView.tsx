@@ -95,26 +95,26 @@ export const AccountSettingsView = ({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800">Account Settings</h2>
-        <p className="text-slate-500 font-medium">Manage this clinic&apos;s name and the account you sign in with.</p>
+        <h2 className="text-2xl font-bold text-content-heading">Account Settings</h2>
+        <p className="text-content-hint font-medium">Manage this clinic&apos;s name and the account you sign in with.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* CLINIC PROFILE */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between">
+        <div className="bg-panel p-6 rounded-2xl border border-outline-soft shadow-sm space-y-4 flex flex-col justify-between">
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Building2 className="text-teal-600 w-5 h-5" />
-              <h3 className="text-lg font-bold text-slate-800">Clinic Profile</h3>
+              <Building2 className="text-brand-text w-5 h-5" />
+              <h3 className="text-lg font-bold text-content-heading">Clinic Profile</h3>
             </div>
-            <p className="text-sm text-slate-600 leading-relaxed">
+            <p className="text-sm text-content-secondary leading-relaxed">
               {isOwner
                 ? 'The clinic name appears on the sidebar, invitations, and exported records.'
                 : 'Only the clinic owner can rename this clinic.'}
             </p>
 
             <div className="space-y-2">
-              <label htmlFor="clinicName" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+              <label htmlFor="clinicName" className="text-[10px] font-bold text-content-faint uppercase tracking-wider block">
                 Clinic Name
               </label>
               <input
@@ -125,12 +125,12 @@ export const AccountSettingsView = ({
                 disabled={!isOwner || isSavingName}
                 onChange={event => setNameDraft(event.target.value)}
                 placeholder="e.g. Biñan Animal Clinic"
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none focus:ring-2 focus:ring-teal-500 disabled:text-slate-500 disabled:cursor-not-allowed"
+                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-bold text-content-title outline-none focus:ring-2 focus:ring-teal-500 disabled:text-content-hint disabled:cursor-not-allowed"
               />
 
               <div className="flex items-center justify-between gap-3 pt-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Your access · <span className="text-teal-700">{isDemo ? 'demo' : role || 'unknown'}</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-content-faint">
+                  Your access · <span className="text-brand-text-strong">{isDemo ? 'demo' : role || 'unknown'}</span>
                 </span>
                 {clinicId && (
                   <span className="text-[10px] font-mono text-slate-300 truncate max-w-[45%]" title={clinicId}>
@@ -140,7 +140,7 @@ export const AccountSettingsView = ({
               </div>
 
               {nameError && (
-                <p className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                <p className="text-xs font-bold text-danger-text bg-danger-wash border border-danger-stroke rounded-xl px-3 py-2">
                   {nameError}
                 </p>
               )}
@@ -158,38 +158,38 @@ export const AccountSettingsView = ({
               Save Clinic Name
             </button>
           ) : (
-            <p className="text-[11px] text-slate-400 font-medium text-center">
+            <p className="text-[11px] text-content-faint font-medium text-center">
               {isDemo ? 'Demo workspace — changes are not saved.' : 'Ask the clinic owner to rename this clinic.'}
             </p>
           )}
         </div>
 
         {/* SIGN-IN */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between">
+        <div className="bg-panel p-6 rounded-2xl border border-outline-soft shadow-sm space-y-4 flex flex-col justify-between">
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <KeyRound className="text-slate-700 w-5 h-5" />
-              <h3 className="text-lg font-bold text-slate-800">Sign-in &amp; Security</h3>
+              <KeyRound className="text-content-copy w-5 h-5" />
+              <h3 className="text-lg font-bold text-content-heading">Sign-in &amp; Security</h3>
             </div>
-            <p className="text-sm text-slate-600 leading-relaxed">
+            <p className="text-sm text-content-secondary leading-relaxed">
               Clinic access is tied to this login. Your role applies to every clinic you belong to.
             </p>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+              <label className="text-[10px] font-bold text-content-faint uppercase tracking-wider block">
                 Login Email
               </label>
-              <div className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-500 flex items-center gap-2">
-                <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <div className="w-full p-2.5 bg-panel-raised border border-outline-soft rounded-xl text-xs font-bold text-content-hint flex items-center gap-2">
+                <Mail className="w-3.5 h-3.5 text-content-faint shrink-0" />
                 <span className="truncate">{email || 'No email detected'}</span>
               </div>
 
               {displayName && (
                 <>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block pt-1">
+                  <label className="text-[10px] font-bold text-content-faint uppercase tracking-wider block pt-1">
                     Display Name
                   </label>
-                  <div className="w-full p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-500 truncate">
+                  <div className="w-full p-2.5 bg-panel-raised border border-outline-soft rounded-xl text-xs font-bold text-content-hint truncate">
                     {displayName}
                   </div>
                 </>
@@ -201,7 +201,7 @@ export const AccountSettingsView = ({
             type="button"
             onClick={handlePasswordReset}
             disabled={!email || isSendingReset}
-            className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold py-3 rounded-xl text-sm transition-all border border-slate-200 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+            className="w-full bg-panel-raised hover:bg-panel-pressed text-content-heading font-bold py-3 rounded-xl text-sm transition-all border border-outline-soft disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
           >
             {isSendingReset && <Loader2 className="w-4 h-4 animate-spin" />}
             Send Password Reset Email
@@ -211,12 +211,12 @@ export const AccountSettingsView = ({
 
       {/* CLINIC BACKUP */}
       {isOwner && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="bg-panel p-6 rounded-2xl border border-outline-soft shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
-            <Database className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
+            <Database className="w-5 h-5 text-brand-text shrink-0 mt-0.5" />
             <div>
-              <h3 className="text-lg font-bold text-slate-800">Clinic data backup</h3>
-              <p className="text-sm text-slate-600 leading-relaxed mt-1">
+              <h3 className="text-lg font-bold text-content-heading">Clinic data backup</h3>
+              <p className="text-sm text-content-secondary leading-relaxed mt-1">
                 Download a JSON snapshot of patients, inventory, consultations, staff, payroll, members, and invitations. Keep it somewhere safe before bulk changes.
                 Images stored in R2 are referenced by key, not included in this file; back up the R2 bucket separately.
               </p>
@@ -235,12 +235,12 @@ export const AccountSettingsView = ({
       )}
 
       {/* DANGER ZONE */}
-      <div className="bg-white p-6 rounded-2xl border border-red-200 shadow-sm">
+      <div className="bg-panel p-6 rounded-2xl border border-danger-stroke shadow-sm">
         <div className="flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+          <AlertTriangle className="w-5 h-5 text-danger-mark shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-lg font-bold text-slate-800">Account deletion</h3>
-            <p className="text-sm text-slate-600 leading-relaxed mt-1">
+            <h3 className="text-lg font-bold text-content-heading">Account deletion</h3>
+            <p className="text-sm text-content-secondary leading-relaxed mt-1">
               Disabled for now. Deleting a login before clinic ownership can be transferred could lock everyone out of that clinic.
             </p>
           </div>

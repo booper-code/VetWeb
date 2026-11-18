@@ -8,7 +8,6 @@ import { imageStorageConfigured, openStoredImage, uploadPatientImage } from '@/l
 import { StoredImage } from '@/components/StoredImage';
 import { exportPatientsPdf } from '@/lib/pdf';
 import { PageControls } from '@/components/PageControls';
-import { WorkspaceModeStrip } from '@/components/WorkspaceModeStrip';
 import { ClinicalActivity } from '@/components/ClinicalActivity';
 import type { PageStatus } from '@/lib/useClinicPages';
 
@@ -32,7 +31,6 @@ export const PatientRecordsView = ({
   triggerToast,
   paging,
   canEdit = true,
-  mode = 'quick',
   staffUid = '',
   staffName = ''
 }: {
@@ -54,7 +52,6 @@ export const PatientRecordsView = ({
   triggerToast: (msg: string) => void;
   paging?: { active: PageStatus; discharged: PageStatus; load: (kind: 'Active' | 'Discharged') => void };
   canEdit?: boolean;
-  mode?: 'quick' | 'advanced';
   staffUid?: string;
   staffName?: string;
 }) => {
@@ -488,10 +485,9 @@ const visiblePatients =
 
   return (
     <div className="space-y-6 relative">
-      {!canEdit && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      {!canEdit && <p role="status" className="rounded-xl border border-warning-stroke bg-warning-wash p-3 text-sm text-warning-text-deep">
         Read-only workspace. Changes require an online owner or editor.
       </p>}
-      <WorkspaceModeStrip mode={mode} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold text-ink">
@@ -515,7 +511,7 @@ const visiblePatients =
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         {/* --- LEFT COLUMN: ADMISSION FORM --- */}
-        <div className="h-fit rounded-[14px] border border-line bg-white p-6 shadow-[0_2px_10px_#243e5607]">
+        <div className="h-fit rounded-[14px] border border-line bg-panel p-6 shadow-[0_2px_10px_#243e5607]">
           <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-ink">
             <Activity className="w-5 h-5 text-accent" />
             Add Patient
@@ -524,13 +520,13 @@ const visiblePatients =
           <form onSubmit={handleAdmitPatient} className="space-y-4">
             <fieldset disabled={!canEdit || isSavingPatient} className="contents">
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
+              <label className="text-xs font-bold text-content-copy block mb-1">
                 Patient Name *
               </label>
               <input
                 type="text"
                 required
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none font-bold"
+                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-sm text-content-title focus:ring-2 focus:ring-teal-500 outline-none font-bold"
                 placeholder="e.g. Buster"
                 value={name}
                 onChange={e => setName(e.target.value)}
@@ -539,11 +535,11 @@ const visiblePatients =
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
+                <label className="text-xs font-bold text-content-copy block mb-1">
                   Species
                 </label>
                 <select
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none"
+                  className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-bold text-content-title outline-none"
                   value={species}
                   onChange={e => setSpecies(e.target.value)}
                 >
@@ -555,12 +551,12 @@ const visiblePatients =
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
+                <label className="text-xs font-bold text-content-copy block mb-1">
                   Breed
                 </label>
                 <input
                   type="text"
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none"
+                  className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs text-content-title outline-none"
                   placeholder="e.g. Aspin"
                   value={breed}
                   onChange={e => setBreed(e.target.value)}
@@ -570,7 +566,7 @@ const visiblePatients =
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
+                <label className="text-xs font-bold text-content-copy block mb-1">
                   Weight (kg)
                 </label>
                 <input
@@ -578,7 +574,7 @@ const visiblePatients =
                   step="0.1"
                   min="0.1"
                   max="200"
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none"
+                  className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs text-content-title outline-none"
                   placeholder="0.0"
                   value={weight}
                   onChange={e => {
@@ -589,11 +585,11 @@ const visiblePatients =
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
+                <label className="text-xs font-bold text-content-copy block mb-1">
                   Gender
                 </label>
                 <select
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none"
+                  className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-bold text-content-title outline-none"
                   value={gender}
                   onChange={e =>
                     setGender(e.target.value as 'Male' | 'Female' | 'Unknown')
@@ -605,13 +601,13 @@ const visiblePatients =
                 </select>
               </div>
             </div>
-            <div className="border-t border-slate-100 pt-4 space-y-3">
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+            <div className="border-t border-hairline pt-4 space-y-3">
+              <h4 className="text-[10px] font-black text-content-faint uppercase tracking-wider">
                 Patient Profile Image
               </h4>
 
               <div className="flex items-center gap-4">
-                <div className="w-20 h-20 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">           
+                <div className="w-20 h-20 rounded-2xl border border-outline-soft bg-panel-subtle overflow-hidden flex items-center justify-center shrink-0">
                   {newPatientImage ? (
                     <StoredImage
                       value={newPatientImage.previewUrl}
@@ -646,28 +642,28 @@ const visiblePatients =
                     <button
                       type="button"
                       onClick={() => setNewPatientImage(null)}
-                      className="ml-2 inline-flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold px-4 py-2.5 rounded-xl transition-all"
+                      className="ml-2 inline-flex items-center justify-center gap-2 bg-danger-wash hover:bg-danger-tint text-danger-icon border border-danger-stroke text-xs font-bold px-4 py-2.5 rounded-xl transition-all"
                     >
                       <Trash2 className="w-4 h-4" />
                       Remove
                     </button>
                   )}
 
-                  <p className="text-[10px] text-slate-400 font-medium">
+                  <p className="text-[10px] text-content-faint font-medium">
                     Optional. This image will appear as the patient avatar in the directory and dossier.
                   </p>
                 </div>
               </div>
             </div>
-            <div className="border-t border-slate-100 pt-3 space-y-3">
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+            <div className="border-t border-hairline pt-3 space-y-3">
+              <h4 className="text-[10px] font-black text-content-faint uppercase tracking-wider">
                 Owner Contact Details
               </h4>
 
               <input
                 type="text"
                 required
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 outline-none"
+                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-bold text-content-title outline-none"
                 placeholder="Guardian Name *"
                 value={ownerName}
                 onChange={e => setOwnerName(e.target.value)}
@@ -678,15 +674,15 @@ const visiblePatients =
                 inputMode="numeric"
                 pattern="[0-9]*"
                 required
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none"
+                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs text-content-title outline-none"
                 placeholder="Phone Number *"
                 value={ownerContact}
                 onChange={e => setOwnerContact(sanitizePhoneNumber(e.target.value))}
               />
             </div>
 
-            <div className="border-t border-slate-100 pt-3 space-y-2">
-              <label className="text-xs font-bold text-slate-700 block">
+            <div className="border-t border-hairline pt-3 space-y-2">
+              <label className="text-xs font-bold text-content-copy block">
                 Admission Purpose *
               </label>
 
@@ -699,7 +695,7 @@ const visiblePatients =
                     className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
                       selectedAdmissions.includes(option)
                         ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300'
+                        : 'bg-panel text-content-secondary border-outline-soft hover:border-brand-stroke-strong'
                     }`}
                   >
                     {option}
@@ -709,11 +705,11 @@ const visiblePatients =
             </div>
 
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
+              <label className="text-xs font-bold text-content-copy block mb-1">
                 Chief Complaint
               </label>
               <textarea
-                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none h-16 resize-none"
+                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs text-content-title outline-none h-16 resize-none"
                 placeholder="Clinical symptoms..."
                 value={reason}
                 onChange={e => setReason(e.target.value)}
@@ -732,19 +728,19 @@ const visiblePatients =
         </div>
 
         {/* --- RIGHT COLUMN: ACTIVE DIRECTORY TABLE --- */}
-<div className="flex h-fit flex-col overflow-hidden rounded-[14px] border border-line bg-white shadow-[0_2px_10px_#243e5607] xl:col-span-2">
-  <div className="p-6 border-b border-slate-200 bg-slate-50/50 space-y-4">
+<div className="flex h-fit flex-col overflow-hidden rounded-[14px] border border-line bg-panel shadow-[0_2px_10px_#243e5607] xl:col-span-2">
+  <div className="p-6 border-b border-outline-soft bg-panel-subtle/50 space-y-4">
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
         <h3 className="text-lg font-bold text-ink">
           Patient Directory
         </h3>
-        <p className="text-xs text-slate-500 mt-1">
+        <p className="text-xs text-content-hint mt-1">
           Filter admissions between active patients and discharged records.
         </p>
       </div>
 
-      <span className="text-xs font-bold text-slate-500 bg-slate-200 px-3 py-1 rounded-full w-fit">
+      <span className="text-xs font-bold text-content-hint bg-panel-pressed px-3 py-1 rounded-full w-fit">
         {visiblePatients.length} Records
       </span>
     </div>
@@ -761,7 +757,7 @@ const visiblePatients =
           className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${
             patientDirectoryFilter === filter
               ? 'border-accent bg-accent text-white shadow-sm'
-              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              : 'bg-panel text-content-secondary border-outline-soft hover:border-outline'
           }`}
         >
           {filter === 'Active'
@@ -778,18 +774,18 @@ const visiblePatients =
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50 text-slate-500 text-[10px] font-black tracking-wider uppercase border-b border-slate-200">
+                <tr className="bg-panel-subtle text-content-hint text-[10px] font-black tracking-wider uppercase border-b border-outline-soft">
                   <th className="p-4">Patient Profile</th>
                   <th className="p-4">Admission Tags</th>
                   <th className="p-4">Status</th>
                 </tr>
               </thead>
 
-              <tbody className="divide-y divide-slate-100 text-sm">
+              <tbody className="divide-y divide-hairline text-sm">
                 {visiblePatients.map((pat) => (
                   <tr
                     key={pat.id}
-                    className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                    className="hover:bg-panel-subtle/80 transition-colors cursor-pointer group"
                     onClick={() => {
                       setSelectedPatient(pat);
                       setIsEditing(false);
@@ -798,7 +794,7 @@ const visiblePatients =
                   >
                     <td className="p-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl border border-slate-200 overflow-hidden bg-slate-100 flex items-center justify-center flex-shrink-0">
+                        <div className="w-10 h-10 rounded-xl border border-outline-soft overflow-hidden bg-panel-raised flex items-center justify-center flex-shrink-0">
                           {pat.profilePicture || pat.pictures?.[0] ? (
                             <StoredImage
                               value={pat.profilePicture || pat.pictures?.[0]}
@@ -806,18 +802,18 @@ const visiblePatients =
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <PawPrint className="w-5 h-5 text-teal-600" />
+                            <PawPrint className="w-5 h-5 text-brand-text" />
                           )}
                         </div>
 
                         <div>
-                          <p className="font-bold text-slate-900 group-hover:text-teal-600 transition-colors">
+                          <p className="font-bold text-content-title group-hover:text-brand-text transition-colors">
                             {pat.name}
                           </p>
-                          <p className="text-xs text-slate-400 font-medium">
+                          <p className="text-xs text-content-faint font-medium">
                             {pat.species} • {pat.breed}
                           </p>
-                          <p className="text-[10px] text-slate-400 uppercase mt-0.5">
+                          <p className="text-[10px] text-content-faint uppercase mt-0.5">
                             Owner: {pat.ownerName}
                           </p>
                         </div>
@@ -830,7 +826,7 @@ const visiblePatients =
                           (type: string, i: number) => (
                             <span
                               key={i}
-                              className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200"
+                              className="px-2 py-0.5 rounded text-[10px] font-bold bg-panel-raised text-content-secondary border border-outline-soft"
                             >
                               {type}
                             </span>
@@ -844,11 +840,11 @@ const visiblePatients =
                         className={`inline-flex px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
                           pat.status === 'Ready for Pickup' ||
                           pat.status === 'Discharged'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            ? 'bg-success-wash text-success-text border-success-stroke'
                             : pat.status === 'Confined' ||
                               pat.status === 'Waiting'
-                            ? 'bg-amber-50 text-amber-700 border-amber-200'
-                            : 'bg-blue-50 text-blue-700 border-blue-200'
+                            ? 'bg-warning-wash text-warning-icon border-warning-stroke'
+                            : 'bg-info-wash text-info-text border-info-stroke'
                         }`}
                       >
                         {pat.status}
@@ -859,7 +855,7 @@ const visiblePatients =
 
                 {visiblePatients.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="p-12 text-center text-slate-400">
+                    <td colSpan={3} className="p-12 text-center text-content-faint">
                       <PawPrint className="w-8 h-8 mx-auto mb-2 opacity-20" />
                       No {patientDirectoryFilter.toLowerCase()} patients found in the directory.
                     </td>
@@ -874,7 +870,7 @@ const visiblePatients =
       {/* --- CLINICAL DOSSIER FULL REPORT MODAL --- */}
       {showFullReport && selectedPatient && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-md flex justify-center p-4 md:p-10">
-          <div className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto max-h-[90vh]">
+          <div className="relative w-full max-w-5xl bg-panel rounded-3xl shadow-2xl border border-outline-soft overflow-hidden flex flex-col my-auto max-h-[90vh]">
             
             {/* Modal Header */}
             <div className="bg-slate-900 text-white px-8 py-5 flex items-center justify-between sticky top-0 z-10 border-b border-slate-800">
@@ -884,7 +880,7 @@ const visiblePatients =
                   <h2 className="text-xl font-bold tracking-wide">
                     {isEditing ? `Editing Dossier: ${selectedPatient.name}` : 'Patient Clinical Dossier'}
                   </h2>
-                  <p className="text-xs text-slate-400">Veterinary SOAP Report • Biñan Animal Practice System</p>
+                  <p className="text-xs text-content-faint">Veterinary SOAP Report • Biñan Animal Practice System</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -906,7 +902,7 @@ const visiblePatients =
                     setIsEditing(false);
                     setSelectedPatient(null);
                   }}
-                  className="bg-teal-500 hover:bg-teal-600 text-slate-950 font-bold p-2.5 rounded-full transition-all"
+                   className="bg-teal-500 hover:bg-teal-600 text-slate-950 font-bold p-2.5 rounded-full transition-all"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -914,7 +910,7 @@ const visiblePatients =
             </div>
 
             {/* Dossier Report Body */}
-            <div className="flex-1 overflow-y-auto p-8 space-y-6 bg-slate-50 text-slate-800">
+            <div className="flex-1 overflow-y-auto p-8 space-y-6 bg-panel-subtle text-content-heading">
               
               {isEditing && editForm ? (
                 // ==========================================
@@ -922,14 +918,14 @@ const visiblePatients =
                 // ==========================================
                 <fieldset disabled={!canEdit || isSavingPatient} className="space-y-6 animate-in fade-in duration-200">
                   {/* Patient Profile Picture Editor */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <div className="bg-panel rounded-2xl p-5 border border-outline-soft shadow-sm space-y-4">
+                  <h3 className="text-xs font-bold text-content-faint uppercase tracking-wider flex items-center gap-2">
                     <PawPrint className="w-4 h-4" />
                     Patient Profile Picture
                   </h3>
 
                   <div className="flex items-center gap-4">
-                    <div className="w-24 h-24 rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
+                    <div className="w-24 h-24 rounded-2xl border border-outline-soft bg-panel-subtle overflow-hidden flex items-center justify-center shrink-0">
                       {editForm.profilePicture || editForm.pictures?.[0] ? (
                         <StoredImage
                           value={editForm.profilePicture || editForm.pictures?.[0]}
@@ -969,14 +965,14 @@ const visiblePatients =
                               prev ? { ...prev, profilePicture: '', pictures: [] } : prev
                             );
                           }}
-                          className="ml-2 inline-flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold px-4 py-2.5 rounded-xl transition-all"
+                          className="ml-2 inline-flex items-center justify-center gap-2 bg-danger-wash hover:bg-danger-tint text-danger-icon border border-danger-stroke text-xs font-bold px-4 py-2.5 rounded-xl transition-all"
                         >
                           <Trash2 className="w-4 h-4" />
                           Remove
                         </button>
                       )}
 
-                      <p className="text-[10px] text-slate-400 font-medium">
+                      <p className="text-[10px] text-content-faint font-medium">
                         This image appears in the patient directory and clinical dossier after saving.
                         {!imageStorageConfigured() &&
                           ' Cloud image storage is not configured, so the photo stays inside the patient record.'}
@@ -986,18 +982,18 @@ const visiblePatients =
                 </div>
                   {/* TOP: Core Demographics & Owner Details */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-1 space-y-4">
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-2">
-                        <PawPrint className="w-4 h-4 text-slate-400" /> Patient Info
+                    <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm md:col-span-1 space-y-4">
+                      <h4 className="text-xs font-bold text-content-faint uppercase tracking-wider flex items-center gap-1.5 mb-2">
+                        <PawPrint className="w-4 h-4 text-content-faint" /> Patient Info
                       </h4>
                       <div>
-                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Name</label>
-                        <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.name} onChange={e => handleEditChange('name', e.target.value)} />
+                        <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Name</label>
+                        <input type="text" className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-sm font-bold text-content-title outline-none" value={editForm.name} onChange={e => handleEditChange('name', e.target.value)} />
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                          <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Species</label>
-                          <select className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.species} onChange={e => handleEditChange('species', e.target.value)}>
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Species</label>
+                          <select className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-xs font-bold text-content-title outline-none" value={editForm.species} onChange={e => handleEditChange('species', e.target.value)}>
                             <option value="Canine">Canine</option>
                             <option value="Feline">Feline</option>
                             <option value="Avian">Avian</option>
@@ -1005,16 +1001,16 @@ const visiblePatients =
                           </select>
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Breed</label>
-                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.breed} onChange={e => handleEditChange('breed', e.target.value)} />
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Breed</label>
+                          <input type="text" className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-xs font-bold text-content-title outline-none" value={editForm.breed} onChange={e => handleEditChange('breed', e.target.value)} />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Weight (kg)</label>
-                          <input type="number" step="0.1" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.weight} onChange={e => handleEditChange('weight', parseFloat(e.target.value) || 0)} />
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Weight (kg)</label>
+                          <input type="number" step="0.1" className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-xs font-bold text-content-title outline-none" value={editForm.weight} onChange={e => handleEditChange('weight', parseFloat(e.target.value) || 0)} />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Gender</label>
-                          <select className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.gender} onChange={e => handleEditChange('gender', e.target.value)}>
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Gender</label>
+                          <select className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-xs font-bold text-content-title outline-none" value={editForm.gender} onChange={e => handleEditChange('gender', e.target.value)}>
                             <option value="Male">Male</option>
                             <option value="Female">Female</option>
                             <option value="Unknown">Unknown</option>
@@ -1022,8 +1018,8 @@ const visiblePatients =
                         </div>
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Admit Status</label>
-                        <select className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none" value={editForm.status} onChange={e => handleEditChange('status', e.target.value)}>
+                        <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Admit Status</label>
+                        <select className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-xs font-bold text-content-title outline-none" value={editForm.status} onChange={e => handleEditChange('status', e.target.value)}>
                           <option value="Waiting">Waiting</option>
                           <option value="In Treatment">In Treatment</option>
                           <option value="Confined">Confined</option>
@@ -1033,50 +1029,50 @@ const visiblePatients =
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-2 space-y-4">
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-2">
-                        <User className="w-4 h-4 text-slate-400" /> Owner & Contact Info
+                    <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm md:col-span-2 space-y-4">
+                      <h4 className="text-xs font-bold text-content-faint uppercase tracking-wider flex items-center gap-1.5 mb-2">
+                        <User className="w-4 h-4 text-content-faint" /> Owner & Contact Info
                       </h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Authorized Guardian</label>
-                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerName} onChange={e => handleEditChange('ownerName', e.target.value)} />
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Authorized Guardian</label>
+                          <input type="text" className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-sm font-bold text-content-title outline-none" value={editForm.ownerName} onChange={e => handleEditChange('ownerName', e.target.value)} />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Contact Number</label>
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Contact Number</label>
                           <input
                             type="tel"
                             inputMode="numeric"
                             pattern="[0-9]*"
-                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none"
+                            className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-sm font-bold text-content-title outline-none"
                             value={editForm.ownerContact}
                             onChange={e => handleEditChange('ownerContact', sanitizePhoneNumber(e.target.value))}
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Email Address</label>
-                          <input type="email" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerEmail || ''} onChange={e => handleEditChange('ownerEmail', e.target.value)} />
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Email Address</label>
+                          <input type="email" className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-sm font-bold text-content-title outline-none" value={editForm.ownerEmail || ''} onChange={e => handleEditChange('ownerEmail', e.target.value)} />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Residence Address</label>
-                          <input type="text" className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none" value={editForm.ownerAddress || ''} onChange={e => handleEditChange('ownerAddress', e.target.value)} />
+                          <label className="text-[10px] font-bold text-content-faint uppercase block mb-1">Residence Address</label>
+                          <input type="text" className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-sm font-bold text-content-title outline-none" value={editForm.ownerAddress || ''} onChange={e => handleEditChange('ownerAddress', e.target.value)} />
                         </div>
                       </div>
 
-                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center justify-between mt-4">
+                      <div className="bg-panel-subtle p-4 rounded-xl border border-hairline flex items-center justify-between mt-4">
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Ledger Balance (PHP)</span>
-                          <input type="number" step="0.01" className="w-32 p-1.5 bg-white border border-slate-200 rounded-lg text-sm font-black text-slate-800 outline-none" value={editForm.balance} onChange={e => handleEditChange('balance', parseFloat(e.target.value) || 0)} />
+                          <span className="text-[10px] text-content-faint font-bold uppercase block">Ledger Balance (PHP)</span>
+                          <input type="number" step="0.01" className="w-32 p-1.5 bg-field-panel border border-field-outline rounded-lg text-sm font-black text-content-heading outline-none" value={editForm.balance} onChange={e => handleEditChange('balance', parseFloat(e.target.value) || 0)} />
                         </div>
                       </div>
                     </div>
                   </div>
 
                   {/* SECTION 1: LAB RESULTS (Image First OCR Approach) */}
-                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <TestTube className="w-4 h-4 text-teal-600" /> 1. Laboratory Printouts & Analytes
+                  <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-4">
+                    <div className="flex items-center justify-between border-b border-hairline pb-3">
+                      <h4 className="text-xs font-bold text-content-faint uppercase tracking-wider flex items-center gap-1.5">
+                        <TestTube className="w-4 h-4 text-brand-text" /> 1. Laboratory Printouts & Analytes
                       </h4>
                       <button 
                         type="button"
@@ -1090,7 +1086,7 @@ const visiblePatients =
                           }];
                           handleEditChange('labResults', newPanels);
                         }}
-                        className="bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold px-3 py-1 rounded-lg text-xs transition-colors border border-teal-200"
+                        className="bg-brand-wash hover:bg-brand-tint text-brand-text-strong font-bold px-3 py-1 rounded-lg text-xs transition-colors border border-brand-stroke"
                       >
                         + Add Lab Printout
                       </button>
@@ -1099,13 +1095,13 @@ const visiblePatients =
                     {editForm.labResults && editForm.labResults.length > 0 ? (
                       <div className="space-y-6">
                         {editForm.labResults.map((result, index) => (
-                          <div key={result.id || index} className="p-5 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-4 shadow-sm">
+                          <div key={result.id || index} className="p-5 rounded-2xl border border-outline-soft bg-panel-subtle/50 space-y-4 shadow-sm">
                             
                             {/* Panel Header */}
                             <div className="flex gap-3 items-center">
                               <input 
                                 type="text"
-                                className="flex-1 p-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-teal-500"
+                                className="flex-1 p-2 bg-field-panel border border-field-outline rounded-lg text-sm font-bold text-content-title outline-none focus:ring-2 focus:ring-teal-500"
                                 value={result.testName}
                                 onChange={(e) => {
                                   const updated = [...(editForm.labResults || [])];
@@ -1116,7 +1112,7 @@ const visiblePatients =
                               />
                               <input 
                                 type="text"
-                                className="w-32 p-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-teal-500 text-right"
+                                className="w-32 p-2 bg-field-panel border border-field-outline rounded-lg text-sm font-bold text-content-copy outline-none focus:ring-2 focus:ring-teal-500 text-right"
                                 value={result.date}
                                 onChange={(e) => {
                                   const updated = [...(editForm.labResults || [])];
@@ -1131,7 +1127,7 @@ const visiblePatients =
                                   const filtered = (editForm.labResults || []).filter((_, i) => i !== index);
                                   handleEditChange('labResults', filtered);
                                 }}
-                                className="text-slate-400 hover:text-red-500 p-2 bg-white border border-slate-200 rounded-lg transition-colors"
+                                className="text-content-faint hover:text-danger-mark p-2 bg-panel border border-outline-soft rounded-lg transition-colors"
                               >
                                 <X className="w-4 h-4" />
                               </button>
@@ -1211,12 +1207,12 @@ const visiblePatients =
                                     </button>}
                                   </div>
                                 ) : (
-                                  <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 cursor-pointer transition-colors group">
-                                    <div className="bg-slate-100 p-3 rounded-full mb-2 group-hover:bg-teal-50 transition-colors">
-                                      <FileSpreadsheet className="w-6 h-6 text-slate-400 group-hover:text-teal-500" />
+                                  <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-outline rounded-xl bg-panel hover:bg-panel-subtle cursor-pointer transition-colors group">
+                                    <div className="bg-panel-raised p-3 rounded-full mb-2 group-hover:bg-brand-wash transition-colors">
+                                      <FileSpreadsheet className="w-6 h-6 text-content-faint group-hover:text-brand-mark" />
                                     </div>
-                                    <span className="text-xs font-bold text-slate-600">Upload Lab Printout</span>
-                                    <span className="text-[10px] text-slate-400 mt-1 text-center px-4">Snap a photo of the CBC or Chemistry printout</span>
+                                    <span className="text-xs font-bold text-content-secondary">Upload Lab Printout</span>
+                                    <span className="text-[10px] text-content-faint mt-1 text-center px-4">Snap a photo of the CBC or Chemistry printout</span>
                                     <input 
                                       type="file" 
                                       className="hidden" 
@@ -1238,7 +1234,7 @@ const visiblePatients =
                               {/* Right: Metrics Key Values */}
                               <div className="col-span-2 flex flex-col">
                                 <div className="flex items-center justify-between mb-2">
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase">{aiEnabled ? 'Analyte Data (Manual or Demo)' : 'Analyte Data (Manual)'}</label>
+                                  <label className="text-[10px] font-bold text-content-faint uppercase">{aiEnabled ? 'Analyte Data (Manual or Demo)' : 'Analyte Data (Manual)'}</label>
                                   <button 
                                     type="button"
                                     onClick={() => {
@@ -1249,26 +1245,26 @@ const visiblePatients =
                                         handleEditChange('labResults', updated);
                                       }
                                     }}
-                                    className="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-1 rounded"
+                                    className="text-[10px] font-bold text-brand-text bg-brand-wash px-2 py-1 rounded"
                                   >
                                     + Add Metric Row
                                   </button>
                                 </div>
                                 
-                                <div className="bg-white border border-slate-200 rounded-xl p-3 flex-1 overflow-y-auto max-h-48 space-y-2">
+                                <div className="bg-panel border border-outline-soft rounded-xl p-3 flex-1 overflow-y-auto max-h-48 space-y-2">
                                   {Object.keys(result.metrics || {}).length === 0 ? (
-                                    <div className="flex h-full items-center justify-center text-xs text-slate-400 italic text-center">
+                                    <div className="flex h-full items-center justify-center text-xs text-content-faint italic text-center">
                                       {aiEnabled ? 'Use the demo extraction for example data, or manually add metric rows.' : 'Manually add metric rows.'}
                                     </div>
                                   ) : (
                                     Object.entries(result.metrics || {}).map(([key, val]) => (
-                                      <div key={key} className="flex items-center bg-slate-50 border border-slate-100 rounded-lg overflow-hidden focus-within:ring-1 focus-within:ring-teal-500">
-                                        <span className="bg-slate-200/50 px-3 py-2 text-xs font-black text-slate-600 uppercase border-r border-slate-200 min-w-[70px] text-center">
+                                      <div key={key} className="flex items-center bg-panel-subtle border border-hairline rounded-lg overflow-hidden focus-within:ring-1 focus-within:ring-teal-500">
+                                        <span className="bg-panel-pressed/50 px-3 py-2 text-xs font-black text-content-secondary uppercase border-r border-outline-soft min-w-[70px] text-center">
                                           {key}
                                         </span>
                                         <input 
                                           type="text"
-                                          className="w-full p-2 text-sm font-bold text-slate-800 outline-none bg-transparent"
+                                          className="w-full p-2 text-sm font-bold text-content-heading outline-none bg-transparent"
                                           value={val as string}
                                           placeholder="e.g. Normal, High, 12.5"
                                           onChange={(e) => {
@@ -1303,7 +1299,7 @@ const visiblePatients =
 
                                             handleEditChange('labResults', updated);
                                           }}
-                                          className="px-2 text-slate-300 hover:text-red-500"
+                                          className="px-2 text-slate-300 hover:text-danger-mark"
                                         >
                                           <X className="w-3 h-3" />
                                         </button>
@@ -1318,26 +1314,26 @@ const visiblePatients =
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-8 bg-slate-50/50 rounded-xl border border-slate-200 border-dashed">
+                      <div className="text-center py-8 bg-panel-subtle/50 rounded-xl border border-outline-soft border-dashed">
                         <FileSpreadsheet className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                        <p className="text-sm text-slate-500 font-medium">No laboratory records attached.</p>
-                        <p className="text-xs text-slate-400">Add a lab printout to upload CBC or chemistry images.</p>
+                        <p className="text-sm text-content-hint font-medium">No laboratory records attached.</p>
+                        <p className="text-xs text-content-faint">Add a lab printout to upload CBC or chemistry images.</p>
                       </div>
                     )}
                   </div>
 
                   {/* SECTION 2: AI SUMMARY (Smart Interpretation) */}
-                  {aiEnabled && <div className="bg-gradient-to-br from-purple-950/5 via-indigo-950/5 to-slate-50 rounded-2xl p-6 border border-purple-200/80 shadow-sm space-y-3 relative overflow-hidden">
+                  {aiEnabled && <div className="bg-gradient-to-br from-purple-950/5 via-indigo-950/5 to-panel-subtle rounded-2xl p-6 border border-feature-stroke/80 shadow-sm space-y-3 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1.5 h-full bg-purple-600" />
                     <div className="flex items-center justify-between mb-1">
-                      <h4 className="text-xs font-bold text-purple-950 uppercase tracking-wider flex items-center gap-1.5">
-                        <Sparkles className="w-4 h-4 text-purple-600" /> 2. AI Synthesis of Clinical Data
+                      <h4 className="text-xs font-bold text-feature-text-max uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-feature-icon" /> 2. AI Synthesis of Clinical Data
                       </h4>
-                      <span className="text-[10px] font-black tracking-widest uppercase bg-purple-100 text-purple-700 px-2 py-0.5 rounded border border-purple-200">Gemini Output Window</span>
+                      <span className="text-[10px] font-black tracking-widest uppercase bg-feature-wash text-feature-text px-2 py-0.5 rounded border border-feature-stroke">Gemini Output Window</span>
                     </div>
-                    <p className="text-xs text-purple-800/60 mb-2">Paste a summary here. Demo extraction inserts example data only and does not analyze the image.</p>
+                    <p className="text-xs text-feature-text-deep/60 mb-2">Paste a summary here. Demo extraction inserts example data only and does not analyze the image.</p>
                     <textarea 
-                      className="w-full p-4 bg-white/90 border border-purple-200 rounded-xl text-sm text-slate-800 font-medium focus:ring-2 focus:ring-purple-500 outline-none resize-y min-h-[120px] shadow-sm"
+                      className="w-full p-4 bg-field-panel/90 border border-feature-stroke rounded-xl text-sm text-content-heading font-medium focus:ring-2 focus:ring-purple-500 outline-none resize-y min-h-[120px] shadow-sm"
                       placeholder="Waiting for AI synthesis of the blood work... (e.g. 'Elevated WBC suggests acute localized infection...')"
                       value={editForm.aiLabSummary || ""}
                       onChange={e => handleEditChange('aiLabSummary', e.target.value)}
@@ -1345,12 +1341,12 @@ const visiblePatients =
                   </div>}
 
                   {/* SECTION 3: VET NOTES (Private Remarks) */}
-                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-3">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Stethoscope className="w-4 h-4 text-slate-600" /> {aiEnabled ? '3.' : '2.'} Vet&apos;s Personal Notes &amp; SOAP
+                  <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-3">
+                    <h4 className="text-xs font-bold text-content-faint uppercase tracking-wider flex items-center gap-1.5">
+                      <Stethoscope className="w-4 h-4 text-content-secondary" /> {aiEnabled ? '3.' : '2.'} Vet&apos;s Personal Notes &amp; SOAP
                     </h4>
                     <textarea 
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 focus:ring-2 focus:ring-teal-500 outline-none resize-y min-h-[120px]"
+                      className="w-full p-4 bg-field-subtle border border-field-outline rounded-xl text-sm font-medium text-content-title focus:ring-2 focus:ring-teal-500 outline-none resize-y min-h-[120px]"
                       placeholder="Attending veterinarian clinical observations, physical exam notes, prognosis, or internal team warnings..."
                       value={editForm.notes !== undefined ? editForm.notes : (editForm.reason || "")}
                       onChange={e => handleEditChange('notes', e.target.value)}
@@ -1366,68 +1362,68 @@ const visiblePatients =
                   
                   {/* TOP: Demographics & Owner Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col items-center text-center">
-                      <div className="w-24 h-24 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center overflow-hidden mb-4 shadow-inner">
+                    <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm flex flex-col items-center text-center">
+                      <div className="w-24 h-24 rounded-2xl bg-brand-wash border border-brand-stroke flex items-center justify-center overflow-hidden mb-4 shadow-inner">
                         {selectedPatient.profilePicture || selectedPatient.pictures?.[0] ? (
                           <StoredImage value={selectedPatient.profilePicture || selectedPatient.pictures?.[0]} alt={selectedPatient.name} className="w-full h-full object-cover" />
                         ) : (
-                          <PawPrint className="w-12 h-12 text-teal-600" />
+                          <PawPrint className="w-12 h-12 text-brand-text" />
                         )}
                       </div>
-                      <h3 className="text-2xl font-black text-slate-900">{selectedPatient.name}</h3>
-                      <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">{selectedPatient.species} • {selectedPatient.breed}</span>
+                      <h3 className="text-2xl font-black text-content-title">{selectedPatient.name}</h3>
+                      <span className="text-xs text-content-hint font-bold uppercase tracking-wider">{selectedPatient.species} • {selectedPatient.breed}</span>
                       
-                      <div className="w-full border-t border-slate-100 my-4" />
+                      <div className="w-full border-t border-hairline my-4" />
                       
                       <div className="grid grid-cols-2 gap-4 w-full text-left">
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold uppercase block">ID Tag</span>
-                          <span className="text-xs font-black text-slate-800">{selectedPatient.id}</span>
+                          <span className="text-[10px] text-content-faint font-bold uppercase block">ID Tag</span>
+                          <span className="text-xs font-black text-content-heading">{selectedPatient.id}</span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Current Weight</span>
-                          <span className="text-xs font-black text-slate-800">{selectedPatient.weight} kg</span>
+                          <span className="text-[10px] text-content-faint font-bold uppercase block">Current Weight</span>
+                          <span className="text-xs font-black text-content-heading">{selectedPatient.weight} kg</span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Gender</span>
-                          <span className="text-xs font-black text-slate-800">{selectedPatient.gender}</span>
+                          <span className="text-[10px] text-content-faint font-bold uppercase block">Gender</span>
+                          <span className="text-xs font-black text-content-heading">{selectedPatient.gender}</span>
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Admit Status</span>
-                          <span className="inline-block text-[10px] bg-teal-50 text-teal-700 px-2 py-0.5 rounded font-bold border border-teal-200 mt-1">{selectedPatient.status}</span>
+                          <span className="text-[10px] text-content-faint font-bold uppercase block">Admit Status</span>
+                          <span className="inline-block text-[10px] bg-brand-wash text-brand-text-strong px-2 py-0.5 rounded font-bold border border-brand-stroke mt-1">{selectedPatient.status}</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm md:col-span-2 space-y-4 flex flex-col justify-between">
+                    <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm md:col-span-2 space-y-4 flex flex-col justify-between">
                       <div>
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mb-3">
-                          <User className="w-4 h-4 text-slate-400" /> Certified Owner & Contact Info
+                        <h4 className="text-xs font-bold text-content-faint uppercase tracking-wider flex items-center gap-1.5 mb-3">
+                          <User className="w-4 h-4 text-content-faint" /> Certified Owner & Contact Info
                         </h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Authorized Guardian</span>
-                            <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerName}</p>
+                            <span className="text-[10px] text-content-faint font-bold uppercase block">Authorized Guardian</span>
+                            <p className="text-sm font-bold text-content-title">{selectedPatient.ownerName}</p>
                           </div>
                           <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Contact Number</span>
-                            <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerContact}</p>
+                            <span className="text-[10px] text-content-faint font-bold uppercase block">Contact Number</span>
+                            <p className="text-sm font-bold text-content-title">{selectedPatient.ownerContact}</p>
                           </div>
                           <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Email Address</span>
-                            <p className="text-sm font-bold text-slate-900">{selectedPatient.ownerEmail || "N/A"}</p>
+                            <span className="text-[10px] text-content-faint font-bold uppercase block">Email Address</span>
+                            <p className="text-sm font-bold text-content-title">{selectedPatient.ownerEmail || "N/A"}</p>
                           </div>
                           <div>
-                            <span className="text-[10px] text-slate-400 font-bold uppercase block">Residence Address</span>
-                            <p className="text-xs font-medium text-slate-700">{selectedPatient.ownerAddress || "No address on file"}</p>
+                            <span className="text-[10px] text-content-faint font-bold uppercase block">Residence Address</span>
+                            <p className="text-xs font-medium text-content-copy">{selectedPatient.ownerAddress || "No address on file"}</p>
                           </div>
                         </div>
                       </div>
 
-                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center justify-between mt-auto">
+                      <div className="bg-panel-subtle p-4 rounded-xl border border-hairline flex items-center justify-between mt-auto">
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold uppercase block">Ledger Balance Summary</span>
-                          <p className="text-lg font-black text-slate-800">PHP {selectedPatient.balance.toFixed(2)}</p>
+                          <span className="text-[10px] text-content-faint font-bold uppercase block">Ledger Balance Summary</span>
+                          <p className="text-lg font-black text-content-heading">PHP {selectedPatient.balance.toFixed(2)}</p>
                         </div>
                         <button 
                           type="button"
@@ -1468,24 +1464,24 @@ const visiblePatients =
                 />
 
                 {/* SECTION 0: Patient Payables / Billing */}
-                <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-5">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-5">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-hairline pb-3">
                     <div>
-                      <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                        <CreditCard className="w-5 h-5 text-teal-600" />
+                      <h4 className="text-sm font-bold text-content-heading flex items-center gap-2">
+                        <CreditCard className="w-5 h-5 text-brand-text" />
                         Patient Payables
                       </h4>
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-content-hint mt-1">
                         Search loaded medicines and services, select whole quantities, then save the ledger and stock together.
                         Apply at most two stock items per operation.
                       </p>
                     </div>
 
                     <div className="text-right">
-                      <p className="text-[10px] text-slate-400 font-bold uppercase">
+                      <p className="text-[10px] text-content-faint font-bold uppercase">
                         Current Balance
                       </p>
-                      <p className="text-lg font-black text-slate-900">
+                      <p className="text-lg font-black text-content-title">
                         PHP {selectedPatient.balance.toFixed(2)}
                       </p>
                     </div>
@@ -1493,29 +1489,29 @@ const visiblePatients =
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                     <div className="space-y-3">
-                      <label className="text-xs font-bold text-slate-700 block">
+                      <label className="text-xs font-bold text-content-copy block">
                         Search Medicine / Service
                       </label>
 
-                      <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-teal-500">
-                        <Search className="w-4 h-4 text-slate-400" />
+                      <div className="flex items-center gap-2 bg-panel-subtle border border-outline-soft rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-teal-500">
+                        <Search className="w-4 h-4 text-content-faint" />
                         <input
                           type="text"
                           value={billableSearchQuery}
                           onChange={e => setBillableSearchQuery(e.target.value)}
                           placeholder="Search medicine, medical service, grooming..."
-                          className="bg-transparent outline-none border-none text-sm text-slate-800 w-full"
+                          className="bg-transparent outline-none border-none text-sm text-content-heading w-full"
                         />
                       </div>
 
-                      <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50/60">
+                      <div className="max-h-72 overflow-y-auto border border-outline-soft rounded-xl divide-y divide-hairline bg-panel-subtle/60">
                         {filteredBillableCatalog.map(item => {
                           const isSelected = selectedBillables[item.itemCode] !== undefined;
 
                           return (
                             <div
                               key={item.itemCode}
-                              className="p-3 bg-white flex items-center justify-between gap-3"
+                              className="p-3 bg-panel flex items-center justify-between gap-3"
                             >
                               <label className="flex items-start gap-3 cursor-pointer flex-1">
                                 <input
@@ -1526,13 +1522,13 @@ const visiblePatients =
                                 />
 
                                 <div>
-                                  <p className="text-sm font-bold text-slate-900">
+                                  <p className="text-sm font-bold text-content-title">
                                     {item.itemName}
                                   </p>
-                                  <p className="text-[10px] text-slate-400 uppercase font-bold">
+                                  <p className="text-[10px] text-content-faint uppercase font-bold">
                                     {item.category} • {item.itemCode}
                                   </p>
-                                  <p className="text-xs text-teal-700 font-black mt-1">
+                                  <p className="text-xs text-brand-text-strong font-black mt-1">
                                     PHP {item.sellingPrice.toFixed(2)}
                                   </p>
                                 </div>
@@ -1540,7 +1536,7 @@ const visiblePatients =
 
                               {isSelected && (
                                 <div className="w-20">
-                                  <label className="text-[10px] text-slate-400 font-bold block mb-1">
+                                  <label className="text-[10px] text-content-faint font-bold block mb-1">
                                     Qty
                                   </label>
                                   <input
@@ -1553,7 +1549,7 @@ const visiblePatients =
                                         Number(e.target.value)
                                       )
                                     }
-                                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none"
+                                    className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-xs font-bold text-content-title outline-none"
                                   />
                                 </div>
                               )}
@@ -1562,7 +1558,7 @@ const visiblePatients =
                         })}
 
                         {filteredBillableCatalog.length === 0 && (
-                          <div className="p-6 text-center text-sm text-slate-400">
+                          <div className="p-6 text-center text-sm text-content-faint">
                             No matching medicine or service found.
                           </div>
                         )}
@@ -1570,44 +1566,44 @@ const visiblePatients =
                     </div>
 
                     <div className="space-y-3">
-                      <h5 className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                      <h5 className="text-xs font-black text-content-faint uppercase tracking-wider">
                         Selected Payables
                       </h5>
 
-                      <div className="border border-slate-200 rounded-xl bg-slate-50/60 divide-y divide-slate-100 min-h-[120px]">
+                      <div className="border border-outline-soft rounded-xl bg-panel-subtle/60 divide-y divide-hairline min-h-[120px]">
                         {selectedBillableDetails.length > 0 ? (
                           selectedBillableDetails.map(entry => (
                             <div
                               key={entry.item.itemCode}
-                              className="p-3 bg-white flex items-center justify-between gap-3"
+                              className="p-3 bg-panel flex items-center justify-between gap-3"
                             >
                               <div>
-                                <p className="text-sm font-bold text-slate-900">
+                                <p className="text-sm font-bold text-content-title">
                                   {entry.item.itemName}
                                 </p>
-                                <p className="text-xs text-slate-500">
+                                <p className="text-xs text-content-hint">
                                   PHP {entry.unitPrice.toFixed(2)} × {entry.quantity}
                                 </p>
                               </div>
 
-                              <p className="text-sm font-black text-slate-900">
+                              <p className="text-sm font-black text-content-title">
                                 PHP {entry.total.toFixed(2)}
                               </p>
                             </div>
                           ))
                         ) : (
-                          <div className="p-6 text-center text-sm text-slate-400">
+                          <div className="p-6 text-center text-sm text-content-faint">
                             No payables selected yet.
                           </div>
                         )}
                       </div>
 
-                      <div className="bg-teal-50 border border-teal-100 rounded-xl p-4 flex items-center justify-between">
+                      <div className="bg-brand-wash border border-brand-stroke-soft rounded-xl p-4 flex items-center justify-between">
                         <div>
-                          <p className="text-[10px] text-teal-700 font-black uppercase">
+                          <p className="text-[10px] text-brand-text-strong font-black uppercase">
                             Payables Subtotal
                           </p>
-                          <p className="text-xl font-black text-teal-800">
+                          <p className="text-xl font-black text-brand-text-deep">
                             PHP {billableSubtotal.toFixed(2)}
                           </p>
                         </div>
@@ -1624,8 +1620,8 @@ const visiblePatients =
                     </div>
                   </div>
 
-                  <div className="border-t border-slate-100 pt-4">
-                    <h5 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-3">
+                  <div className="border-t border-hairline pt-4">
+                    <h5 className="text-xs font-black text-content-faint uppercase tracking-wider mb-3">
                       Dossier Billing History
                     </h5>
 
@@ -1634,19 +1630,19 @@ const visiblePatients =
                         {selectedPatient.billableItems.map(item => (
                           <div
                             key={item.id}
-                            className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex justify-between items-center text-xs gap-3"
+                            className="bg-panel-subtle border border-hairline rounded-xl p-3 flex justify-between items-center text-xs gap-3"
                           >
                             <div>
-                              <p className="font-bold text-slate-900">
+                              <p className="font-bold text-content-title">
                                 {item.itemName}
                               </p>
-                              <p className="text-slate-500">
+                              <p className="text-content-hint">
                                 {item.date} • {item.category} • Qty {item.quantity}
                               </p>
                             </div>
 
                             <div className="flex items-center gap-3">
-                              <p className="font-black text-slate-900 whitespace-nowrap">
+                              <p className="font-black text-content-title whitespace-nowrap">
                                 PHP {item.total.toFixed(2)}
                               </p>
 
@@ -1654,7 +1650,7 @@ const visiblePatients =
                                 type="button"
                                 disabled={!canEdit || isSavingPatient}
                                 onClick={() => void removeBillableFromPatient(item)}
-                                className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1"
+                                className="bg-danger-wash hover:bg-danger-tint text-danger-icon border border-danger-stroke px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1"
                               >
                                 <Trash2 className="w-3 h-3" />
                                 Remove
@@ -1664,7 +1660,7 @@ const visiblePatients =
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-slate-400 italic">
+                      <p className="text-sm text-content-faint italic">
                         No medicine or service charges added yet.
                       </p>
                     )}
@@ -1672,21 +1668,21 @@ const visiblePatients =
                 </div>             
                             
                   {/* SECTION 1: LAB RESULTS (Read View w/ Images) */}
-                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-                    <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
-                      <TestTube className="w-5 h-5 text-teal-600" />
+                  <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-4">
+                    <h4 className="text-sm font-bold text-content-heading flex items-center gap-2 border-b border-hairline pb-3">
+                      <TestTube className="w-5 h-5 text-brand-text" />
                       1. Laboratory Panels & Documents
                     </h4>
                     
                     {selectedPatient.labResults && selectedPatient.labResults.length > 0 ? (
                       <div className="space-y-4">
                         {selectedPatient.labResults.map((result, i) => (
-                          <div key={result.id || i} className="border border-slate-200 rounded-xl p-4 bg-slate-50/60 flex flex-col sm:flex-row gap-5">
+                          <div key={result.id || i} className="border border-outline-soft rounded-xl p-4 bg-panel-subtle/60 flex flex-col sm:flex-row gap-5">
                             
                             {/* Document Thumbnail */}
                             {result.imageUrl && (
                               <div 
-                                className="w-full sm:w-32 h-32 flex-shrink-0 bg-slate-900 rounded-lg overflow-hidden relative cursor-pointer group shadow-sm border border-slate-300"
+                                className="w-full sm:w-32 h-32 flex-shrink-0 bg-slate-900 rounded-lg overflow-hidden relative cursor-pointer group shadow-sm border border-outline"
                                 onClick={() => {
                                   if (!result.imageUrl) return;
                                   void openStoredImage(result.imageUrl).catch(error => {
@@ -1705,22 +1701,22 @@ const visiblePatients =
 
                             {/* Data Breakdown */}
                             <div className="flex-1 flex flex-col justify-center">
-                              <div className="mb-3 border-b border-slate-200/60 pb-2">
-                                <span className="font-bold text-sm text-slate-900 block">{result.testName}</span>
-                                <span className="text-xs text-slate-400 font-medium">Logged: {result.date}</span>
+                              <div className="mb-3 border-b border-outline-soft/60 pb-2">
+                                <span className="font-bold text-sm text-content-title block">{result.testName}</span>
+                                <span className="text-xs text-content-faint font-medium">Logged: {result.date}</span>
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 {Object.keys(result.metrics || {}).length > 0 ? (
                                   Object.entries(result.metrics || {}).map(([mKey, mVal]) => (
                                     mVal ? (
-                                      <span key={mKey} className="text-xs bg-white border border-slate-200 pl-2 pr-3 py-1.5 rounded-md font-mono shadow-sm flex items-center gap-2">
-                                        <span className="text-[10px] text-slate-400 font-sans font-bold bg-slate-100 px-1.5 py-0.5 rounded">{mKey}</span>
-                                        <strong className="text-slate-800">{mVal as string}</strong>
+                                      <span key={mKey} className="text-xs bg-panel border border-outline-soft pl-2 pr-3 py-1.5 rounded-md font-mono shadow-sm flex items-center gap-2">
+                                        <span className="text-[10px] text-content-faint font-sans font-bold bg-panel-raised px-1.5 py-0.5 rounded">{mKey}</span>
+                                        <strong className="text-content-heading">{mVal as string}</strong>
                                       </span>
                                     ) : null
                                   ))
                                 ) : (
-                                  <span className="text-xs text-slate-400 italic">No extracted metrics available.</span>
+                                  <span className="text-xs text-content-faint italic">No extracted metrics available.</span>
                                 )}
                               </div>
                             </div>
@@ -1728,38 +1724,38 @@ const visiblePatients =
                         ))}
                       </div>
                     ) : (
-                      <div className="text-center py-6 bg-slate-50/50 rounded-xl border border-slate-200 border-dashed">
-                        <p className="text-sm text-slate-400 font-medium">No laboratory records attached to this profile.</p>
+                      <div className="text-center py-6 bg-panel-subtle/50 rounded-xl border border-outline-soft border-dashed">
+                        <p className="text-sm text-content-faint font-medium">No laboratory records attached to this profile.</p>
                       </div>
                     )}
                   </div>
 
                   {/* SECTION 2: AI SUMMARY (Read View) */}
-                  {aiEnabled && <div className="bg-gradient-to-br from-purple-900/5 via-indigo-900/5 to-slate-50 rounded-2xl p-6 border border-purple-200/70 shadow-sm space-y-3 relative overflow-hidden">
+                  {aiEnabled && <div className="bg-gradient-to-br from-purple-900/5 via-indigo-900/5 to-panel-subtle rounded-2xl p-6 border border-feature-stroke/70 shadow-sm space-y-3 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1.5 h-full bg-purple-600" />
-                    <div className="flex items-center justify-between border-b border-purple-100/80 pb-2">
-                      <h4 className="text-sm font-bold text-purple-950 flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-purple-600" />
+                    <div className="flex items-center justify-between border-b border-feature-stroke-soft/80 pb-2">
+                      <h4 className="text-sm font-bold text-feature-text-max flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-feature-icon" />
                         2. AI Summary of Clinical Data
                       </h4>
                       <span className="text-[10px] uppercase tracking-widest font-black text-purple-400">Automated Synthesis</span>
                     </div>
-                    <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap font-medium pt-1">
+                    <p className="text-sm text-content-heading leading-relaxed whitespace-pre-wrap font-medium pt-1">
                       {selectedPatient.aiLabSummary || "No AI synthesis generated for these laboratory panels yet."}
                     </p>
                   </div>}
 
                   {/* SECTION 3: VET NOTES (Read View) */}
-                  <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-3">
-                    <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
-                      <Stethoscope className="w-5 h-5 text-slate-600" />
+                  <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-3">
+                    <h4 className="text-sm font-bold text-content-heading flex items-center gap-2 border-b border-hairline pb-3">
+                      <Stethoscope className="w-5 h-5 text-content-secondary" />
                       {aiEnabled ? '3.' : '2.'} Vet&apos;s Personal Notes
                     </h4>
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm text-slate-700 font-medium min-h-[60px]">
+                    <div className="bg-panel-subtle p-4 rounded-xl border border-hairline text-sm text-content-copy font-medium min-h-[60px]">
                       {selectedPatient.notes || selectedPatient.reason ? (
                         <p className="whitespace-pre-wrap leading-relaxed">{selectedPatient.notes || selectedPatient.reason}</p>
                       ) : (
-                        <p className="text-slate-400 italic">No attending doctor&apos;s remarks or SOAP notes recorded.</p>
+                        <p className="text-content-faint italic">No attending doctor&apos;s remarks or SOAP notes recorded.</p>
                       )}
                     </div>
                   </div>
@@ -1770,11 +1766,11 @@ const visiblePatients =
             </div>
 
             {/* Modal Footer */}
-            <div className="p-6 bg-white border-t border-slate-200 flex justify-between items-center">
+            <div className="p-6 bg-panel border-t border-outline-soft flex justify-between items-center">
               {isEditing ? (
   <div className="flex w-full gap-4 items-stretch">
     {showDeleteConfirm ? (
-      <div className="flex flex-1 gap-3 bg-red-50 border border-red-200 p-2 rounded-xl animate-in fade-in zoom-in-95 duration-200">
+      <div className="flex flex-1 gap-3 bg-danger-wash border border-danger-stroke p-2 rounded-xl animate-in fade-in zoom-in-95 duration-200">
         <button
           type="button"
           disabled={!canEdit || isSavingPatient}
@@ -1804,7 +1800,7 @@ const visiblePatients =
         <button
           type="button"
           onClick={() => setShowDeleteConfirm(false)}
-          className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold px-4 py-3 rounded-xl text-xs transition-all"
+          className="bg-panel hover:bg-panel-raised text-content-copy border border-outline-soft font-bold px-4 py-3 rounded-xl text-xs transition-all"
         >
           Cancel
         </button>
@@ -1814,7 +1810,7 @@ const visiblePatients =
         type="button"
         disabled={!canEdit || isSavingPatient || pendingImages > 0}
         onClick={() => setShowDeleteConfirm(true)}
-        className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold px-4 py-3 rounded-xl text-sm transition-all shadow-sm flex items-center justify-center gap-2"
+        className="bg-danger-wash hover:bg-danger-tint text-danger-icon border border-danger-stroke font-bold px-4 py-3 rounded-xl text-sm transition-all shadow-sm flex items-center justify-center gap-2"
         title="Permanently delete this patient record"
       >
         <Trash2 className="w-4 h-4" />
@@ -1828,7 +1824,7 @@ const visiblePatients =
         setIsEditing(false);
         setShowDeleteConfirm(false);
       }}
-      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm"
+      className="flex-1 bg-panel-raised hover:bg-panel-pressed text-content-heading font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm"
     >
       Cancel Editing
     </button>
@@ -1864,7 +1860,7 @@ const visiblePatients =
                       setEditForm(JSON.parse(JSON.stringify(selectedPatient)));
                       setIsEditing(true);
                     }}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-300 font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm flex items-center gap-2"
+                    className="bg-panel-raised hover:bg-panel-pressed text-content-title border border-outline font-bold px-6 py-3 rounded-xl text-sm transition-all shadow-sm flex items-center gap-2"
                   >
                     <PawPrint className="w-4 h-4"/> Edit Dossier Details
                   </button>

@@ -16,8 +16,8 @@ export function ImageStorageControls({ clinicId, online }: { clinicId: string; o
       .catch(() => { if (active) setError('Could not load image storage settings.'); });
     return () => { active = false; stop?.(); };
   }, [clinicId]);
-  return <section className="my-4 space-y-3 rounded-xl border border-slate-200 bg-white p-4 text-sm">
-    <h2 className="font-bold text-slate-900">Image storage safeguards</h2>
+  return <section className="my-4 space-y-3 rounded-xl border border-outline-soft bg-panel p-4 text-sm">
+    <h2 className="font-bold text-content-title">Image storage safeguards</h2>
     <label className="flex items-center justify-between gap-3">
       Allow new image uploads
       <input type="checkbox" role="switch" aria-label="Allow new image uploads" checked={enabled === true}
@@ -28,8 +28,8 @@ export function ImageStorageControls({ clinicId, online }: { clinicId: string; o
           finally { setBusy(false); }
         }} />
     </label>
-    <p className="text-slate-600">Owners can pause uploads without deleting existing images. The server enforces this setting. Each file is capped at 5 MB, with per-user and per-clinic rate limits.</p>
-    <p className="text-xs text-amber-800">Rate limits are approximate per location, not a global byte quota. Monitor R2 usage in Cloudflare and pause uploads before exhausting your free allocation.</p>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
+    <p className="text-content-secondary">Owners can pause uploads without deleting existing images. The server enforces this setting. Each file is capped at 5 MB, with per-user and per-clinic rate limits.</p>
+    <p className="text-xs text-warning-text">Rate limits are approximate per location, not a global byte quota. Monitor R2 usage in Cloudflare and pause uploads before exhausting your free allocation.</p>
+    {error && <p role="alert" className="text-danger-text">{error}</p>}
   </section>;
 }

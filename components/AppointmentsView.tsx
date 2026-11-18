@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Appointment, AppointmentDraft, AppointmentStatus, AppointmentType, PatientRecord } from '@/types';
 import type { AppointmentWindow } from '@/lib/appointment-values';
-import { WorkspaceModeStrip } from '@/components/WorkspaceModeStrip';
 import {
   APPOINTMENT_TYPES, APPOINTMENT_STATUSES, appointmentWindowBounds, fromLocalDateTime, toLocalDateTime,
   appointmentValidationError, reminderMailto, reminderWhatsApp, reminderMessage, appointmentCalendar, localDate,
@@ -15,11 +14,11 @@ const fieldClass = 'vc-input';
 const buttonClass = 'vc-btn';
 export function AppointmentsView({
   rows, patients, canEdit, isDemo, online, busy, loaded, error, hasMore, fromCache, window: dateWindow, refreshedAt,
-  onWindow, onLoad, onSave, onOpenPatient, onRecordTreatment, clinicId, searchQuery, mode = 'quick',
+  onWindow, onLoad, onSave, onOpenPatient, onRecordTreatment, clinicId, searchQuery,
 }: {
   rows: Appointment[]; patients: PatientRecord[]; canEdit: boolean; isDemo: boolean; online: boolean;
   busy: boolean; loaded: boolean; error: string; hasMore: boolean; fromCache: boolean; refreshedAt: string;
-  window: AppointmentWindow; clinicId: string; searchQuery: string; mode?: 'quick' | 'advanced';
+  window: AppointmentWindow; clinicId: string; searchQuery: string;
   onWindow: (window: AppointmentWindow) => void; onLoad: (reset?: boolean) => Promise<void>;
   onSave: (id: string, revision: number | null, draft: AppointmentDraft) => Promise<boolean>;
   onOpenPatient: (id: string, stillOpen: () => boolean) => Promise<void>;
@@ -107,17 +106,16 @@ export function AppointmentsView({
         <p className="mt-1 text-sm text-muted">Schedule checkups, vaccines and follow-ups. Times use this device’s timezone: <strong>{timezone}</strong>.</p></div>
       <button type="button" className="vc-btn vc-btn-primary ml-auto" disabled={!editable || saving} onClick={() => start()}>New appointment</button>
     </div>
-    <WorkspaceModeStrip mode={mode} />
-    <p className="rounded-[12px] border border-amber-200 bg-amber-50 p-3 text-sm text-ink">
+    <p className="rounded-[12px] border border-warning-stroke bg-warning-wash p-3 text-sm text-ink">
       Scheduling only: marking complete never records vaccine administration, clinical treatment, inventory usage or payment automatically.
       Completed visits can open a linked treatment form, which still needs its own review and save.
       {' '}{isDemo ? 'Demo appointments stay in memory for this sign-in only.' : 'Offline access is read-only; no changes are queued.'}
     </p>
-    {mode === 'quick' && !refineOpen ? (
+    {!refineOpen ? (
       <div className="vc-bottom-strip">
         <span className="vc-led" aria-hidden="true" />
         <div>
-          <strong>Quick schedule</strong>
+          <strong>Schedule</strong>
           <p>
             Showing {status === 'all' ? 'all statuses' : status} from {range.from} through {range.through}.
             Refine only when you need a different range or visit type.
@@ -129,7 +127,7 @@ export function AppointmentsView({
       </div>
     ) : (
       <>
-        <form className="flex flex-wrap items-end gap-3 rounded-[14px] border border-line bg-white p-4" onSubmit={event => {
+        <form className="flex flex-wrap items-end gap-3 rounded-[14px] border border-line bg-panel p-4" onSubmit={event => {
           event.preventDefault();
           try { appointmentWindowBounds(range); setMessage(''); onWindow(range); setRange(null); }
           catch (error) { setMessage(error instanceof Error ? error.message : 'Check dates.'); }
@@ -138,9 +136,7 @@ export function AppointmentsView({
           <label className="text-sm font-semibold">Through<input className={fieldClass} aria-label="Appointments through" type="date" required value={range.through} disabled={saving} onChange={event => setRange({ ...range, through: event.target.value })} /></label>
           <button className={buttonClass} disabled={saving || busy}>Apply dates</button>
           <button type="button" className={buttonClass} disabled={saving || busy} onClick={() => void onLoad(true)}>Refresh schedule</button>
-          {mode === 'quick' && (
-            <button type="button" className={buttonClass} disabled={saving || busy} onClick={() => setRefineOpen(false)}>Hide filters</button>
-          )}
+          <button type="button" className={buttonClass} disabled={saving || busy} onClick={() => setRefineOpen(false)}>Hide filters</button>
         </form>
         <div className="flex flex-wrap gap-3">
           <label className="text-sm font-semibold">Status<select className={fieldClass} value={status} onChange={event => setStatus(event.target.value)}><option value="all">All statuses</option>{APPOINTMENT_STATUSES.map(value => <option key={value}>{value}</option>)}</select></label>
@@ -148,14 +144,14 @@ export function AppointmentsView({
         </div>
       </>
     )}
-    <p className="text-xs text-black">Showing {visible.length} of {rows.length} loaded appointments for {dateWindow.from} through {dateWindow.through}, earliest first.
+    <p className="text-xs text-content-emphasis">Showing {visible.length} of {rows.length} loaded appointments for {dateWindow.from} through {dateWindow.through}, earliest first.
       {' '}Filters and header search cover loaded records only.{hasMore ? ' More pages may contain matching records.' : ''}
       {fromCache ? ' Cached results may be incomplete or outdated.' : ''}{refreshedAt && ` Last refreshed ${new Date(refreshedAt).toLocaleString()}.`}</p>
-    {error && <p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-black">{error}</p>}
+    {error && <p role="alert" className="rounded-lg border border-danger-stroke-strong bg-danger-wash p-3 text-content-emphasis">{error}</p>}
     {message && <p role="status" className="rounded-[12px] bg-soft p-3 text-sm">{message}</p>}
-    {form && <form onSubmit={event => void submit(event)} aria-label="Appointment details" className="space-y-4 rounded-[14px] border border-[#c8e6da] bg-white p-5">
-      <h3 className="font-bold text-black">{form.revision === null ? 'New appointment' : 'Edit appointment'}</h3>
-      <p className="text-xs text-black">Choose a loaded patient. If missing, load their active/history page in Admission &amp; Medical first. Patient identity is fixed after creation.</p>
+    {form && <form onSubmit={event => void submit(event)} aria-label="Appointment details" className="space-y-4 rounded-[14px] border border-brand-outline bg-panel p-5">
+      <h3 className="font-bold text-content-emphasis">{form.revision === null ? 'New appointment' : 'Edit appointment'}</h3>
+      <p className="text-xs text-content-emphasis">Choose a loaded patient. If missing, load their active/history page in Admission &amp; Medical first. Patient identity is fixed after creation.</p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="text-sm">Patient<select className={fieldClass} required disabled={saving || !editable || form.revision !== null} value={form.patientId} onChange={event => draftChanged({ patientId: event.target.value })}>
           <option value="">Select patient</option>
@@ -168,22 +164,22 @@ export function AppointmentsView({
         <label className="text-sm">Appointment status<select className={fieldClass} value={form.status} disabled={saving || !editable} onChange={event => draftChanged({ status: event.target.value as AppointmentStatus, occurredLocal: '' })}>{APPOINTMENT_STATUSES.map(value => <option key={value}>{value}</option>)}</select></label>
         {form.status === 'completed' && <label className="text-sm">Actual visit date &amp; time<input className={fieldClass} type="datetime-local" required value={form.occurredLocal} disabled={saving || !editable} onChange={event => draftChanged({ occurredLocal: event.target.value })} /></label>}
       </div>
-      <p className="text-xs text-black">Entering work later? Set the actual visit time above. The server separately records when this entry was saved.</p>
+      <p className="text-xs text-content-emphasis">Entering work later? Set the actual visit time above. The server separately records when this entry was saved.</p>
       <label className="block text-sm">Scheduling notes<textarea className={fieldClass} maxLength={2000} value={form.notes} disabled={saving || !editable} onChange={event => draftChanged({ notes: event.target.value })} /></label>
-      {formError && <p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-black">{formError}</p>}
+      {formError && <p role="alert" className="rounded-lg border border-danger-stroke-strong bg-danger-wash p-3 text-content-emphasis">{formError}</p>}
       <div className="flex flex-wrap gap-2"><button className="vc-btn vc-btn-primary" disabled={saving || !editable}>{saving ? 'Saving…' : 'Review & save appointment'}</button>
         <button type="button" className={buttonClass} disabled={saving} onClick={() => setForm(null)}>Discard form</button></div>
     </form>}
     <div className="space-y-3">
-      {visible.map(row => <article key={row.id} className="space-y-3 rounded-[13px] border border-line bg-white p-4">
+      {visible.map(row => <article key={row.id} className="space-y-3 rounded-[13px] border border-line bg-panel p-4">
         <div className="flex flex-wrap justify-between gap-2">
-          <div><h3 className="font-bold text-black">{row.patientName} · {row.type}</h3><p className="text-sm text-black">{new Date(row.dueAt).toLocaleString()} · {row.durationMinutes} min · {row.status}</p></div>
+          <div><h3 className="font-bold text-content-emphasis">{row.patientName} · {row.type}</h3><p className="text-sm text-content-emphasis">{new Date(row.dueAt).toLocaleString()} · {row.durationMinutes} min · {row.status}</p></div>
           <button type="button" className={buttonClass} disabled={!editable || saving} onClick={() => start(row)}>Edit appointment for {row.patientName}</button>
         </div>
-        <p className="text-sm text-black">Owner: {row.ownerName} · {row.ownerContact || 'No contact on file'}</p>
-        {row.occurredAt && <p className="text-sm text-black">Actual visit: {new Date(row.occurredAt).toLocaleString()}</p>}
-        <p className="text-xs text-black">Recorded: {row.createdAt ? new Date(row.createdAt).toLocaleString() : 'Refresh for server entry time'} · Last saved: {row.updatedAt ? new Date(row.updatedAt).toLocaleString() : 'Refresh for server entry time'}</p>
-        {row.notes && <p className="whitespace-pre-wrap break-words text-sm text-black">{row.notes}</p>}
+        <p className="text-sm text-content-emphasis">Owner: {row.ownerName} · {row.ownerContact || 'No contact on file'}</p>
+        {row.occurredAt && <p className="text-sm text-content-emphasis">Actual visit: {new Date(row.occurredAt).toLocaleString()}</p>}
+        <p className="text-xs text-content-emphasis">Recorded: {row.createdAt ? new Date(row.createdAt).toLocaleString() : 'Refresh for server entry time'} · Last saved: {row.updatedAt ? new Date(row.updatedAt).toLocaleString() : 'Refresh for server entry time'}</p>
+        {row.notes && <p className="whitespace-pre-wrap break-words text-sm text-content-emphasis">{row.notes}</p>}
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" className={buttonClass} disabled={!!opening || saving} onClick={() => void openPatient(row.patientId)}>Open patient {row.patientName}</button>
           {onRecordTreatment && row.status === 'completed' && (
@@ -197,10 +193,10 @@ export function AppointmentsView({
             {reminderWhatsApp(row) && <a className={buttonClass} href={reminderWhatsApp(row)!} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Draft WhatsApp</a>}
           </>}
         </div>
-        {row.status === 'scheduled' && <details className="text-sm text-black"><summary>Manual reminder text</summary><p className="mt-2">{reminderMessage(row)}</p>
+        {row.status === 'scheduled' && <details className="text-sm text-content-emphasis"><summary>Manual reminder text</summary><p className="mt-2">{reminderMessage(row)}</p>
           <p className="mt-1 text-xs">Review the recipient before sharing. WhatsApp needs a saved +country-code number. These tools open an external app; they do not confirm delivery.</p></details>}
       </article>)}
-      {!visible.length && loaded && !busy && <p className="rounded-lg bg-slate-50 p-4 text-sm">No matching loaded appointments. Adjust the date/status/type filters or load more.</p>}
+      {!visible.length && loaded && !busy && <p className="rounded-lg bg-panel-subtle p-4 text-sm">No matching loaded appointments. Adjust the date/status/type filters or load more.</p>}
       {busy && <p role="status">Loading appointments…</p>}
       {(hasMore || error) && <button type="button" className={buttonClass} disabled={busy || saving} onClick={() => void onLoad(!loaded)}>
         {error ? 'Retry appointment page' : 'Load more appointments'}</button>}

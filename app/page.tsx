@@ -49,7 +49,6 @@ export default function App() {
   const leaving = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [workspaceView, setWorkspaceView] = useState<'quick' | 'advanced'>('quick');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -741,7 +740,6 @@ export default function App() {
             appointments={appointments.rows}
             onToggleStatus={toggleConsultationStatus}
             partialData={currentClinicId !== 'demo-clinic'}
-            mode={workspaceView}
             clinicName={currentClinicName}
             canEdit={canChangeRecords}
             onNavigate={navigateTo}
@@ -768,7 +766,6 @@ export default function App() {
           searchQuery={searchQuery} onWindow={appointments.changeWindow} onLoad={appointments.load}
           onSave={appointments.save} onOpenPatient={openAppointmentPatient}
           onRecordTreatment={openAppointmentTreatment}
-          mode={workspaceView}
         /> : null;
       case 'patients':
         return (
@@ -796,7 +793,6 @@ export default function App() {
               load: kind => void clinicPages.load(kind === 'Active' ? 'activePatients' : 'dischargedPatients')
             }}
             canEdit={canChangeRecords}
-            mode={workspaceView}
             staffUid={sessionUser?.uid ?? 'demo-user'}
             staffName={sessionUser?.displayName || 'Clinic staff'}
           />
@@ -814,7 +810,6 @@ export default function App() {
             triggerToast={notifyCurrentWorkspace}
             partialData={currentClinicId !== 'demo-clinic'}
             canEdit={canChangeRecords}
-            mode={workspaceView}
           />
           {currentClinicId !== 'demo-clinic' && <PageControls label="inventory"
             status={clinicPages.state.inventory} onLoad={() => void clinicPages.load('inventory')} />}</>
@@ -976,7 +971,7 @@ export default function App() {
     if (!isAuthenticated) {
     return (
       <>
-      {deviceNotice && <p role="alert" className="bg-amber-100 p-3 text-center text-sm text-amber-950">{deviceNotice}</p>}
+      {deviceNotice && <p role="alert" className="bg-warning-tint p-3 text-center text-sm text-warning-text-max">{deviceNotice}</p>}
       {loggingOut ? <p role="status" className="p-4 text-center">Signing out…</p> : <LoginScreen
         onLoginSuccess={(user) => {
           if (leaving.current) return;
@@ -1052,7 +1047,6 @@ export default function App() {
         currentClinicRole={currentClinicRole}
         isDemo={sessionUser?.isDemo ?? false}
         aiEnabled={aiEnabled}
-        mode={workspaceView}
         onSwitchClinic={handleSwitchClinic}
         onLogout={handleLogout}
       />
@@ -1063,8 +1057,6 @@ export default function App() {
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           currentClinicRole={currentClinicRole}
-          mode={workspaceView}
-          onModeChange={setWorkspaceView}
           onRecordVisit={handleRecordVisit}
           canEdit={canChangeRecords}
         />

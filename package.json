@@ -11,6 +11,7 @@
     "test:rules": "npx --yes firebase-tools@15.36.0 emulators:exec --only firestore,auth --project demo-vetcloud-rules \"node tests/firestore.rules.test.mjs && node tests/clinic-pages.rules.test.mjs && node tests/clinical-audit.rules.test.mjs && node tests/appointments.rules.test.mjs\"",
     "test:appointments": "node --test tests/appointment-values.test.mjs tests/appointments-workflow.test.mjs",
     "test:appointments:browser": "node --test tests/appointments.browser.test.mjs",
+    "test:theme": "node --test tests/theme.browser.test.mjs",
     "test:prototype": "node --test tests/ui-prototype.browser.test.mjs",
     "test:offline": "node --test tests/offline-policy.test.mjs",
     "test:records": "node --test tests/record-validation.test.mjs",

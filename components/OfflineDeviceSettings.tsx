@@ -36,7 +36,7 @@ export default function OfflineDeviceSettings({ beforeClear }: { beforeClear?: (
   }
 
   return (
-    <section aria-labelledby="offline-device-title" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
+    <section aria-labelledby="offline-device-title" className="rounded-xl border border-outline-soft bg-panel p-4 text-sm text-content-heading">
       <h2 id="offline-device-title" className="font-bold">Offline device privacy</h2>
       <p className="my-2">Shared devices use memory only. Trusted-device storage keeps clinical records and your sign-in on this browser between visits. Anyone with access to this browser profile may access them. It is not a backup.</p>
       <p>{trusted ? 'Trusted-device storage requested.' : 'Memory-only storage selected.'}</p>

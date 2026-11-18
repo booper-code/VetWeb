@@ -149,14 +149,14 @@ export const ClinicalActivity = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-      <div className="flex flex-col gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-4">
+      <div className="flex flex-col gap-3 border-b border-hairline pb-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-teal-600" />
+          <h4 className="text-sm font-bold text-content-heading flex items-center gap-2">
+            <Activity className="w-5 h-5 text-brand-text" />
             Clinical activity
           </h4>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-content-hint mt-1">
             Visit time is stored separately from the recorded/audit time. Medicine and supply lines move stock once; they do not add charges.
           </p>
         </div>
@@ -176,15 +176,15 @@ export const ClinicalActivity = ({
       </div>
 
       {!canEdit && (
-        <p className="text-xs font-semibold text-slate-500">
+        <p className="text-xs font-semibold text-content-hint">
           View-only: an online owner or editor can record treatments.
         </p>
       )}
 
       {showForm && canEdit && (
-        <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 space-y-4">
+        <div className="rounded-xl border border-brand-stroke bg-brand-wash/40 p-4 space-y-4">
           {appointmentId && (
-            <p className="rounded-lg border border-teal-200 bg-white px-3 py-2 text-[11px] font-semibold text-teal-900">
+            <p className="rounded-lg border border-brand-stroke bg-panel px-3 py-2 text-[11px] font-semibold text-brand-text-max">
               Linked to the completed appointment visit at {new Date(occurredAt).toLocaleString()}. Saving creates a separate treatment record; it does not change the appointment.
             </p>
           )}
@@ -207,14 +207,14 @@ export const ClinicalActivity = ({
             </label>
             <div className="vc-label">
               Recorded by
-              <div className="flex min-h-[38px] items-center rounded-[9px] border border-slate-200 bg-slate-100 px-3 text-xs font-bold text-slate-600">
+              <div className="flex min-h-[38px] items-center rounded-[9px] border border-outline-soft bg-panel-raised px-3 text-xs font-bold text-content-secondary">
                 {staffName || 'Signed-in staff'}
               </div>
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Treatment &amp; service lines</p>
+          <div className="rounded-lg border border-outline-soft bg-panel p-3 space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-content-faint">Treatment &amp; service lines</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
               <select
                 aria-label="Treatment item"
@@ -266,18 +266,18 @@ export const ClinicalActivity = ({
             </div>
 
             {lines.length === 0 ? (
-              <p className="text-xs text-slate-500">No treatment lines yet. A notes-only visit is allowed.</p>
+              <p className="text-xs text-content-hint">No treatment lines yet. A notes-only visit is allowed.</p>
             ) : (
-              <ul className="divide-y divide-slate-100">
+              <ul className="divide-y divide-hairline">
                 {lines.map(line => (
                   <li key={line.id} className="flex items-start justify-between gap-3 py-2">
                     <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-800">
+                      <p className="text-xs font-bold text-content-heading">
                         {line.itemName} × {line.quantity}
-                        <span className="ml-2 font-medium text-slate-500">{line.category}</span>
+                        <span className="ml-2 font-medium text-content-hint">{line.category}</span>
                       </p>
                       {(line.dose || line.notes) && (
-                        <p className="text-[11px] text-slate-500 mt-0.5">
+                        <p className="text-[11px] text-content-hint mt-0.5">
                           {[line.dose, line.notes].filter(Boolean).join(' · ')}
                         </p>
                       )}
@@ -285,7 +285,7 @@ export const ClinicalActivity = ({
                     <button
                       type="button"
                       onClick={() => removeLine(line.id)}
-                      className="text-slate-400 hover:text-red-600"
+                      className="text-content-faint hover:text-danger-icon"
                       aria-label={`Remove ${line.itemName}`}
                     >
                       <X className="h-4 w-4" />
@@ -295,7 +295,7 @@ export const ClinicalActivity = ({
               </ul>
             )}
             {stockLineCount > 0 && (
-              <p className="text-[11px] font-medium text-amber-800">
+              <p className="text-[11px] font-medium text-warning-text">
                 {stockLineCount} stock line{stockLineCount === 1 ? '' : 's'} will be dispensed exactly once when saved.
               </p>
             )}
@@ -312,7 +312,7 @@ export const ClinicalActivity = ({
             />
           </label>
 
-          {error && <p role="alert" className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+          {error && <p role="alert" className="text-xs font-bold text-danger-text bg-danger-wash border border-danger-stroke rounded-lg px-3 py-2">{error}</p>}
 
           <div className="flex flex-wrap justify-end gap-2">
             <button type="button" onClick={resetForm} disabled={isSaving} className="vc-btn">Cancel</button>
@@ -331,18 +331,18 @@ export const ClinicalActivity = ({
             No clinical activity recorded for this patient yet.
           </div>
         ) : patientConsultations.map(entry => (
-          <article key={entry.id} className="rounded-xl border border-slate-200 p-4">
+          <article key={entry.id} className="rounded-xl border border-outline-soft p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <p className="text-sm font-bold text-slate-900">{entry.type}</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
+                <p className="text-sm font-bold text-content-title">{entry.type}</p>
+                <p className="text-[11px] text-content-hint mt-0.5">
                   Visit {entry.occurredAt ? new Date(entry.occurredAt).toLocaleString() : entry.date || 'time not recorded'}
                   {entry.staffName ? ` · ${entry.staffName}` : ''}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {entry.appointmentId && (
-                  <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                  <span className="rounded-md border border-outline-soft bg-panel-subtle px-2 py-0.5 text-[10px] font-bold text-content-secondary">
                     Appointment linked
                   </span>
                 )}
@@ -351,18 +351,18 @@ export const ClinicalActivity = ({
                 </span>
               </div>
             </div>
-            {entry.notes && <p className="mt-2 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">{entry.notes}</p>}
+            {entry.notes && <p className="mt-2 text-xs leading-relaxed text-content-copy whitespace-pre-wrap">{entry.notes}</p>}
             {entry.treatments && entry.treatments.length > 0 && (
               <ul className="mt-2 flex flex-wrap gap-1.5">
                 {entry.treatments.map(line => (
-                  <li key={line.id} className="rounded-md bg-slate-50 border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700">
+                  <li key={line.id} className="rounded-md bg-panel-subtle border border-outline-soft px-2 py-1 text-[11px] font-semibold text-content-copy">
                     {line.itemName} × {line.quantity}
                     {line.dose ? ` · ${line.dose}` : ''}
                   </li>
                 ))}
               </ul>
             )}
-            <p className="mt-2 text-[10px] text-slate-400">
+            <p className="mt-2 text-[10px] text-content-faint">
               {entry.recordedAt
                 ? `Recorded ${new Date(entry.recordedAt).toLocaleString()}`
                 : 'Entry time is available in the audit trail.'}
