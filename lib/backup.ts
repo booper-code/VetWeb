@@ -5,6 +5,7 @@ const CLINIC_COLLECTIONS = [
   'inventory',
   'consultations',
   'appointments',
+  'billingEntries',
   'staff',
   'payProfiles',
   'payrollPeriods',

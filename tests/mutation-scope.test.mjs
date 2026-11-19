@@ -11,7 +11,7 @@ const consultation = { id: 'shared-id', status: 'Draft', patient: 'Synthetic A' 
 
 async function mountApp({ readPatient = async () => ({ exists: () => false }),
   init = async () => ({ auth: {}, db: {}, firestore: { doc: (_, ...path) => path, getDoc: readPatient } }),
-  restore, trusted = false } = {}) {
+  restore, trusted = false, billingCommit, billingRecords } = {}) {
   const dom = domHarness();
   const props = {};
   const pending = deferred();
@@ -28,13 +28,19 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
       rows: [], busy: false, error: '', fromCache: false, hasMore: false,
       window: { from: '2026-11-01', through: '2026-12-01' }, load: async () => {}, save: async () => true,
     }) },
-    '@/lib/clinic-pages': { patientFromDocument: (id, data) => ({ ...data, id }) },
+    '@/lib/clinic-pages': {
+      patientFromDocument: (id, data) => ({ ...data, id, balance: data.billing ? data.billing.balanceMinor / 100 : data.balance }),
+      inventoryFromDocument: (itemCode, data) => ({ ...data, itemCode }),
+    },
     '@/lib/firebase': { initializeFirebase: init, dbRef: {}, firestore: {},
       restoreFirebaseSession: restore ?? (async () => null) },
     'firebase/auth': { signOut: () => signout.promise },
     '@/lib/clinical-mutations': {
       mutateClinicalRecord: input => { calls.push(input); return pending.promise; },
-      mutateClinicalRecords: input => { calls.push(input); return pending.promise; },
+    },
+    '@/lib/billing': {
+      commitBilling: input => { calls.push(input); return billingCommit ? billingCommit(input) : pending.promise; },
+      loadBillingRecords: billingRecords,
     },
     '@/lib/offline-device': {
       getDevicePreference: () => trusted ? 'trusted' : 'memory',
@@ -87,9 +93,56 @@ const operations = {
   deleteInventoryItem: ['inventory', props => props.InventoryControlView.onDeleteInventoryItem(item.itemCode)],
   updatePatientRecord: ['patients', props => props.PatientRecordsView.onUpdatePatient(patient)],
   deletePatientRecord: ['patients', props => props.PatientRecordsView.onDeletePatient(patient.id)],
-  savePatientAndInventory: ['patients', props => props.PatientRecordsView.onSaveBilling(patient, [item])],
+  commitBilling: ['patients', props => props.PatientRecordsView.billingGateway.submit('opening', {
+    kind: 'opening', cutoffMs: 1795000000000, verifiedMinor: 0, source: 'Fixture ledger',
+  }, patient.id, 0)],
   toggleConsultationStatus: ['dashboard', props => props.DashboardHome.onToggleStatus(consultation.id)],
 };
+const completionResult = name => name === 'commitBilling'
+  ? { patientRevision: 1, state: { balanceMinor: 120000, lastEntryId: 'opening' }, stock: [{ itemCode: item.itemCode, stock: 8, revision: 1 }] }
+  : { revision: 1 };
+
+test('uncertain checkout blocks a replacement and survives a clinic switch', async () => {
+  let sends = 0;
+  const app = await mountApp({ billingCommit: async () => { if (++sends === 1) throw new Error('Lost receipt response'); return completionResult('commitBilling'); } });
+  try {
+    await app.tab('patients');
+    const draft = { kind: 'payment', amountMinor: 100, method: 'cash', occurredAtMs: 1795000000000 };
+    let gateway = app.props.PatientRecordsView.billingGateway;
+    await act(async () => { await assert.rejects(() => gateway.submit('original', draft, patient.id, 0), /Lost receipt/); });
+    await act(() => app.props.Sidebar.onSwitchClinic()); await app.select('clinic-b'); await app.tab('patients');
+    assert.equal(app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
+    await act(() => app.props.Sidebar.onSwitchClinic()); await app.select('clinic-a'); await app.tab('patients');
+    gateway = app.props.PatientRecordsView.billingGateway;
+    const unresolved = gateway.pending(patient.id);
+    assert.equal(unresolved.operationId, 'original');
+    await assert.rejects(() => gateway.submit('replacement', draft, patient.id, 0), /unconfirmed/i);
+    assert.equal(sends, 1);
+    await act(async () => { await gateway.submit(unresolved.operationId, unresolved.draft, patient.id, unresolved.expectedPatientRevision); });
+    assert.equal(sends, 2);
+    assert.equal(app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
+  } finally { await app.close(); }
+});
+
+test('billing replay and manual refresh replace whole records rather than relabel stale fields', async () => {
+  const replay = completionResult('commitBilling');
+  const fresh = { patient: { ...patient, revision: 8, billing: replay.state, notes: 'Newer clinical note' },
+    inventory: [{ ...item, revision: 6, stock: 8, sellingPrice: 17 }] };
+  const app = await mountApp({
+    billingCommit: async () => ({ ...replay, patientRevision: 8, stock: fresh.inventory, records: fresh }),
+    billingRecords: async () => ({ ...fresh, patient: { ...fresh.patient, revision: 9, notes: 'Latest clinical note' },
+      inventory: [{ ...fresh.inventory[0], revision: 7, sellingPrice: 19 }] }),
+  });
+  try {
+    await app.tab('patients');
+    await act(async () => { await operations.commitBilling[1](app.props); });
+    assert.equal(app.props.PatientRecordsView.patients[0].notes, 'Newer clinical note');
+    assert.equal(app.props.PatientRecordsView.inventory[0].sellingPrice, 17);
+    await act(async () => { await app.props.PatientRecordsView.billingGateway.refreshRecords(patient.id, [item.itemCode]); });
+    assert.equal(app.props.PatientRecordsView.patients[0].notes, 'Latest clinical note');
+    assert.equal(app.props.PatientRecordsView.inventory[0].sellingPrice, 19);
+  } finally { await app.close(); }
+});
 
 for (const [name, [tab, invoke]] of Object.entries(operations)) {
   for (const transition of ['switch', 'logout', 'wipe']) {
@@ -109,7 +162,7 @@ for (const [name, [tab, invoke]] of Object.entries(operations)) {
         const before = app.window.document.body.textContent;
         await act(async () => {
           if (failure) app.pending.reject(new Error('Late failure must not toast'));
-          else app.pending.resolve(name === 'savePatientAndInventory' ? [{ revision: 1 }, { revision: 1 }] : { revision: 1 });
+          else app.pending.resolve(completionResult(name));
           await completion;
         });
         assert.equal(app.window.document.body.textContent, before);
@@ -184,7 +237,7 @@ for (const [name, [tab, invoke]] of Object.entries(operations)) {
       await act(async () => { completion = invoke(app.props); });
       assert.equal(app.calls.length, 1);
       await act(async () => {
-        app.pending.resolve(name === 'savePatientAndInventory' ? [{ revision: 1 }, { revision: 1 }] : { revision: 1 });
+        app.pending.resolve(completionResult(name));
         await completion;
       });
       const list = tab === 'inventory' ? app.props.InventoryControlView.inventory
@@ -192,6 +245,7 @@ for (const [name, [tab, invoke]] of Object.entries(operations)) {
       if (name.startsWith('delete')) assert.equal(list.length, 0);
       else if (name.startsWith('create')) assert.ok(list.some(record => record.revision === 1));
       else assert.equal(list[0].revision, 1);
+      if (name === 'commitBilling') assert.equal(list[0].balance, 1200);
     } finally { await app.close(); }
   });
 }

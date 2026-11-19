@@ -1,14 +1,16 @@
 "use client";
 
 import React, { useState } from 'react';
-import { PawPrint, TestTube, Search, Activity, User, Sparkles, FileSpreadsheet, PlusCircle, X, ZoomIn, CreditCard, Stethoscope, Trash2, Download, Loader2 } from 'lucide-react';
-import type { InventoryItem, PatientBillableItem, PatientRecord, Consultation, ConsultationDraft } from '@/types';
+import { PawPrint, TestTube, Activity, User, Sparkles, FileSpreadsheet, PlusCircle, X, ZoomIn, Stethoscope, Trash2, Download, Loader2 } from 'lucide-react';
+import type { InventoryItem, PatientRecord, Consultation, ConsultationDraft } from '@/types';
 import { compressImageFileToBlob, PROFILE_IMAGE_OPTIONS, DOCUMENT_IMAGE_OPTIONS } from '@/lib/images';
 import { imageStorageConfigured, openStoredImage, uploadPatientImage } from '@/lib/imageStore';
 import { StoredImage } from '@/components/StoredImage';
 import { exportPatientsPdf } from '@/lib/pdf';
 import { PageControls } from '@/components/PageControls';
 import { ClinicalActivity } from '@/components/ClinicalActivity';
+import { WorkspacePatientBilling } from '@/components/PatientBilling';
+import type { BillingGateway } from '@/lib/useBilling';
 import type { PageStatus } from '@/lib/useClinicPages';
 
 type PendingImage = { blob: Blob; previewUrl: string };
@@ -25,7 +27,7 @@ export const PatientRecordsView = ({
   searchQuery,
   onCreatePatient,
   onUpdatePatient,
-  onSaveBilling,
+  billingGateway,
   onSaveConsultation,
   onDeletePatient,
   triggerToast,
@@ -45,7 +47,7 @@ export const PatientRecordsView = ({
   onCreatePatient: (name: string, species: string, breed: string, gender: PatientRecord['gender'], owner: string, contact: string, weight: number, admissionTypes: string[], reason: string, pictures?: string[]) => Promise<boolean>;
   onUpdatePatient: (record: PatientRecord) => Promise<boolean>;
   searchQuery: string;
-  onSaveBilling: (patient: PatientRecord, inventory: InventoryItem[]) => Promise<boolean>;
+  billingGateway: BillingGateway;
   onSaveConsultation: (patient: PatientRecord, draft: ConsultationDraft) => Promise<boolean>;
   onDeletePatient: (id: string) => Promise<boolean>;
   onToggleStatus: (id: string) => void;
@@ -105,11 +107,6 @@ export const PatientRecordsView = ({
   const selectedPatient = selectedPatientSnapshot && !isEditing
     ? patients.find(patient => patient.id === selectedPatientSnapshot.id) ?? selectedPatientSnapshot
     : selectedPatientSnapshot;
-  // Billing Module Calculation States
-
-  // Payables / Dossier Billing State
-  const [billableSearchQuery, setBillableSearchQuery] = useState('');
-  const [selectedBillables, setSelectedBillables] = useState<Record<string, number>>({});
   const sanitizePhoneNumber = (value: string) => {
     return value.replace(/\D/g, '').slice(0, 15);
   };
@@ -297,165 +294,6 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
       setEditForm({ ...editForm, [field]: value });
     }
   };
-
-  const billableCatalog = inventory.filter(item =>
-    item.category === 'Medicine' ||
-    item.category === 'Service' ||
-    item.category === 'Grooming'
-  );
-
-  const filteredBillableCatalog = billableCatalog.filter(item => {
-    const q = billableSearchQuery.toLowerCase().trim();
-
-    if (!q) return true;
-
-    return (
-      item.itemName.toLowerCase().includes(q) ||
-      item.itemCode.toLowerCase().includes(q) ||
-      item.category.toLowerCase().includes(q)
-    );
-  });
-
-  const toggleBillableSelection = (item: InventoryItem) => {
-    setSelectedBillables(prev => {
-      const next = { ...prev };
-
-      if (next[item.itemCode]) {
-        delete next[item.itemCode];
-      } else {
-        next[item.itemCode] = 1;
-      }
-
-      return next;
-    });
-  };
-
-  const updateBillableQuantity = (itemCode: string, quantity: number) => {
-    setSelectedBillables(prev => ({
-      ...prev,
-      [itemCode]: Math.max(1, quantity || 1)
-    }));
-  };
-
-  const selectedBillableDetails = Object.entries(selectedBillables)
-    .map(([itemCode, quantity]) => {
-      const item = inventory.find(inv => inv.itemCode === itemCode);
-      if (!item) return null;
-
-      return {
-        item,
-        quantity,
-        unitPrice: item.sellingPrice,
-        total: item.sellingPrice * quantity
-      };
-    })
-    .filter(Boolean) as {
-      item: InventoryItem;
-      quantity: number;
-      unitPrice: number;
-      total: number;
-    }[];
-
-  const billableSubtotal = selectedBillableDetails.reduce(
-    (sum, entry) => sum + entry.total,
-    0
-  );
-
-  const applyBillablesToPatient = async () => {
-    if (!canEdit || isSavingPatient || !selectedPatient || selectedBillableDetails.length === 0) return;
-    if (selectedBillableDetails.some(entry => !Number.isSafeInteger(entry.quantity) || entry.quantity < 1 ||
-      !Number.isFinite(entry.unitPrice) || entry.unitPrice < 0 ||
-      ((entry.item.category === 'Medicine' || entry.item.category === 'Supplies') && entry.quantity > entry.item.stock))) {
-      triggerToast('Choose whole positive quantities within available stock. Nothing was saved.');
-      return;
-    }
-    const stockChanges = selectedBillableDetails
-      .filter(entry => entry.item.category === 'Medicine' || entry.item.category === 'Supplies')
-      .map(entry => ({ ...entry.item, stock: entry.item.stock - entry.quantity }));
-
-    // ✅ STEP 2: Create billable records
-    const newBillableItems: PatientBillableItem[] = selectedBillableDetails.map(entry => ({
-      id: `BILL-${Date.now()}-${entry.item.itemCode}`,
-      itemCode: entry.item.itemCode,
-      itemName: entry.item.itemName,
-      category: entry.item.category,
-      quantity: entry.quantity,
-      unitPrice: entry.unitPrice,
-      total: entry.total,
-      date: new Date().toLocaleDateString()
-    }));
-
-    // ✅ STEP 3: Update patient balance
-    const updatedRecord: PatientRecord = {
-      ...selectedPatient,
-      balance: selectedPatient.balance + billableSubtotal,
-      billableItems: [
-        ...(selectedPatient.billableItems || []),
-        ...newBillableItems
-      ]
-    };
-
-    setIsSavingPatient(true);
-    let saved = false;
-    try { saved = await onSaveBilling(updatedRecord, stockChanges); }
-    finally { setIsSavingPatient(false); }
-    if (!saved) return;
-    setSelectedPatient(updatedRecord);
-
-    // ✅ STEP 4: Reset UI
-    setSelectedBillables({});
-    setBillableSearchQuery('');
-
-    triggerToast(`Added PHP ${billableSubtotal.toFixed(2)} to patient payables.`);
-  };
-  const removeBillableFromPatient = async (billableItem: PatientBillableItem) => {
-    if (!canEdit || isSavingPatient || !selectedPatient) return;
-
-    const confirmed = window.confirm(
-      `Remove "${billableItem.itemName}" from this patient's billing history?`
-    );
-
-    if (!confirmed) return;
-
-    const stockChanges: InventoryItem[] = [];
-    if (billableItem.category === 'Medicine' || billableItem.category === 'Supplies') {
-      const inventoryItem = inventory.find(
-        item => item.itemCode === billableItem.itemCode
-      );
-
-      if (inventoryItem) {
-        const restoredItem: InventoryItem = {
-          ...inventoryItem,
-          stock: inventoryItem.stock + billableItem.quantity
-        };
-
-        stockChanges.push(restoredItem);
-      } else {
-        triggerToast('Load the referenced inventory item before removing this stock-linked bill. Nothing was changed.');
-        return;
-      }
-    }
-
-    const updatedBillableItems = (selectedPatient.billableItems || []).filter(
-      item => item.id !== billableItem.id
-    );
-
-    const updatedRecord: PatientRecord = {
-      ...selectedPatient,
-      balance: Math.max(0, selectedPatient.balance - billableItem.total),
-      billableItems: updatedBillableItems
-    };
-
-    setIsSavingPatient(true);
-    let saved = false;
-    try { saved = await onSaveBilling(updatedRecord, stockChanges); }
-    finally { setIsSavingPatient(false); }
-    if (!saved) return;
-    setSelectedPatient(updatedRecord);
-
-    triggerToast(`Removed ${billableItem.itemName} from billing history.`);
-  };
-
 
 const searchedPatients = patients.filter((pat) => {
   const q = searchQuery.toLowerCase();
@@ -1425,24 +1263,6 @@ const visiblePatients =
                           <span className="text-[10px] text-content-faint font-bold uppercase block">Ledger Balance Summary</span>
                           <p className="text-lg font-black text-content-heading">PHP {selectedPatient.balance.toFixed(2)}</p>
                         </div>
-                        <button 
-                          type="button"
-                          disabled={!canEdit || isSavingPatient}
-                          onClick={async () => {
-                            if (!canEdit || !window.confirm('Clear this patient’s outstanding balance? This does not remove billing history.')) return;
-                            const updated = { ...selectedPatient, balance: 0 };
-                            setIsSavingPatient(true);
-                            let saved = false;
-                            try { saved = await onUpdatePatient(updated); }
-                            finally { setIsSavingPatient(false); }
-                            if (!saved) return;
-                            setSelectedPatient(updated);
-                            if (typeof triggerToast === 'function') triggerToast(`Ledger balance cleared.`);
-                          }}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all"
-                        >
-                          Clear Account Balance
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -1463,210 +1283,9 @@ const visiblePatients =
                   triggerToast={triggerToast}
                 />
 
-                {/* SECTION 0: Patient Payables / Billing */}
-                <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-5">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-hairline pb-3">
-                    <div>
-                      <h4 className="text-sm font-bold text-content-heading flex items-center gap-2">
-                        <CreditCard className="w-5 h-5 text-brand-text" />
-                        Patient Payables
-                      </h4>
-                      <p className="text-xs text-content-hint mt-1">
-                        Search loaded medicines and services, select whole quantities, then save the ledger and stock together.
-                        Apply at most two stock items per operation.
-                      </p>
-                    </div>
+                <WorkspacePatientBilling key={selectedPatient.id} patient={selectedPatient}
+                  inventory={inventory} canEdit={canEdit} gateway={billingGateway} />
 
-                    <div className="text-right">
-                      <p className="text-[10px] text-content-faint font-bold uppercase">
-                        Current Balance
-                      </p>
-                      <p className="text-lg font-black text-content-title">
-                        PHP {selectedPatient.balance.toFixed(2)}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                    <div className="space-y-3">
-                      <label className="text-xs font-bold text-content-copy block">
-                        Search Medicine / Service
-                      </label>
-
-                      <div className="flex items-center gap-2 bg-panel-subtle border border-outline-soft rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-teal-500">
-                        <Search className="w-4 h-4 text-content-faint" />
-                        <input
-                          type="text"
-                          value={billableSearchQuery}
-                          onChange={e => setBillableSearchQuery(e.target.value)}
-                          placeholder="Search medicine, medical service, grooming..."
-                          className="bg-transparent outline-none border-none text-sm text-content-heading w-full"
-                        />
-                      </div>
-
-                      <div className="max-h-72 overflow-y-auto border border-outline-soft rounded-xl divide-y divide-hairline bg-panel-subtle/60">
-                        {filteredBillableCatalog.map(item => {
-                          const isSelected = selectedBillables[item.itemCode] !== undefined;
-
-                          return (
-                            <div
-                              key={item.itemCode}
-                              className="p-3 bg-panel flex items-center justify-between gap-3"
-                            >
-                              <label className="flex items-start gap-3 cursor-pointer flex-1">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleBillableSelection(item)}
-                                  className="mt-1"
-                                />
-
-                                <div>
-                                  <p className="text-sm font-bold text-content-title">
-                                    {item.itemName}
-                                  </p>
-                                  <p className="text-[10px] text-content-faint uppercase font-bold">
-                                    {item.category} • {item.itemCode}
-                                  </p>
-                                  <p className="text-xs text-brand-text-strong font-black mt-1">
-                                    PHP {item.sellingPrice.toFixed(2)}
-                                  </p>
-                                </div>
-                              </label>
-
-                              {isSelected && (
-                                <div className="w-20">
-                                  <label className="text-[10px] text-content-faint font-bold block mb-1">
-                                    Qty
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    value={selectedBillables[item.itemCode]}
-                                    onChange={e =>
-                                      updateBillableQuantity(
-                                        item.itemCode,
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full p-2 bg-field-subtle border border-field-outline rounded-lg text-xs font-bold text-content-title outline-none"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-
-                        {filteredBillableCatalog.length === 0 && (
-                          <div className="p-6 text-center text-sm text-content-faint">
-                            No matching medicine or service found.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <h5 className="text-xs font-black text-content-faint uppercase tracking-wider">
-                        Selected Payables
-                      </h5>
-
-                      <div className="border border-outline-soft rounded-xl bg-panel-subtle/60 divide-y divide-hairline min-h-[120px]">
-                        {selectedBillableDetails.length > 0 ? (
-                          selectedBillableDetails.map(entry => (
-                            <div
-                              key={entry.item.itemCode}
-                              className="p-3 bg-panel flex items-center justify-between gap-3"
-                            >
-                              <div>
-                                <p className="text-sm font-bold text-content-title">
-                                  {entry.item.itemName}
-                                </p>
-                                <p className="text-xs text-content-hint">
-                                  PHP {entry.unitPrice.toFixed(2)} × {entry.quantity}
-                                </p>
-                              </div>
-
-                              <p className="text-sm font-black text-content-title">
-                                PHP {entry.total.toFixed(2)}
-                              </p>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="p-6 text-center text-sm text-content-faint">
-                            No payables selected yet.
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="bg-brand-wash border border-brand-stroke-soft rounded-xl p-4 flex items-center justify-between">
-                        <div>
-                          <p className="text-[10px] text-brand-text-strong font-black uppercase">
-                            Payables Subtotal
-                          </p>
-                          <p className="text-xl font-black text-brand-text-deep">
-                            PHP {billableSubtotal.toFixed(2)}
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          disabled={!canEdit || isSavingPatient || selectedBillableDetails.length === 0}
-                          onClick={applyBillablesToPatient}
-                          className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all disabled:opacity-50"
-                        >
-                          Add to Ledger
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-hairline pt-4">
-                    <h5 className="text-xs font-black text-content-faint uppercase tracking-wider mb-3">
-                      Dossier Billing History
-                    </h5>
-
-                    {selectedPatient.billableItems && selectedPatient.billableItems.length > 0 ? (
-                      <div className="space-y-2">
-                        {selectedPatient.billableItems.map(item => (
-                          <div
-                            key={item.id}
-                            className="bg-panel-subtle border border-hairline rounded-xl p-3 flex justify-between items-center text-xs gap-3"
-                          >
-                            <div>
-                              <p className="font-bold text-content-title">
-                                {item.itemName}
-                              </p>
-                              <p className="text-content-hint">
-                                {item.date} • {item.category} • Qty {item.quantity}
-                              </p>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                              <p className="font-black text-content-title whitespace-nowrap">
-                                PHP {item.total.toFixed(2)}
-                              </p>
-
-                              <button
-                                type="button"
-                                disabled={!canEdit || isSavingPatient}
-                                onClick={() => void removeBillableFromPatient(item)}
-                                className="bg-danger-wash hover:bg-danger-tint text-danger-icon border border-danger-stroke px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                Remove
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-content-faint italic">
-                        No medicine or service charges added yet.
-                      </p>
-                    )}
-                  </div>
-                </div>             
-                            
                   {/* SECTION 1: LAB RESULTS (Read View w/ Images) */}
                   <div className="bg-panel rounded-2xl p-6 border border-outline-soft shadow-sm space-y-4">
                     <h4 className="text-sm font-bold text-content-heading flex items-center gap-2 border-b border-hairline pb-3">

@@ -42,6 +42,7 @@ export const DashboardHome = ({
   mode = 'quick',
   clinicName = '',
   canEdit = false,
+  canOpenClose = false,
   onNavigate,
   onRecordVisit,
   onOpenPatient,
@@ -62,6 +63,7 @@ export const DashboardHome = ({
   mode?: WorkspaceView;
   clinicName?: string;
   canEdit?: boolean;
+  canOpenClose?: boolean;
   onNavigate?: (tab: string) => void;
   onRecordVisit?: () => void;
   onOpenPatient?: (id: string) => void;
@@ -251,6 +253,7 @@ export const DashboardHome = ({
               {timezone ? ` · ${timezone}` : ''}
             </p>
           </div>
+          {canOpenClose && <button type="button" className="vc-btn" onClick={go('end-of-day-close')}>End-of-Day Close</button>}
         </div>
 
         <div className="vc-action-grid" aria-label="Common clinic tasks">
@@ -365,6 +368,7 @@ export const DashboardHome = ({
           </p>
         </div>
         <div className="vc-lead-action">
+          {canOpenClose && <button type="button" className="vc-btn" onClick={go('end-of-day-close')}>End-of-Day Close</button>}
           <button type="button" onClick={go('appointments')} disabled={!canEdit} className="vc-btn vc-btn-primary">
             <Plus className="h-4 w-4" aria-hidden="true" />
             New appointment

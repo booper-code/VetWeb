@@ -121,10 +121,11 @@ export function useAppointments({
   };
   // Do not return the internal `key`: spreading hook props into JSX would leak
   // it and React 19 rejects a `key` arriving through a props spread.
+  const demoRecords = useCallback(() => clinicId === 'demo-clinic' ? [...demo.current] : [], [clinicId]);
   const current = page.key === key ? page : emptyPage();
   return {
     rows: current.rows, hasMore: current.hasMore, busy: current.busy, loaded: current.loaded,
     error: current.error, fromCache: current.fromCache, refreshedAt: current.refreshedAt,
-    window, changeWindow, load, save
+    window, changeWindow, load, save, demoRecords
   };
 }

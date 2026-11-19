@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Sparkles } from 'lucide-react';
 import type { InventoryItem, PatientRecord, Consultation, ConsultationDraft } from '@/types';
 import { initializeFirebase, dbRef, firestore, restoreFirebaseSession } from '@/lib/firebase';
 import { nextPatientId } from '@/lib/patients';
 import { useClinicPages } from '@/lib/useClinicPages';
 import { PageControls } from '@/components/PageControls';
-import { mutateClinicalRecord, mutateClinicalRecords } from '@/lib/clinical-mutations';
+import { mutateClinicalRecord } from '@/lib/clinical-mutations';
+import { commitBilling, loadBillingHistory, loadBillingRecords, loadPaymentReceipt, type BillingOperation, type BillingRecords } from '@/lib/billing';
+import { createDemoBilling } from '@/lib/demo-billing';
+import { createDemoEndOfDayLoader, loadEndOfDayPage, type ClosePageLoader } from '@/lib/end-of-day';
+import type { BillingGateway } from '@/lib/useBilling';
 import { getDevicePreference, watchDevicePreference } from '@/lib/offline-device';
 import OfflineDeviceSettings from '@/components/OfflineDeviceSettings';
 import { AuditLogView } from '@/components/AuditLogView';
@@ -16,7 +20,7 @@ import { ImageStorageControls } from '@/components/ImageStorageControls';
 import { createMutationScope } from '@/lib/mutation-scope';
 import { useAppointments } from '@/lib/useAppointments';
 import { AppointmentsView } from '@/components/AppointmentsView';
-import { patientFromDocument } from '@/lib/clinic-pages';
+import { inventoryFromDocument, patientFromDocument } from '@/lib/clinic-pages';
 import { saveConsultation } from '@/lib/consultations';
 import {
   buildConsultationRecord,
@@ -32,6 +36,7 @@ import { LoginScreen } from '@/components/LoginScreen';
 import { Sidebar } from '@/components/Sidebar';
 import { Header } from '@/components/Header';
 import { DashboardHome } from '@/components/DashboardHome';
+import { WorkspaceEndOfDayClose } from '@/components/EndOfDayClose';
 import { PatientRecordsView } from '@/components/PatientRecordsView';
 import { InventoryControlView } from '@/components/InventoryControlView';
 import { AILaboratoryView } from '@/components/AILaboratoryView';
@@ -66,10 +71,14 @@ export default function App() {
   const [inviteId, setInviteId] = useState('');
   const [clinicAI, setClinicAI] = useState<{ clinicId: string; enabled: boolean } | null>(null);
   const [demoAIEnabled, setDemoAIEnabled] = useState(false);
+  const demoBilling = useRef<ReturnType<typeof createDemoBilling> | null>(null);
+  const pendingBilling = useRef(new Map<string, BillingOperation>());
   const [online, setOnline] = useState(true);
   const [deviceNotice, setDeviceNotice] = useState('');
   const canChangeRecords = currentClinicId === 'demo-clinic' ||
     (online && (currentClinicRole === 'owner' || currentClinicRole === 'editor'));
+  const canOpenClose = !!currentClinicId && !!sessionUser && (currentClinicId === 'demo-clinic'
+    || currentClinicRole === 'owner' || currentClinicRole === 'editor');
   const aiEnabled = currentClinicId === 'demo-clinic'
     ? demoAIEnabled
     : clinicAI?.clinicId === currentClinicId && clinicAI.enabled;
@@ -213,6 +222,10 @@ export default function App() {
     clinicId: currentClinicId, uid: sessionUser?.uid ?? null, online, canEdit: canChangeRecords,
     patients, scope: mutationScope, workspaceGeneration,
   });
+  const { demoRecords: demoAppointments } = appointments;
+  const loadDemoClosePage: ClosePageLoader = useCallback((kind, params) => createDemoEndOfDayLoader({
+    entries: demoBilling.current?.allEntries() ?? [], patients, consultations, appointments: demoAppointments(),
+  })(kind, params), [consultations, demoAppointments, patients]);
 
   useEffect(() => watchDevicePreference(change => {
     if (change !== 'wipe' && getDevicePreference() !== 'memory') return;
@@ -220,6 +233,8 @@ export default function App() {
     mutationScope.invalidate();
     setIsAuthenticated(false); setSessionUser(null); setCurrentUser(null);
     setCurrentClinicId(null); setCurrentClinicName(''); setCurrentClinicRole(null);
+    demoBilling.current = null;
+    pendingBilling.current.clear();
     setPatients([]); setInventory([]); setConsultations([]);
     setPatientToOpen(null); setSearchQuery('');
     setDeviceNotice('Device storage was disabled. Cached-data cleanup requires all other tabs to close. Restart this app after clearing completes.');
@@ -418,6 +433,8 @@ export default function App() {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) throw new Error('Workspace is closing. No changes were started.');
     const captured = mutationScope.capture();
     if (!canChangeRecords) throw new Error('Inventory changes require an online owner or editor session.');
+    const existing = inventory.find(item => item.itemCode === itemCode);
+    if (existing?.billingStockEntryId) throw new Error('This item is part of billing history and must remain available for stock returns.');
     if (currentClinicId === 'demo-clinic') {
       setInventory(previous => previous.filter(item => item.itemCode !== itemCode));
       return;
@@ -437,7 +454,6 @@ export default function App() {
         throw new Error('No clinic is selected.');
       }
 
-      const existing = inventory.find(item => item.itemCode === itemCode);
       if (!existing) throw new Error('Reload the item before deleting.');
       await mutateClinicalRecord({
         clinicId: currentClinicId, collection: 'inventory', id: itemCode,
@@ -465,7 +481,10 @@ export default function App() {
     const invalid = patientValidationError(updatedRecord);
     if (invalid) { triggerToast(invalid); return false; }
     if (currentClinicId === 'demo-clinic') {
-      setPatients(prev => prev.map(p => p.id === updatedRecord.id ? updatedRecord : p));
+      setPatients(prev => prev.map(p => p.id === updatedRecord.id ? {
+        ...updatedRecord, balance: p.balance, billing: p.billing, legacyBillingBalance: p.legacyBillingBalance,
+        billableItems: p.billableItems, revision: p.revision,
+      } : p));
       triggerToast('Clinical record updated in the demo workspace.');
       return true;
     }
@@ -494,7 +513,7 @@ export default function App() {
         ? { ...updatedRecord, dischargedAt: new Date().toISOString() } : updatedRecord;
       const saved = await mutateClinicalRecord({
         clinicId: currentClinicId, collection: 'patients', id: updatedRecord.id,
-        expectedRevision: updatedRecord.revision ?? 0, data: payload, action: 'save'
+        expectedRevision: updatedRecord.revision ?? 0, data: payload, action: 'save', preservePatientBilling: true
       });
 
       console.log(`[Firebase] Successfully updated patient record ${updatedRecord.id} in cloud.`);
@@ -519,6 +538,12 @@ export default function App() {
       triggerToast('Clinical changes require an online owner or editor session.');
       return false;
     }
+    const existing = patients.find(patient => patient.id === id);
+    if (existing?.billing || existing?.balance || existing?.billableItems?.length
+      || (existing?.legacyBillingBalance !== undefined && existing.legacyBillingBalance !== 0)) {
+      triggerToast('This patient has financial history. Discharge the patient instead of deleting the record.');
+      return false;
+    }
     if (currentClinicId === 'demo-clinic') {
       setPatients(prev => prev.filter(p => p.id !== id));
       triggerToast('Clinical record removed from the demo workspace.');
@@ -537,7 +562,6 @@ export default function App() {
         return false;
       }
 
-      const existing = patients.find(patient => patient.id === id);
       if (!existing) throw new Error('Reload the patient before deleting.');
       await mutateClinicalRecord({
         clinicId: currentClinicId, collection: 'patients', id,
@@ -556,47 +580,86 @@ export default function App() {
       return false;
     }
   };
-  const savePatientAndInventory = async (patient: PatientRecord, changes: InventoryItem[]): Promise<boolean> => {
-    if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) return false;
-    const captured = mutationScope.capture();
-    if (!canChangeRecords || !currentClinicId) return false;
-    if (changes.length > 2) {
-      triggerToast('Apply at most two stock items per operation; nothing was changed.');
-      return false;
-    }
-    if (!Number.isFinite(patient.balance) || patient.balance < 0 ||
-        changes.some(item => !Number.isFinite(item.stock) || item.stock < 0) ||
-        firestoreDocBytes(patient) > MAX_PATIENT_DOC_BYTES) {
-      triggerToast('Invalid stock, balance or record size. Nothing was changed.');
-      return false;
-    }
-    if (currentClinicId === 'demo-clinic') {
-      setPatients(previous => previous.map(record => record.id === patient.id ? patient : record));
-      setInventory(previous => previous.map(item => changes.find(change => change.itemCode === item.itemCode) ?? item));
-      return true;
-    }
-    try {
-      const saved = await mutateClinicalRecords([
-        { clinicId: currentClinicId, collection: 'patients', id: patient.id,
-          expectedRevision: patient.revision ?? 0, data: patient, action: 'save' },
-        ...changes.map(item => ({
-          clinicId: currentClinicId, collection: 'inventory' as const, id: item.itemCode,
-          expectedRevision: item.revision ?? 0, data: item, action: 'save' as const
-        }))
-      ]);
-      if (!mutationScope.isCurrent(captured)) return false;
-      setPatients(previous => previous.map(record => record.id === patient.id
-        ? { ...patient, revision: saved[0].revision } : record));
-      setInventory(previous => previous.map(item => {
-        const index = changes.findIndex(change => change.itemCode === item.itemCode);
-        return index < 0 ? item : { ...changes[index], revision: saved[index + 1].revision };
+  const activeBillingClinic = () => {
+    if (leaving.current || !mutationScope.isCurrent(workspaceGeneration) || !canChangeRecords || !currentClinicId
+      || (currentClinicId !== 'demo-clinic' && !navigator.onLine)) throw new Error('Open an editable clinic to use billing.');
+    return currentClinicId;
+  };
+  const pendingKey = (clinic: string, patientId: string) => JSON.stringify([sessionUser?.uid ?? 'demo', clinic, patientId]);
+  const applyBillingRecords = (patientId: string, records: BillingRecords) => {
+    const patient = patientFromDocument(patientId, records.patient);
+    setPatients(rows => rows.map(row => row.id === patientId && (row.revision ?? 0) <= (patient.revision ?? 0) ? patient : row));
+    if (!records.inventory.length && !records.missingItemCodes?.length) return;
+    setInventory(rows => rows.filter(row => !records.missingItemCodes?.includes(row.itemCode)).map(row => {
+      const stock = records.inventory.find(item => item.itemCode === row.itemCode);
+      return stock && (row.revision ?? 0) <= (stock.revision ?? 0) ? inventoryFromDocument(row.itemCode, stock) : row;
+    }));
+  };
+  const billingGateway: BillingGateway = {
+    pending(patientId) {
+      return pendingBilling.current.get(pendingKey(activeBillingClinic(), patientId)) ?? null;
+    },
+    async submit(operationId, draft, patientId, expectedPatientRevision) {
+      const clinicId = activeBillingClinic();
+      const operation = { clinicId, operationId, draft, patientId, expectedPatientRevision };
+      const patient = patients.find(row => row.id === patientId);
+      if (!patient) throw new Error('Reload this patient before saving.');
+      if (firestoreDocBytes(patient) > MAX_PATIENT_DOC_BYTES) throw new Error('This patient record is too large to update safely.');
+      const key = pendingKey(clinicId, patientId);
+      const unresolved = pendingBilling.current.get(key);
+      if (unresolved && JSON.stringify(unresolved) !== JSON.stringify(operation)) {
+        throw new Error('Resolve the unconfirmed billing save before starting a new one.');
+      }
+      if (clinicId !== 'demo-clinic') pendingBilling.current.set(key, operation);
+      let result;
+      try {
+        result = clinicId === 'demo-clinic'
+          ? (demoBilling.current ??= createDemoBilling()).commit(operation, patient, inventory, currentClinicName, sessionUser?.uid ?? 'demo')
+          : await commitBilling(operation);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'ClinicalConflictError' && pendingBilling.current.get(key) === operation) {
+          pendingBilling.current.delete(key);
+        }
+        throw error;
+      }
+      activeBillingClinic();
+      if (pendingBilling.current.get(key) === operation) pendingBilling.current.delete(key);
+      if (result.records) {
+        applyBillingRecords(patientId, result.records);
+        return result;
+      }
+      setPatients(rows => rows.map(row => row.id === patientId && (row.revision ?? 0) <= result.patientRevision ? {
+        ...row, legacyBillingBalance: row.legacyBillingBalance === undefined ? row.balance : row.legacyBillingBalance,
+        balance: result.state.balanceMinor / 100, billing: result.state, revision: result.patientRevision,
+      } : row));
+      setInventory(rows => rows.map(row => {
+        const stock = result.stock.find(item => item.itemCode === row.itemCode);
+        return stock && (row.revision ?? 0) <= stock.revision ? { ...row, ...stock } : row;
       }));
-      return true;
-    } catch (error) {
-      if (!mutationScope.isCurrent(captured)) return false;
-      triggerToast(error instanceof Error ? error.message : 'Billing was not saved. Reload the records and retry.');
-      return false;
-    }
+      return result;
+    },
+    async history(patientId, after) {
+      const clinicId = activeBillingClinic();
+      const result = clinicId === 'demo-clinic' ? demoBilling.current?.history(patientId) ?? { entries: [], next: null }
+        : await loadBillingHistory({ clinicId, patientId, after });
+      activeBillingClinic();
+      return result;
+    },
+    async refreshRecords(patientId, itemCodes) {
+      const clinicId = activeBillingClinic();
+      if (clinicId === 'demo-clinic') return;
+      const records = await loadBillingRecords({ clinicId, patientId, itemCodes });
+      activeBillingClinic();
+      applyBillingRecords(patientId, records);
+    },
+    async receipt(patientId, entryId) {
+      const clinicId = activeBillingClinic();
+      const result = clinicId === 'demo-clinic' ? demoBilling.current?.receipt(patientId, entryId)
+        : await loadPaymentReceipt({ clinicId, patientId, entryId });
+      activeBillingClinic();
+      if (!result) throw new Error('No posted receipt for that patient.');
+      return result;
+    },
   };
 
   const toggleConsultationStatus = async (id: string) => {
@@ -729,7 +792,15 @@ export default function App() {
 
   // --- RENDER CONTENT DEPENDING ON NAVIGATION TABS ---
   const renderContent = () => {
-    switch (activeTab) {
+    switch (activeTab === 'end-of-day-close' && !canOpenClose ? 'dashboard' : activeTab) {
+      case 'end-of-day-close':
+        return currentClinicId && sessionUser && <WorkspaceEndOfDayClose
+          key={JSON.stringify([currentClinicId, sessionUser.uid])}
+          clinicId={currentClinicId} uid={sessionUser.uid} workspaceGeneration={workspaceGeneration}
+          isCurrent={mutationScope.isCurrent} enabled={canOpenClose} online={online || currentClinicId === 'demo-clinic'}
+          load={currentClinicId === 'demo-clinic' ? loadDemoClosePage : loadEndOfDayPage}
+          onOpenPatient={openAppointmentPatient} onBack={() => navigateTo('dashboard')}
+        />;
       case 'dashboard':
       default:
         return (
@@ -742,6 +813,7 @@ export default function App() {
             partialData={currentClinicId !== 'demo-clinic'}
             clinicName={currentClinicName}
             canEdit={canChangeRecords}
+            canOpenClose={canOpenClose}
             onNavigate={navigateTo}
             onRecordVisit={handleRecordVisit}
             onOpenPatient={openAppointmentPatient}
@@ -782,7 +854,7 @@ export default function App() {
             searchQuery={searchQuery}
             onCreatePatient={createQuickPatient}
             onUpdatePatient={updatePatientRecord}
-            onSaveBilling={savePatientAndInventory}
+            billingGateway={billingGateway}
             onSaveConsultation={saveConsultationRecord}
             onDeletePatient={deletePatientRecord}
             onToggleStatus={toggleConsultationStatus}
@@ -891,6 +963,7 @@ export default function App() {
       setLoggingOut(true);
       mutationScope.invalidate();
       const clinicId = currentClinicId;
+      pendingBilling.current.clear();
 
       setIsAuthenticated(false);
       setCurrentUser(null);
@@ -905,7 +978,18 @@ export default function App() {
 
       // Keep the seeded demo workspace so logging back in during a presentation
       // doesn't show an empty dashboard. Real clinics refetch on login anyway.
-      if (clinicId !== 'demo-clinic') {
+      const demo = demoBilling.current;
+      demoBilling.current = null;
+      if (clinicId === 'demo-clinic' && demo) {
+        setPatients(rows => rows.map(row => {
+          const original = demo.startingBalances.get(row.id);
+          return original ? { ...row, ...original, billing: undefined } : row;
+        }));
+        setInventory(rows => rows.map(row => {
+          const change = demo.stockDeltas.get(row.itemCode);
+          return change === undefined ? row : { ...row, stock: Math.max(0, row.stock - change), billingStockEntryId: undefined };
+        }));
+      } else if (clinicId !== 'demo-clinic') {
         setPatients([]);
         setInventory([]);
         setConsultations([]);

@@ -12,6 +12,7 @@ export type GeminiPayload = {
 
 export type InventoryItem = {
   revision?: number;
+  billingStockEntryId?: string;
   itemCode: string;
   itemName: string;
   category: 'Medicine' | 'Supplies' | 'Service' | 'Grooming';
@@ -59,6 +60,9 @@ export type PatientRecord = {
   reason: string;
   status: 'Waiting' | 'In Treatment' | 'Confined' | 'Ready for Pickup' | 'Discharged';
   balance: number;
+  billing?: import('@/lib/billing-values').BillingState;
+  /** Raw legacy numeric amount, or null when the cloud record needs manual review. */
+  legacyBillingBalance?: number | null;
   /** Legacy data URL, external URL, or R2 object key. See `lib/imageStore.ts`. */
   pictures?: string[];
   /** Legacy data URL, external URL, or R2 object key. See `lib/imageStore.ts`. */

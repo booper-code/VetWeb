@@ -50,8 +50,11 @@ service cloud.firestore {
     }
 
     function canEditClinic(clinicId) {
-      return clinicRoleIs(clinicId, 'owner')
-        || clinicRoleIs(clinicId, 'editor');
+      return signedIn() && canEditRole(get(memberPath(clinicId, request.auth.uid)));
+    }
+
+    function canEditRole(member) {
+      return member != null && member.data.role in ['owner', 'editor'];
     }
 
     function isClinicOwner(clinicId) {
@@ -318,14 +321,204 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      function billingEntryPath(entryId) {
+        return /databases/$(database)/documents/clinics/$(clinicId)/billingEntries/$(entryId);
+      }
+
+      function billingMinor(value) {
+        return value is int && value >= 0 && value <= 9007199254740991;
+      }
+
+      function billingTime(value) {
+        return value is int && value >= 662659200000 && value <= request.time.toMillis();
+      }
+
+      function billingMidnight(value) {
+        return billingTime(value) && (value + 28800000) % 86400000 == 0;
+      }
+
+      function billingText(value, limit) {
+        return value is string && value.size() <= limit && value.matches('(?s).*\\S.*');
+      }
+
+      function billingStockChanged(move, entryId) {
+        let path = /databases/$(database)/documents/clinics/$(clinicId)/inventory/$(move.itemCode);
+        let before = get(path).data;
+        let after = getAfter(path).data;
+        return after.stock is int && after.stock >= 0
+          && after.stock == before.stock + move.quantityDelta
+          && after.revision == before.get('revision', 0) + 1
+          && after.billingStockEntryId == entryId && before.get('billingStockEntryId', null) != entryId
+          && after.diff(before).affectedKeys().hasOnly(['stock', 'revision', 'id', 'billingStockEntryId'])
+          && after.id == move.itemCode;
+      }
+
+      function billingStockMovesApplied(moves, entryId) {
+        return moves.size() < 1 || (billingStockChanged(moves[0], entryId)
+          && (moves.size() == 1 || (moves[0].itemCode != moves[1].itemCode && billingStockChanged(moves[1], entryId))));
+      }
+
+      function billableCategory(category) {
+        return category in ['Medicine', 'Supplies'];
+      }
+
+      function billingCatalogLine(line) {
+        let item = get(/databases/$(database)/documents/clinics/$(clinicId)/inventory/$(line.itemCode)).data;
+        return line.keys().hasOnly(['itemCode', 'itemName', 'category', 'quantity', 'unitPriceMinor'])
+          && item.itemCode == line.itemCode && item.itemName == line.itemName
+          && item.category == line.category && line.category in ['Medicine', 'Supplies', 'Service', 'Grooming']
+          && line.quantity is int && line.quantity > 0 && line.quantity <= 9007199254740991
+          && billingMinor(line.unitPriceMinor) && item.sellingPrice == line.unitPriceMinor / 100.0
+          && billingMinor(line.unitPriceMinor * line.quantity);
+      }
+
+      function billedLineMoves(line) {
+        return billableCategory(line.category) ? [{'itemCode': line.itemCode, 'quantityDelta': -line.quantity}] : [];
+      }
+
+      function billingCharge(entry, entryId) {
+        let lines = entry.lines;
+        return lines is list && lines.size() in [1, 2]
+          && billingCatalogLine(lines[0])
+          && (lines.size() == 1 || (lines[1].itemCode != lines[0].itemCode && billingCatalogLine(lines[1])))
+          && entry.amountMinor == lines[0].unitPriceMinor * lines[0].quantity
+            + (lines.size() == 2 ? lines[1].unitPriceMinor * lines[1].quantity : 0)
+          && entry.stockMoves == billedLineMoves(lines[0]).concat(lines.size() == 2 ? billedLineMoves(lines[1]) : [])
+          && billingStockMovesApplied(entry.stockMoves, entryId);
+      }
+
+      function allowedBillingOpening(entry, legacyBalance) {
+        return billingTime(entry.cutoffMs) && billingText(entry.source, 120)
+          && entry.reason is string && entry.reason.size() <= 500
+          && (entry.legacyOriginalMinor == null
+            || (billingMinor(entry.legacyOriginalMinor) && legacyBalance == entry.legacyOriginalMinor / 100.0))
+          && ((entry.legacyOriginalMinor != null && entry.legacyOriginalMinor == entry.amountMinor)
+            || billingText(entry.reason, 500));
+      }
+
+      function reviewedBillingPayment(entry, old, patient) {
+        return entry.amountMinor > 0 && entry.stockMoves == []
+          && entry.method in ['cash', 'e-wallet', 'bank-transfer', 'card', 'other']
+          && entry.timeZone == 'Asia/Manila' && billingTime(entry.occurredAtMs) && billingMidnight(entry.businessDayMs)
+          && entry.occurredAtMs >= entry.businessDayMs && entry.occurredAtMs < entry.businessDayMs + 86400000
+          && (old.cutoffKind == 'reviewed' ? entry.occurredAtMs > old.cutoffMs : entry.occurredAtMs >= old.cutoffMs)
+          && entry.reference is string && entry.reference.size() <= 120 && entry.note is string && entry.note.size() <= 500
+          && entry.patientName == patient.get('name', 'Unnamed patient')
+          && entry.clinicName == get(clinicPath(clinicId)).data.name;
+      }
+
+      function returnedBillingMoves(moves, index) {
+        return moves.size() <= index ? [] : [{'itemCode': moves[index].itemCode, 'quantityDelta': -moves[index].quantityDelta}];
+      }
+
+      function allowedBillingReversal(entry, entryId) {
+        let original = get(billingEntryPath(entry.originalEntryId)).data;
+        return billingText(entry.reason, 500) && entry.returnStock is bool
+          && entryId == 'reverse_' + entry.originalEntryId && original.seq < entry.seq
+          && original.patientId == entry.patientId && original.clinicId == clinicId && original.kind in ['charge', 'payment', 'unitemized-settlement']
+          && entry.amountMinor == original.amountMinor
+          && entry.balanceAfterMinor == entry.balanceBeforeMinor + (original.kind == 'charge' ? -entry.amountMinor : entry.amountMinor)
+          && (entry.returnStock
+            ? original.kind == 'charge' && original.stockMoves.size() > 0
+              && entry.stockMoves == returnedBillingMoves(original.stockMoves, 0).concat(returnedBillingMoves(original.stockMoves, 1))
+              && billingStockMovesApplied(entry.stockMoves, entryId)
+            : entry.stockMoves == []);
+      }
+
+      function billingEntryFields(entry) {
+        let common = ['clinicId', 'patientId', 'actorUid', 'recordedAt', 'requestFingerprint', 'seq', 'kind',
+          'balanceBeforeMinor', 'balanceAfterMinor', 'amountMinor', 'stockMoves'];
+        let specific = entry.kind == 'opening' ? ['cutoffMs', 'source', 'reason', 'legacyOriginalMinor']
+          : entry.kind == 'opening-correction' ? ['source', 'reason']
+          : entry.kind == 'payment' ? ['method', 'occurredAtMs', 'businessDayMs', 'timeZone', 'reference', 'note', 'clinicName', 'patientName']
+          : entry.kind == 'unitemized-settlement' ? ['businessDayMs']
+          : entry.kind == 'charge' ? ['lines'] : ['originalEntryId', 'reason', 'returnStock'];
+        // Each allowed field is read by the applicable transition. A missing field fails that transition.
+        return entry.keys().hasOnly(common.concat(specific))
+          && entry.stockMoves is list && entry.stockMoves.size() <= 2
+          && entry.requestFingerprint is string && entry.requestFingerprint.matches('[a-f0-9]{64}');
+      }
+
+      function billingAdvance(entry, old, next, patient, entryId) {
+        return old == null
+          ? (entry.kind == 'opening' && allowedBillingOpening(entry, patient.get('balance', null))
+              && entry.stockMoves == [] && next.cutoffKind == 'reviewed' && next.cutoffMs == entry.cutoffMs
+              && next.openingMinor == entry.amountMinor && next.balanceMinor == entry.amountMinor)
+            || (entry.kind == 'charge' && patient.get('balance', null) == 0 && next.openingMinor == 0
+              && next.cutoffKind == 'implicit-zero' && billingMidnight(next.cutoffMs)
+              && request.time.toMillis() < next.cutoffMs + 86400000
+              && next.balanceMinor == entry.amountMinor && billingCharge(entry, entryId))
+          : next.cutoffKind == old.cutoffKind && next.cutoffMs == old.cutoffMs && (
+            (entry.kind == 'opening-correction' && old.cutoffKind == 'reviewed' && entry.stockMoves == [] && billingText(entry.source, 120)
+              && billingText(entry.reason, 500) && next.openingMinor == entry.amountMinor
+              && next.balanceMinor == old.balanceMinor + next.openingMinor - old.openingMinor)
+            || (next.openingMinor == old.openingMinor && (
+               (entry.kind == 'payment' && next.balanceMinor == old.balanceMinor - entry.amountMinor && reviewedBillingPayment(entry, old, patient))
+               || (entry.kind == 'unitemized-settlement' && entry.amountMinor > 0 && entry.amountMinor == old.balanceMinor
+                 && next.balanceMinor == 0 && entry.stockMoves == [] && billingMidnight(entry.businessDayMs)
+                 && entry.businessDayMs + 86400000 > old.cutoffMs)
+              || (entry.kind == 'charge' && next.balanceMinor == old.balanceMinor + entry.amountMinor && billingCharge(entry, entryId))
+              || (entry.kind == 'reversal' && allowedBillingReversal(entry, entryId))
+            ))
+          );
+      }
+
+      function validBillingEntry(entry, entryId) {
+        let path = /databases/$(database)/documents/clinics/$(clinicId)/patients/$(entry.patientId);
+        let patient = get(path).data;
+        let old = patient.get('billing', null);
+        let next = getAfter(path).data.billing;
+        return billingEntryFields(entry)
+          && entry.clinicId == clinicId && entry.actorUid == request.auth.uid && entry.recordedAt == request.time
+          && (entry.kind == 'reversal' || entryId.matches('[A-Za-z0-9-]{1,100}'))
+          && next.keys().hasOnly(['lastEntryId', 'seq', 'openingMinor', 'balanceMinor', 'cutoffMs', 'cutoffKind'])
+          && next.lastEntryId == entryId && next.seq == entry.seq && entry.seq is int
+          && entry.seq == (old == null ? 1 : old.seq + 1)
+          && billingMinor(next.openingMinor) && billingMinor(next.balanceMinor) && billingMinor(entry.amountMinor)
+          && entry.balanceBeforeMinor == (old == null ? 0 : old.balanceMinor) && entry.balanceAfterMinor == next.balanceMinor
+          && billingAdvance(entry, old, next, patient, entryId);
+      }
+
+      function patientBillingAdvanced(patientId) {
+        let next = request.resource.data.billing;
+        let entry = getAfter(billingEntryPath(next.lastEntryId)).data;
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['billing', 'id', 'revision'])
+          && entry.patientId == patientId && entry.seq == next.seq && entry.recordedAt == request.time;
+      }
+
+      match /billingEntries/{entryId} {
+        allow read: if canEditClinic(clinicId);
+        allow create: if canEditClinic(clinicId) && validBillingEntry(request.resource.data, entryId);
+        allow update, delete: if false;
+      }
+
       match /patients/{patientId} {
         allow read: if isClinicMember(clinicId);
-        allow create, update, delete: if auditedMutation('patients', patientId);
+        allow create: if auditedMutation('patients', patientId)
+          && !request.resource.data.keys().hasAny(['billing'])
+          && request.resource.data.get('balance', 0) == 0
+          && request.resource.data.get('billableItems', []) == [];
+        allow update: if auditedMutation('patients', patientId)
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['balance', 'billableItems', 'billing'])
+            || patientBillingAdvanced(patientId));
+        allow delete: if auditedMutation('patients', patientId)
+          && !resource.data.keys().hasAny(['billing'])
+          && resource.data.get('balance', 0) == 0 && resource.data.get('billableItems', []) == [];
+      }
+
+      function billingInventoryReference(itemId) {
+        let entry = getAfter(billingEntryPath(request.resource.data.billingStockEntryId)).data;
+        let moves = entry.stockMoves;
+        return entry.recordedAt == request.time
+          && (moves[0].itemCode == itemId || (moves.size() == 2 && moves[1].itemCode == itemId));
       }
 
       match /inventory/{itemId} {
         allow read: if isClinicMember(clinicId);
-        allow create, update, delete: if auditedMutation('inventory', itemId);
+        allow create: if auditedMutation('inventory', itemId) && !request.resource.data.keys().hasAny(['billingStockEntryId']);
+        allow update: if auditedMutation('inventory', itemId)
+          && (request.resource.data.get('billingStockEntryId', null) == resource.data.get('billingStockEntryId', null) || billingInventoryReference(itemId));
+        allow delete: if auditedMutation('inventory', itemId) && resource.data.get('billingStockEntryId', null) == null;
       }
 
       // Firestore rules cannot loop over arbitrary lists, so the critical stock
@@ -340,6 +533,7 @@ service cloud.firestore {
           && move.itemCode.matches('^[^/]+$')
           && move.quantity is int && move.quantity >= 1 && move.quantity <= 10000
           && exists(item) && existsAfter(item)
+          && getAfter(item).data.get('billingStockEntryId', null) == get(item).data.get('billingStockEntryId', null)
           && getAfter(item).data.stock == get(item).data.stock - move.quantity
           && getAfter(item).data.get('revision', 0) == get(item).data.get('revision', 0) + 1;
       }

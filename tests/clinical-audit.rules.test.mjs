@@ -118,13 +118,14 @@ test('clinical writes require atomic immutable audits and reject stale revisions
     ];
     assert.deepEqual((await mutateClinicalRecords(initial)).map(result => result.revision), [1, 1, 1]);
     const change = initial.map((input, index) => ({ ...input, expectedRevision: index === 1 ? 0 : 1,
-      data: index === 0 ? { name: 'Billing fixture', balance: 10 } : { stock: 9 } }));
+      data: index === 0 ? { name: 'Billing fixture', balance: 0, notes: 'Audited update' } : { stock: 9 } }));
     await assert.rejects(mutateClinicalRecords(change), error => error.name === 'ClinicalConflictError');
-    assert.equal((await fs.getDoc(ref(owner, 'patients', 'billing'))).data().balance, 0);
+    assert.equal((await fs.getDoc(ref(owner, 'patients', 'billing'))).data().notes, undefined);
     assert.equal((await fs.getDoc(ref(owner, 'inventory', 'stock-two'))).data().stock, 10);
     assert.equal((await events()).size, 7);
     assert.deepEqual((await mutateClinicalRecords(change.map(input => ({ ...input, expectedRevision: 1 }))))
       .map(result => result.revision), [2, 2, 2]);
+    assert.equal((await fs.getDoc(ref(owner, 'patients', 'billing'))).data().notes, 'Audited update');
     assert.equal((await events()).size, 10);
     await denied(() => fs.setDoc(ref(owner, 'consultations', 'unaudited'), { status: 'Draft' }));
     const legacyConsultation = {

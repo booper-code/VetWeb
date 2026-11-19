@@ -210,7 +210,7 @@ test('viewer sees schedule but no enabled editing controls', async () => {
   } finally { await app.close(); }
 });
 
-test('clinic JSON backup includes appointments alongside audit collections', async () => {
+test('clinic JSON backup includes appointments and billing entries alongside audit collections', async () => {
   let blob;
   const { exportClinicBackup } = loadSource('../../lib/backup.ts', {
     '@/lib/firebase': { initializeFirebase: async () => ({ db: {}, firestore: {
@@ -218,7 +218,8 @@ test('clinic JSON backup includes appointments alongside audit collections', asy
       orderBy: value => value, limit: value => value, query: path => path,
       getDoc: async () => ({ exists: () => true, id: 'clinic', data: () => ({ name: 'Synthetic' }) }),
       getDocs: async path => {
-        const records = path.at(-1) === 'appointments' ? [{ id: row.id, data: () => row }] : [];
+        const records = path.at(-1) === 'appointments' ? [{ id: row.id, data: () => row }]
+          : path.at(-1) === 'billingEntries' ? [{ id: 'receipt', data: () => ({ kind: 'payment', amountMinor: 120000 }) }] : [];
         return { docs: records, size: records.length };
       },
     } }) },
@@ -229,9 +230,10 @@ test('clinic JSON backup includes appointments alongside audit collections', asy
   const result = await exportClinicBackup({ clinicId: 'clinic', clinicName: 'Synthetic' });
   const backup = JSON.parse(await blob.text());
   assert.equal(backup.collections.appointments[0].id, row.id);
+  assert.deepEqual(backup.collections.billingEntries, [{ id: 'receipt', kind: 'payment', amountMinor: 120000 }]);
   assert.ok('auditHeads' in backup.collections);
   assert.ok('auditEvents' in backup.collections);
-  assert.equal(result.documentCount, 1);
+  assert.equal(result.documentCount, 2);
 });
 test('dashboard reminder dates recalculate on focus without background record fetching', async () => {
   const dom = domHarness();

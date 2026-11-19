@@ -18,10 +18,22 @@ export const patientFromDocument = (id: string, data: DocumentData): PatientReco
   breed: typeof data.breed === 'string' ? data.breed : '',
   gender: ['Male', 'Female', 'Unknown'].includes(data.gender) ? data.gender : 'Unknown',
   weight: Number.isFinite(data.weight) ? data.weight : 0,
-  balance: Number.isFinite(data.balance) ? data.balance : 0,
+  balance: Number.isSafeInteger(data.billing?.balanceMinor) && data.billing.balanceMinor >= 0
+    ? data.billing.balanceMinor / 100 : Number.isFinite(data.balance) && data.balance >= 0 ? data.balance : 0,
+  legacyBillingBalance: Number.isFinite(data.balance) ? data.balance : null,
   admissionTypes: Array.isArray(data.admissionTypes) ? data.admissionTypes : [],
   reason: typeof data.reason === 'string' ? data.reason : '',
   status: [...ACTIVE_PATIENT_STATUSES, 'Discharged'].includes(data.status) ? data.status : 'Waiting'
+});
+
+export const inventoryFromDocument = (itemCode: string, data: DocumentData): InventoryItem => ({
+  ...data, itemCode,
+  itemName: typeof data.itemName === 'string' ? data.itemName : 'Unnamed item',
+  category: ['Medicine', 'Supplies', 'Service', 'Grooming'].includes(data.category) ? data.category : 'Supplies',
+  stock: Number.isFinite(data.stock) ? data.stock : 0,
+  buyingPrice: Number.isFinite(data.buyingPrice) ? data.buyingPrice : 0,
+  sellingPrice: Number.isFinite(data.sellingPrice) ? data.sellingPrice : 0,
+  threshold: Number.isFinite(data.threshold) ? data.threshold : 0,
 });
 
 /** One bounded, clinic-scoped query. Legacy records need no timestamp migration. */
@@ -48,15 +60,7 @@ export const loadClinicPage = async (
   const records = snapshot.docs.map(document => {
     const data = document.data();
     if (collectionName === 'patients') return patientFromDocument(document.id, data);
-    if (kind === 'inventory') return {
-      ...data, itemCode: document.id,
-      itemName: typeof data.itemName === 'string' ? data.itemName : 'Unnamed item',
-      category: ['Medicine', 'Supplies', 'Service', 'Grooming'].includes(data.category) ? data.category : 'Supplies',
-      stock: Number.isFinite(data.stock) ? data.stock : 0,
-      buyingPrice: Number.isFinite(data.buyingPrice) ? data.buyingPrice : 0,
-      sellingPrice: Number.isFinite(data.sellingPrice) ? data.sellingPrice : 0,
-      threshold: Number.isFinite(data.threshold) ? data.threshold : 0
-    } as InventoryItem;
+    if (kind === 'inventory') return inventoryFromDocument(document.id, data);
     return {
       ...data, id: document.id,
       date: typeof data.date === 'string' ? data.date : '',

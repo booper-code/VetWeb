@@ -1,4 +1,6 @@
 import type { Consultation, InventoryItem, PatientRecord } from '@/types';
+import type { PaymentReceipt } from '@/lib/billing';
+import { billingLocalTime, formatBillingAmount } from '@/lib/billing-values';
 
 const currency = (value: number) =>
   `PHP ${Number(value || 0).toLocaleString('en-PH', {
@@ -50,6 +52,36 @@ const addFooters = (doc: PdfDoc) => {
     doc.text(`Page ${page} of ${pageCount}`, pageWidth - 40, pageHeight - 24, { align: 'right' });
   }
 };
+
+export async function exportPaymentReceiptPdf(receipt: PaymentReceipt) {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'pt' });
+  const w = doc.internal.pageSize.getWidth() - 80;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('Payment acknowledgment', 40, 48);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  let y = 76;
+  const lines = [
+    `Receipt ID: ${receipt.id}`,
+    `Clinic: ${receipt.clinicName}`,
+    `Patient: ${receipt.patientName}`,
+    `Received: ${billingLocalTime(receipt.occurredAtMs).replace('T', ' ')} ${receipt.timeZone}`,
+    `Method: ${receipt.method.replace('-', ' ')}`,
+    `Amount paid: ${formatBillingAmount(receipt.amountMinor)}`,
+    `Balance immediately after payment: ${formatBillingAmount(receipt.balanceAfterMinor)}`,
+    ...(receipt.reversed ? ['REVERSED — this payment entry was reversed in the clinic ledger.'] : []),
+    'Acknowledgment of a recorded payment. Not a tax invoice.',
+  ];
+  for (const line of lines) {
+    const wrapped: string[] = doc.splitTextToSize(line.replace('—', '-'), w);
+    doc.text(wrapped, 40, y);
+    y += wrapped.length * 15 + 5;
+  }
+  addFooters(doc);
+  doc.save(`payment-${receipt.id}.pdf`);
+}
 
 const tableTheme = {
   headStyles: { fillColor: [15, 23, 42] as [number, number, number], textColor: 255, fontSize: 8 },
