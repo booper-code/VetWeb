@@ -12,7 +12,9 @@ import type { PatientRecord } from '@/types';
 import { initializeFirebase } from '@/lib/firebase';
 import { safeDirectImageUrl, safeSignedImageUrl } from '@/lib/imageValue';
 
-const WORKER_URL = (process.env.NEXT_PUBLIC_IMAGE_WORKER_URL ?? '').replace(/\/+$/, '');
+// The isolated Firebase staging app must not send tokens or image traffic to the production Worker.
+const WORKER_URL = process.env.NEXT_PUBLIC_FIREBASE_STAGING_CONFIG === undefined
+  ? (process.env.NEXT_PUBLIC_IMAGE_WORKER_URL ?? '').replace(/\/+$/, '') : '';
 const BATCH_SIZE = 50;
 const FLUSH_DELAY_MS = 20;
 

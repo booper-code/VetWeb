@@ -15,6 +15,20 @@ The existing application owner is retained. Test credentials are held privately
 outside this repository; never copy them into this document or a CI secret
 unless an explicit, reviewed automation setup requires it.
 
+## Isolated Firebase preview
+
+For Checkout and End-of-Day Close testing, use the separate `vetcloudpro-staging-6f819b` project, not the shared site above. It has a registered **VetCloudPro Staging Web** app, email/password Auth, and Firestore in Singapore. Set `NEXT_PUBLIC_FIREBASE_STAGING_CONFIG` to the app's JSON web SDK configuration before building with `npm run build:staging`. Get it by app ID with the Firebase CLI and explicitly select the staging project. Do not use a service account key as web configuration.
+
+An explicit staging build rejects incomplete or mixed production settings at sign-in and disables the shared image Worker. The default build is unchanged. Use fictional data only, and use a separate hosting target if publishing the isolated preview.
+
+After verifying that the export shows **Isolated Firebase project**, publish it to a temporary channel in the staging project:
+
+```sh
+npx firebase-tools@15.36.0 hosting:channel:deploy checkout --expires 30d --project vetcloudpro-staging-6f819b --config firebase.staging.json
+```
+
+This does not update the shared site above. The preview URL is shareable, not access-controlled; do not enter real clinic records.
+
 ## Build and deploy
 
 **Foundation-batch rollout warning:** local audit rules reject older unaudited

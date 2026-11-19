@@ -1,13 +1,12 @@
 // Firebase is loaded dynamically at runtime to avoid requiring the package during static type checks.
 // dbRef/firestore are exported as live bindings: initializeFirebase() reassigns them and
 // importers always read the current value.
-import type { FirebaseApp } from 'firebase/app';
+import type { FirebaseApp, FirebaseOptions } from 'firebase/app';
 import type { Auth } from 'firebase/auth';
 import type { Firestore } from 'firebase/firestore';
 import { getDevicePreference, requestTrustedDevice, watchDevicePreference, broadcastDeviceWipe, setDeviceClearState } from './offline-device';
 
-const getFirebaseConfig = () => {
-  return {
+const defaultFirebaseConfig = {
     apiKey: "AIzaSyAvRasTDM9QV79i9V4t5mbxfOPuGQybwIs",
     authDomain: "vetcloudpro.firebaseapp.com",
     projectId: "vetcloudpro",
@@ -15,8 +14,40 @@ const getFirebaseConfig = () => {
     messagingSenderId: "2281264630",
     appId: "1:2281264630:web:24a779ef0a2f2fcceae3d7",
     measurementId: "G-T381W4YXF3"
-  };
 };
+
+export function getFirebaseConfig(): FirebaseOptions {
+  const override = process.env.NEXT_PUBLIC_FIREBASE_STAGING_CONFIG;
+  if (override === undefined) return defaultFirebaseConfig;
+
+  const invalid = () => new Error('Invalid staging Firebase configuration. Production was not used.');
+  let candidate: FirebaseOptions | null;
+  try { candidate = JSON.parse(override); }
+  catch { throw invalid(); }
+  if (!candidate || typeof candidate !== 'object') throw invalid();
+
+  const { projectId, apiKey, authDomain, appId, messagingSenderId } = candidate;
+  if (typeof projectId !== 'string' || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId)
+    || projectId === defaultFirebaseConfig.projectId || authDomain !== `${projectId}.firebaseapp.com`
+    || typeof apiKey !== 'string' || !apiKey.trim() || apiKey === defaultFirebaseConfig.apiKey
+    || typeof messagingSenderId !== 'string' || !/^\d+$/.test(messagingSenderId)
+    || messagingSenderId === defaultFirebaseConfig.messagingSenderId
+    || typeof appId !== 'string' || !appId.startsWith(`1:${messagingSenderId}:web:`)) throw invalid();
+  return { projectId, apiKey, authDomain, appId, messagingSenderId };
+}
+
+async function configuredFirebaseApp(): Promise<FirebaseApp> {
+  const config = getFirebaseConfig();
+  const { initializeApp, getApps, getApp } = await import('firebase/app');
+  if (!getApps().length) return initializeApp(config);
+  const existing = getApp();
+  if (config.projectId !== defaultFirebaseConfig.projectId
+    && (existing.options.projectId !== config.projectId || existing.options.appId !== config.appId
+      || existing.options.authDomain !== config.authDomain || existing.options.apiKey !== config.apiKey)) {
+    throw new Error('The initialized app does not match the staging Firebase configuration.');
+  }
+  return existing;
+}
 
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
@@ -66,17 +97,12 @@ export const initializeFirebase = (): Promise<FirebaseConnection> => {
 };
 
 async function connect(): Promise<FirebaseConnection> {
-  const config = getFirebaseConfig();
   try {
-    const { initializeApp, getApps, getApp } = await import('firebase/app');
     const { getAuth, setPersistence, inMemoryPersistence, browserLocalPersistence, signOut } = await import('firebase/auth');
     const firestoreModule = await import('firebase/firestore');
     if (stopped) throw new Error('Device storage changed during initialization. Restart the app.');
-    if (getApps().length === 0) {
-      app = initializeApp(config);
-    } else {
-      app = getApp();
-    }
+    app = await configuredFirebaseApp();
+    if (stopped) throw new Error('Device storage changed during initialization. Restart the app.');
     
     auth = getAuth(app);
     const trusted = getDevicePreference() === 'trusted';
@@ -155,8 +181,7 @@ export function clearOfflineDeviceData({ broadcast = true } = {}): Promise<void>
       await sdk.terminate(dbRef);
       await clearPersistence(sdk, dbRef);
     } else {
-      const { initializeApp, getApps, getApp } = await import('firebase/app');
-      const cleanupApp = getApps().length ? getApp() : initializeApp(getFirebaseConfig());
+      const cleanupApp = await configuredFirebaseApp();
       const { getAuth, signOut, setPersistence, inMemoryPersistence } = await import('firebase/auth');
       const cleanupAuth = getAuth(cleanupApp);
       await cleanupAuth.authStateReady();

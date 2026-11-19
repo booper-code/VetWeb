@@ -55,7 +55,7 @@ async function startFixture() {
   const output = await build({
     stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' },
     bundle: true, write: false, platform: 'browser', format: 'esm',
-    define: { 'process.env.NODE_ENV': '"production"' },
+    define: { 'process.env.NODE_ENV': '"production"', 'process.env.NEXT_PUBLIC_FIREBASE_STAGING_CONFIG': 'undefined' },
     plugins: [{
       name: 'emulator-only-sdk',
       setup(build) {

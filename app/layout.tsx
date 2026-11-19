@@ -25,7 +25,8 @@ export default function RootLayout({
         <OfflineStatus staticShell={process.env.VETCLOUD_STATIC_EXPORT === '1'} />
         {process.env.VETCLOUD_STATIC_EXPORT === '1' && (
           <div role="note" className="bg-warning-tint px-4 py-2 text-center text-sm font-bold text-warning-text-max">
-            TEST STAGING — fictional records only. Shared Firebase project; not production-ready.
+            TEST STAGING — fictional records only. {process.env.NEXT_PUBLIC_FIREBASE_STAGING_CONFIG === undefined
+              ? 'Shared Firebase project' : 'Isolated Firebase project'}; not production-ready.
           </div>
         )}
         {children}
