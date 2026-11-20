@@ -1,8 +1,23 @@
-# Planned: controlled end-of-day assistant
+# Controlled clinic assistant
 
-**Design only. No assistant, tool execution, provider calls or automatic writes
-are implemented by the appointments feature.** Existing clinical AI screens
-remain predefined demo output, not clinical analysis.
+**Current workspace slice:** The header's **AI Assistant** answers supported
+app and appointment questions locally. It reads only the active clinic's
+already-loaded schedule and pre-fills rescheduling in the existing appointment
+editor. Signed-in clinic handoffs and assistant-draft saves recheck live clinic
+membership and the owner AI setting. The assistant cannot save on its own and
+sends no data to a provider. The remaining
+provider and direct-execution design below is not implemented.
+
+The offline demo also has a separate fixture-only
+AI Clerk preview in End-of-Day Close when the demo AI switch is on. It reviews
+one fictional create, reschedule, or cancel note at a time using an explicit
+format and Asia/Manila times. It does not look up clinic data, call a provider,
+save notes, or apply changes. The Laboratory & AI screen also shows predefined
+fictional output, not clinical analysis.
+
+For signed-in clinics with AI enabled, Clinic setup can validate credentials and
+list provider-reported models. This sends no prompts or clinic records and does
+not connect the provider to the Clerk or Laboratory & AI screen.
 
 ## Working assumption confirmed by the user
 

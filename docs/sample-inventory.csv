@@ -1,0 +1,25 @@
+Item Code,Item Name,Category,Stock,Buying Price,Selling Price,Threshold
+MED-AMX500,Amoxicillin 500 mg capsule,Medicine,120,2.50,8.00,20
+MED-CAR75,Carprofen 75 mg tablet,Medicine,45,6.00,15.00,15
+MED-MET500,Metronidazole 500 mg tablet,Medicine,60,1.80,6.00,15
+MED-IVM1,Ivermectin 1% injectable 10 mL,Medicine,12,45.00,120.00,5
+MED-PRED5,Prednisolone 5 mg tablet,Medicine,80,0.90,4.00,20
+MED-ENR50,Enrofloxacin 50 mg tablet,Medicine,0,3.20,9.00,10
+MED-GENTEYE,Gentamicin eye drops,Medicine,18,22.00,60.00,6
+MED-VACRAB,Rabies vaccine 1 mL vial,Medicine,30,55.00,150.00,10
+MED-VACDHPP,DHPP vaccine 1 mL vial,Medicine,28,48.00,135.00,10
+MED-MELINJ,Meloxicam injectable 5 mg per mL,Medicine,25,30.00,85.00,8
+SUP-GAUZE,Gauze roll,Supplies,200,0.50,2.00,50
+SUP-SYR10,Syringe 10 mL box of 100,Supplies,15,12.00,30.00,5
+SUP-NEED18,Needle 18G box of 100,Supplies,14,10.00,25.00,5
+SUP-BANDAGE,Cohesive bandage roll,Supplies,75,1.20,4.50,20
+SUP-GLOVES,Nitrile exam gloves box of 100,Supplies,22,9.00,22.00,8
+SUP-CATH20,Intravenous catheter 20G,Supplies,40,3.50,10.00,10
+SUP-SUTURE,Absorbable suture 3-0,Supplies,35,8.00,20.00,10
+SRV-CONSULT,General consultation,Service,0,0,350.00,0
+SRV-VACC,Vaccination service,Service,0,0,180.00,0
+SRV-SURGERY,Minor surgical procedure,Service,0,0,2500.00,0
+SRV-LAB,In-house laboratory test,Service,0,0,600.00,0
+GRM-BATH,Basic bath and blow-dry,Grooming,0,0,450.00,0
+GRM-FULL,"Full groom (bath, haircut, nails)",Grooming,0,0,950.00,0
+GRM-NAIL,Nail trim,Grooming,0,0,200.00,0

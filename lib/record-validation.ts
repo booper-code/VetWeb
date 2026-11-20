@@ -1,4 +1,5 @@
 import type { PatientRecord, InventoryItem } from '@/types';
+import { isExpiryDate, isStockedCategory } from '@/lib/stock-alert-values';
 
 export function patientValidationError(record: PatientRecord): string | null {
   if (!record.name.trim() || record.name.length > 150) return 'Enter a patient name of up to 150 characters.';
@@ -18,6 +19,9 @@ export function inventoryValidationError(item: InventoryItem): string | null {
   if (!['Medicine', 'Supplies', 'Service', 'Grooming'].includes(item.category)) return 'Choose a valid inventory category.';
   if (![item.stock, item.buyingPrice, item.sellingPrice, item.threshold].every(value => Number.isFinite(value) && value >= 0)) {
     return 'Stock, prices and thresholds must be non-negative finite numbers.';
+  }
+  if (item.expiryDate !== undefined && (!isStockedCategory(item.category) || !isExpiryDate(item.expiryDate))) {
+    return 'Enter a valid expiry date for a medicine or supply item, or leave it blank.';
   }
   return null;
 }

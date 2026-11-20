@@ -37,6 +37,7 @@ jobs:
       - run: npm run test:offline
       - run: npm run test:records
       - run: npm run test:workflows
+      - run: node --test tests/assistant-investigation.test.mjs
       - run: npm run test:appointments
       - run: npx playwright install --with-deps chromium
       - run: npm run test:prototype
@@ -46,3 +47,4 @@ jobs:
         env:
           NEXT_PUBLIC_IMAGE_WORKER_URL: https://vetcloudpro-images.jmferrari16.workers.dev
       - run: npm run test:appointments:browser
+      - run: npm run test:theme

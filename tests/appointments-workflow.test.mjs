@@ -30,11 +30,28 @@ async function hookHarness({ demo = false, canEdit = true, defaultWindow = value
     act(async () => { dom.root.render(React.createElement(Screen, { clinicId, uid, online, canEdit: editable })); });
   await render();
   return { ...dom, reads, writes, render, scope, get result() { return result; },
-    async resolveRead(index, records, hasMore = false) {
-      await act(async () => { reads[index].resolve({ records, hasMore, fromCache: false, cursor: `cursor-${index}` }); });
+    async resolveRead(index, records, hasMore = false, fromCache = false) {
+      await act(async () => { reads[index].resolve({ records, hasMore, fromCache, cursor: `cursor-${index}` }); });
     },
   };
 }
+test('a server page does not make earlier cached appointments fresh', async () => {
+  const app = await hookHarness();
+  try {
+    await app.resolveRead(0, [row], true, true);
+    let adding;
+    await act(() => { adding = app.result.load(); });
+    await app.resolveRead(1, [{ ...row, id: 'server-page' }]);
+    await adding;
+    assert.equal(app.result.rows.length, 2);
+    assert.equal(app.result.fromCache, true);
+    let refreshing;
+    await act(() => { refreshing = app.result.load(true); });
+    await app.resolveRead(2, [row]);
+    await refreshing;
+    assert.equal(app.result.fromCache, false);
+  } finally { await app.close(); }
+});
 for (const transition of ['switch', 'logout', 'wipe']) {
   test(`appointment reads/saves/old callback entry are scoped across ${transition}`, async () => {
     const app = await hookHarness();
@@ -44,6 +61,7 @@ for (const transition of ['switch', 'logout', 'wipe']) {
       let completing;
       await act(async () => { completing = oldSave(row.id, 1, { ...draft, notes: 'Delayed A' }); });
       assert.equal(app.writes.length, 1);
+      assert.equal(app.writes[0].input.expectedUid, 'owner');
       app.scope.invalidate();
       if (transition !== 'switch') await app.render(null, null);
       await app.render('clinic-b');

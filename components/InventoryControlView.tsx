@@ -1,9 +1,32 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { Package, AlertCircle, TrendingUp, PlusCircle, X, Trash2, Download, Loader2 } from 'lucide-react';
 import type { InventoryItem } from '@/types';
 import { exportInventoryPdf } from '@/lib/pdf';
+import { isStockedCategory } from '@/lib/stock-alert-values';
+
+function ExpiryDateField({ value, onChange, disabled }: {
+  value: string; onChange: (value: string) => void; disabled?: boolean;
+}) {
+  const id = useId();
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1 block text-xs font-bold text-content-copy">Expiry date</label>
+      <input id={id} type="date" min="0001-01-01" max="9999-12-31" value={value} disabled={disabled}
+        aria-describedby={`${id}-hint`} className="vc-input w-full"
+        onChange={event => onChange(event.target.value)} />
+      <p id={`${id}-hint`} className="mt-1 text-xs text-content-hint">Optional. Enter the earliest expiry of units on hand. Update it as stock changes.</p>
+    </div>
+  );
+}
+
+function withExpiryDate(item: InventoryItem, date: string): InventoryItem {
+  const next = { ...item };
+  if (isStockedCategory(item.category) && date) next.expiryDate = date;
+  else delete next.expiryDate;
+  return next;
+}
 
 export const InventoryControlView = ({ 
   inventory, 
@@ -13,6 +36,7 @@ export const InventoryControlView = ({
   onDeleteInventoryItem,
   searchQuery,
   triggerToast,
+  stockAlerts,
   partialData = false,
   canEdit = true
 }: { 
@@ -23,6 +47,7 @@ export const InventoryControlView = ({
   onDeleteInventoryItem: (itemCode: string) => Promise<void>;
   searchQuery: string;
   triggerToast: (msg: string) => void;
+  stockAlerts?: React.ReactNode;
   partialData?: boolean;
   canEdit?: boolean;
 }) => {
@@ -51,6 +76,7 @@ export const InventoryControlView = ({
   const [buyingPrice, setBuyingPrice] = useState<number | ''>('');
   const [sellingPrice, setSellingPrice] = useState<number | ''>('');
   const [threshold, setThreshold] = useState<number | ''>('');
+  const [expiryDate, setExpiryDate] = useState('');
 
   // States for the Inventory Edit Slide-out Drawer
   const [selectedItemSnapshot, setSelectedItem] = useState<InventoryItem | null>(null);
@@ -89,7 +115,7 @@ const filteredInventory = inventory.filter(item => {
     const prefix = isService ? 'SRV' : 'ITM';
     const nextCode = `${prefix}-${crypto.randomUUID()}`;
 
-    const newItem: InventoryItem = {
+    const newItem = withExpiryDate({
       itemCode: nextCode,
       itemName,
       category,
@@ -97,7 +123,7 @@ const filteredInventory = inventory.filter(item => {
       buyingPrice: isService ? 0 : Number(buyingPrice),
       sellingPrice: Number(sellingPrice),
       threshold: finalThreshold
-    };
+    }, expiryDate);
 
     console.log('[UI] submitting new inventory', newItem.itemCode);
     setSaving(true);
@@ -113,6 +139,7 @@ const filteredInventory = inventory.filter(item => {
     setBuyingPrice('');
     setSellingPrice('');
     setThreshold('');
+    setExpiryDate('');
   };
 
   const handleSaveEdits = async () => {
@@ -167,7 +194,7 @@ const filteredInventory = inventory.filter(item => {
           />
           
           {/* Sliding Frame Panel */}
-          <div className="relative w-full max-w-2xl bg-panel-subtle h-full shadow-2xl flex flex-col border-l border-outline-soft overflow-hidden transform transition-transform duration-300 ease-in-out">
+          <div role="dialog" aria-label="Inventory item details" className="relative w-full max-w-2xl bg-panel-subtle h-full shadow-2xl flex flex-col border-l border-outline-soft overflow-hidden transform transition-transform duration-300 ease-in-out">
             {/* Drawer Header */}
             <div className="bg-panel border-b border-outline-soft px-6 py-4 flex items-center justify-between sticky top-0 z-10">
               <div>
@@ -178,7 +205,7 @@ const filteredInventory = inventory.filter(item => {
                   Item Code: {selectedItem.itemCode} | {selectedItem.category}
                 </p>
               </div>
-              <button 
+              <button type="button" aria-label="Close inventory item"
                 onClick={() => {
                   setSelectedItem(null);
                   setIsEditing(false);
@@ -209,11 +236,14 @@ const filteredInventory = inventory.filter(item => {
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-content-copy block mb-1">Category</label>
+                      <label htmlFor="inventory-edit-category" className="text-xs font-bold text-content-copy block mb-1">Item category</label>
                       <select 
+                        id="inventory-edit-category"
                         className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-sm text-content-title font-bold focus:ring-2 focus:ring-teal-500 outline-none"
                         value={editForm.category}
-                        onChange={e => setEditForm({ ...editForm, category: e.target.value as InventoryItem['category'] })}
+                        onChange={e => setEditForm(withExpiryDate({
+                          ...editForm, category: e.target.value as InventoryItem['category'],
+                        }, editForm.expiryDate ?? ''))}
                       >
                         <option value="Medicine">Medicine</option>
                         <option value="Supplies">Clinical Supplies</option>
@@ -232,6 +262,8 @@ const filteredInventory = inventory.filter(item => {
                         />
                       </div>
                     )}
+                    {isStockedCategory(editForm.category) && <ExpiryDateField value={editForm.expiryDate ?? ''}
+                      disabled={!canEdit || saving} onChange={date => setEditForm(withExpiryDate(editForm, date))} />}
                   </div>
 
                   <div className="bg-panel rounded-2xl p-5 border border-outline-soft shadow-sm space-y-4">
@@ -335,6 +367,10 @@ const filteredInventory = inventory.filter(item => {
                             <p className="text-xs text-content-hint mb-1">Alert Threshold</p>
                             <p className="text-lg font-bold text-content-copy">{selectedItem.threshold} units</p>
                           </div>
+                          <div className="col-span-2">
+                            <p className="text-xs text-content-hint mb-1">Expiry date</p>
+                            <p className="text-sm font-bold text-content-heading">{selectedItem.expiryDate || 'Not recorded'}</p>
+                          </div>
                         </>
                       ) : (
                         <div className="col-span-2">
@@ -401,6 +437,8 @@ const filteredInventory = inventory.filter(item => {
         </button>
       </div>
 
+      {stockAlerts}
+
       {/* Category Toggle Filters */}
       <div className="flex flex-wrap gap-2">
         {['All', 'Medicine', 'Supplies', 'Service', 'Grooming'].map(cat => (
@@ -426,7 +464,7 @@ const filteredInventory = inventory.filter(item => {
             New Item / Service
           </h3>
           
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} aria-label="New inventory item" className="space-y-4">
             <fieldset disabled={!canEdit || saving} className="contents">
             <div>
               <label className="text-xs font-bold text-content-copy block mb-1">Name / Procedure Description *</label>
@@ -445,7 +483,11 @@ const filteredInventory = inventory.filter(item => {
               <select 
                 className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-sm text-content-title font-bold focus:ring-2 focus:ring-teal-500 outline-none"
                 value={category}
-                onChange={e => setCategory(e.target.value as InventoryItem['category'])}
+                onChange={e => {
+                  const value = e.target.value as InventoryItem['category'];
+                  setCategory(value);
+                  if (!isStockedCategory(value)) setExpiryDate('');
+                }}
               >
                 <option value="Medicine">Medicine</option>
                 <option value="Supplies">Clinical Supplies</option>
@@ -478,6 +520,8 @@ const filteredInventory = inventory.filter(item => {
                 </div>
               </div>
             )}
+
+            {isStockedCategory(category) && <ExpiryDateField value={expiryDate} onChange={setExpiryDate} />}
 
             {category === 'Service' || category === 'Grooming' ? (
               <div className="pt-2">
@@ -579,7 +623,7 @@ const filteredInventory = inventory.filter(item => {
                       <td className="p-4 text-sm font-bold text-content-heading group-hover:text-brand-text transition-colors">{item.itemCode}</td>
                       <td className="p-4 text-sm font-bold text-content-heading">
                         <div>
-                          {item.itemName}
+                          <button type="button" className="text-left hover:underline">{item.itemName}</button>
                           <span className="text-[10px] text-content-hint block uppercase font-bold mt-0.5 tracking-wider">{item.category}</span>
                         </div>
                       </td>

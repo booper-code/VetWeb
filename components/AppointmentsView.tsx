@@ -7,22 +7,34 @@ import {
   APPOINTMENT_TYPES, APPOINTMENT_STATUSES, appointmentWindowBounds, fromLocalDateTime, toLocalDateTime,
   appointmentValidationError, reminderMailto, reminderWhatsApp, reminderMessage, appointmentCalendar, localDate,
 } from '@/lib/appointment-values';
+import { assistantEditorTime, assistantManilaTime, matchAssistantReschedule, type AssistantReschedule } from '@/lib/workspace-assistant';
 
 type Form = { id: string; revision: number | null; patientId: string; type: AppointmentType; status: AppointmentStatus;
-  dueLocal: string; duration: string; notes: string; occurredLocal: string; snapshot?: Appointment };
+  dueLocal: string; duration: string; notes: string; occurredLocal: string; snapshot?: Appointment;
+  assistant?: { proposal: AssistantReschedule; originalEditorTime: string } };
 const fieldClass = 'vc-input';
 const buttonClass = 'vc-btn';
+
+function editForm(row: Appointment, dueLocal = toLocalDateTime(row.dueAt)): Form {
+  return { id: row.id, revision: row.revision, patientId: row.patientId, type: row.type, status: row.status,
+    dueLocal, duration: String(row.durationMinutes), notes: row.notes,
+    occurredLocal: row.occurredAt ? toLocalDateTime(row.occurredAt) : '', snapshot: row };
+}
+
 export function AppointmentsView({
   rows, patients, canEdit, isDemo, online, busy, loaded, error, hasMore, fromCache, window: dateWindow, refreshedAt,
-  onWindow, onLoad, onSave, onOpenPatient, onRecordTreatment, clinicId, searchQuery,
+  onWindow, onLoad, onSave, onOpenPatient, onRecordTreatment, clinicId, searchQuery, assistantEnabled, assistantReview,
 }: {
   rows: Appointment[]; patients: PatientRecord[]; canEdit: boolean; isDemo: boolean; online: boolean;
   busy: boolean; loaded: boolean; error: string; hasMore: boolean; fromCache: boolean; refreshedAt: string;
   window: AppointmentWindow; clinicId: string; searchQuery: string;
   onWindow: (window: AppointmentWindow) => void; onLoad: (reset?: boolean) => Promise<void>;
-  onSave: (id: string, revision: number | null, draft: AppointmentDraft) => Promise<boolean>;
+  onSave: (id: string, revision: number | null, draft: AppointmentDraft,
+    proposal?: AssistantReschedule, stillOpen?: () => boolean) => Promise<boolean>;
   onOpenPatient: (id: string, stillOpen: () => boolean) => Promise<void>;
   onRecordTreatment?: (row: Appointment, stillOpen: () => boolean) => Promise<void>;
+  assistantEnabled?: boolean;
+  assistantReview?: AssistantReschedule;
 }) {
   const [rangeDraft, setRange] = useState<AppointmentWindow | null>(null);
   const range = rangeDraft ?? dateWindow;
@@ -34,30 +46,66 @@ export function AppointmentsView({
   const [formError, setFormError] = useState('');
   const [opening, setOpening] = useState('');
   const [refineOpen, setRefineOpen] = useState(false);
+  const [handledReview, setHandledReview] = useState<AssistantReschedule | null>(null);
   const mounted = useRef(false);
   const lock = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const editable = canEdit && (isDemo || online);
+  const canUseAssistant = assistantEnabled && editable;
+  const scheduleReady = loaded && !busy && !error && !fromCache;
+  const pendingReview = canUseAssistant && assistantReview !== handledReview ? assistantReview : undefined;
   const q = searchQuery.trim().toLowerCase();
   const visible = rows.filter(row => (status === 'all' || row.status === status) && (type === 'all' || row.type === type)
     && `${row.patientName} ${row.ownerName} ${row.patientId} ${row.type}`.toLowerCase().includes(q));
+
+  function reviewTarget(proposal: AssistantReschedule) {
+    if (!canUseAssistant || !scheduleReady) return null;
+    const row = matchAssistantReschedule(proposal, rows);
+    return row?.status === 'scheduled' ? row : null;
+  }
+
+  function openAssistantReview(proposal: AssistantReschedule) {
+    setHandledReview(proposal);
+    const target = reviewTarget(proposal);
+    const dueLocal = assistantEditorTime(proposal.proposedDueAt);
+    if (!target || !dueLocal) {
+      setMessage('The assistant draft is no longer available. Ask again with a current schedule and a time this device can display.');
+      return;
+    }
+    setMessage(''); setFormError('');
+    setForm({ ...editForm(target, dueLocal), assistant: { proposal, originalEditorTime: dueLocal } });
+  }
+
+  // A new handoff can initialize a closed editor, but can never replace an open form without a click.
+  if (pendingReview && !form && !saving) openAssistantReview(pendingReview);
+  if (form?.assistant && !saving && (!canUseAssistant || (scheduleReady && !reviewTarget(form.assistant.proposal)))) {
+    setForm(null);
+    setMessage('The assistant draft expired because the appointment or workspace changed. Nothing was saved.');
+  }
+
   function start(row?: Appointment) {
     if (form && !window.confirm('Discard the current appointment form and open another?')) return;
     setMessage(''); setFormError('');
-    setForm(row ? { id: row.id, revision: row.revision, patientId: row.patientId, type: row.type, status: row.status,
-      dueLocal: toLocalDateTime(row.dueAt), duration: String(row.durationMinutes), notes: row.notes,
-      occurredLocal: row.occurredAt ? toLocalDateTime(row.occurredAt) : '', snapshot: row }
+    setForm(row ? editForm(row)
       : { id: crypto.randomUUID(), revision: null, patientId: '', type: 'Checkup', status: 'scheduled',
         dueLocal: `${localDate(new Date())}T09:00`, duration: '30', notes: '', occurredLocal: '' });
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!form || !editable || lock.current) return;
+    if (form.assistant && !reviewTarget(form.assistant.proposal)) {
+      setFormError('The appointment or schedule changed. Refresh and ask again before saving this draft.');
+      return;
+    }
     let draft: AppointmentDraft;
     try {
+      const dueAt = fromLocalDateTime(form.dueLocal);
+      if (form.assistant && form.dueLocal === form.assistant.originalEditorTime && dueAt !== form.assistant.proposal.proposedDueAt) {
+        throw new Error('The device timezone changed. Open the assistant draft again before saving.');
+      }
       draft = { patientId: form.patientId, type: form.type, status: form.status,
-        dueAt: fromLocalDateTime(form.dueLocal), durationMinutes: Number(form.duration), notes: form.notes.trim(),
+        dueAt, durationMinutes: Number(form.duration), notes: form.notes.trim(),
         occurredAt: form.status === 'completed' ? fromLocalDateTime(form.occurredLocal) : null };
       const invalid = appointmentValidationError(draft);
       if (invalid) throw new Error(invalid);
@@ -66,7 +114,9 @@ export function AppointmentsView({
     if (!window.confirm(`Save ${form.type} for ${patientName} on ${new Date(draft.dueAt).toLocaleString()} as ${form.status}?${draft.occurredAt ? ` Actual visit: ${new Date(draft.occurredAt).toLocaleString()}.` : ''} This does not record treatments, stock use or payments.`)) return;
     lock.current = true; setSaving(true); setFormError('');
     try {
-      const saved = await onSave(form.id, form.revision, draft);
+      const saved = form.assistant
+        ? await onSave(form.id, form.revision, draft, form.assistant.proposal, () => mounted.current)
+        : await onSave(form.id, form.revision, draft);
       if (!mounted.current) return;
       if (!saved) { setFormError('Workspace or schedule changed. The save may have completed; refresh before retrying.'); return; }
       setForm(null); setMessage('Appointment saved. It appears only if it matches the selected date/status/type filters.');
@@ -149,8 +199,16 @@ export function AppointmentsView({
       {fromCache ? ' Cached results may be incomplete or outdated.' : ''}{refreshedAt && ` Last refreshed ${new Date(refreshedAt).toLocaleString()}.`}</p>
     {error && <p role="alert" className="rounded-lg border border-danger-stroke-strong bg-danger-wash p-3 text-content-emphasis">{error}</p>}
     {message && <p role="status" className="rounded-[12px] bg-soft p-3 text-sm">{message}</p>}
+    {pendingReview && form && <div className="space-y-2 rounded-[12px] border border-warning-stroke bg-warning-wash p-3 text-sm">
+      <p role="status">An assistant draft is ready. Your open form has not been replaced.</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={buttonClass} disabled={saving || !scheduleReady} onClick={() => openAssistantReview(pendingReview)}>Replace form with assistant draft</button>
+        <button type="button" className={buttonClass} onClick={() => setHandledReview(pendingReview)}>Dismiss assistant draft</button>
+      </div>
+    </div>}
     {form && <form onSubmit={event => void submit(event)} aria-label="Appointment details" className="space-y-4 rounded-[14px] border border-brand-outline bg-panel p-5">
       <h3 className="font-bold text-content-emphasis">{form.revision === null ? 'New appointment' : 'Edit appointment'}</h3>
+      {form.assistant && <p className="vc-note">Assistant draft: {assistantManilaTime(form.assistant.proposal.originalDueAt)} → {assistantManilaTime(form.assistant.proposal.proposedDueAt)}. Nothing saved yet. The date and time field below uses this device’s timezone.</p>}
       <p className="text-xs text-content-emphasis">Choose a loaded patient. If missing, load their active/history page in Admission &amp; Medical first. Patient identity is fixed after creation.</p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="text-sm">Patient<select className={fieldClass} required disabled={saving || !editable || form.revision !== null} value={form.patientId} onChange={event => draftChanged({ patientId: event.target.value })}>

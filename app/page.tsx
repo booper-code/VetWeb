@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { Sparkles } from 'lucide-react';
 import type { InventoryItem, PatientRecord, Consultation, ConsultationDraft } from '@/types';
 import { initializeFirebase, dbRef, firestore, restoreFirebaseSession } from '@/lib/firebase';
@@ -20,7 +20,10 @@ import { ImageStorageControls } from '@/components/ImageStorageControls';
 import { createMutationScope } from '@/lib/mutation-scope';
 import { useAppointments } from '@/lib/useAppointments';
 import { AppointmentsView } from '@/components/AppointmentsView';
-import { inventoryFromDocument, patientFromDocument } from '@/lib/clinic-pages';
+import { FollowUpQueue } from '@/components/FollowUpQueue';
+import { loadDemoFollowUpPage, loadFollowUpPage, recordFollowUpContact, type FollowUpCursor } from '@/lib/follow-up';
+import type { Appointment } from '@/types';
+import { inventoryFromDocument, loadClinicScanPage, loadDemoClinicScanPage, patientFromDocument } from '@/lib/clinic-pages';
 import { saveConsultation } from '@/lib/consultations';
 import {
   buildConsultationRecord,
@@ -35,10 +38,17 @@ import {
 import { LoginScreen } from '@/components/LoginScreen';
 import { Sidebar } from '@/components/Sidebar';
 import { Header } from '@/components/Header';
+import { WorkspaceAssistant } from '@/components/WorkspaceAssistant';
+import { assistantEditorTime, matchAssistantReschedule, type AssistantReschedule, type AssistantSchedule } from '@/lib/workspace-assistant';
+import { readAssistantRole, watchAssistantRole } from '@/lib/workspace-assistant-access';
+import { assistantResourceId, type AssistantToolCall } from '@/lib/assistant-tools';
+import { assistantToolEndpoint, requestAssistantTool, type AssistantLookup } from '@/lib/assistant-tool-client';
 import { DashboardHome } from '@/components/DashboardHome';
 import { WorkspaceEndOfDayClose } from '@/components/EndOfDayClose';
+import { AIClerkDemo } from '@/components/AIClerkDemo';
 import { PatientRecordsView } from '@/components/PatientRecordsView';
 import { InventoryControlView } from '@/components/InventoryControlView';
+import { StockAlerts } from '@/components/StockAlerts';
 import { AILaboratoryView } from '@/components/AILaboratoryView';
 import { SystemSettingsView } from '@/components/SystemSettingsView';
 import { AccountSettingsView } from '@/components/AccountSettingsView';
@@ -48,12 +58,19 @@ import { ClinicTeamView } from '@/components/ClinicTeamView';
 import { renameClinic, setClinicAIEnabled, subscribeClinicAI } from '@/lib/clinics';
 import type { ClinicMembership, ClinicRole, ClinicSessionUser } from '@/types';
 
+const assistantWorker = process.env.NEXT_PUBLIC_ASSISTANT_TOOLS_URL;
+
 export default function App() {
   const [mutationScope] = useState(createMutationScope);
   const workspaceGeneration = mutationScope.capture();
   const leaving = useRef(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [assistantHandoff, setAssistantHandoff] = useState<{ scopeKey: string; proposal: AssistantReschedule } | null>(null);
+  const [assistantAccess, setAssistantAccess] = useState<{ workspace: string; role: ClinicRole | null; version: number } | null>(null);
+  const assistantAccessRef = useRef<typeof assistantAccess>(null);
+  const assistantAccessVersion = useRef(0);
+  const assistantCurrent = useRef<{ scopeKey: string; schedule: AssistantSchedule } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -79,9 +96,24 @@ export default function App() {
     (online && (currentClinicRole === 'owner' || currentClinicRole === 'editor'));
   const canOpenClose = !!currentClinicId && !!sessionUser && (currentClinicId === 'demo-clinic'
     || currentClinicRole === 'owner' || currentClinicRole === 'editor');
+  const canReadClinic = !!currentClinicId && !!sessionUser && (currentClinicId === 'demo-clinic' || currentClinicRole !== null);
+  const clinicScanOnline = currentClinicId === 'demo-clinic' || online;
+  const clinicScanKey = `${currentClinicId}:${sessionUser?.uid ?? ''}:${workspaceGeneration}:${clinicScanOnline}`;
   const aiEnabled = currentClinicId === 'demo-clinic'
     ? demoAIEnabled
     : clinicAI?.clinicId === currentClinicId && clinicAI.enabled;
+  const isDemoWorkspace = currentClinicId === 'demo-clinic';
+  const assistantWorkspace = JSON.stringify([currentClinicId, sessionUser?.uid, currentClinicRole, workspaceGeneration]);
+  const shouldWatchAssistant = aiEnabled && canReadClinic && !isDemoWorkspace;
+  const verifiedAccess = shouldWatchAssistant && assistantAccess?.workspace === assistantWorkspace ? assistantAccess : null;
+  if (assistantAccess && !verifiedAccess) setAssistantAccess(null);
+  const assistantAllowed = aiEnabled && canReadClinic && (isDemoWorkspace || !!verifiedAccess?.role);
+  const assistantCanEdit = assistantAllowed && canChangeRecords && (isDemoWorkspace ||
+    verifiedAccess?.role === 'owner' || verifiedAccess?.role === 'editor');
+  const assistantScopeKey = `${assistantWorkspace}:${verifiedAccess?.version ?? 0}`;
+  const assistantReview = activeTab === 'appointments' && assistantCanEdit &&
+    assistantHandoff?.scopeKey === assistantScopeKey ? assistantHandoff.proposal : undefined;
+  if (assistantHandoff && !assistantReview) setAssistantHandoff(null);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -93,6 +125,24 @@ export default function App() {
       window.removeEventListener('offline', update);
     };
   }, []);
+
+  const assistantUid = sessionUser?.uid;
+  useEffect(() => {
+    if (!shouldWatchAssistant || !currentClinicId || !assistantUid) return;
+    let active = true, stop: (() => void) | undefined;
+    const publish = (role: ClinicRole | null) => {
+      if (!active || !mutationScope.isCurrent(workspaceGeneration)) return;
+      if (assistantAccessRef.current?.workspace === assistantWorkspace && assistantAccessRef.current.role === role) return;
+      const access = { workspace: assistantWorkspace, role, version: ++assistantAccessVersion.current };
+      assistantAccessRef.current = access;
+      setAssistantAccess(access);
+    };
+    void watchAssistantRole(currentClinicId, assistantUid, publish).then(unsubscribe => {
+      if (active) stop = unsubscribe;
+      else unsubscribe();
+    }).catch(() => publish(null));
+    return () => { active = false; assistantAccessRef.current = null; stop?.(); };
+  }, [shouldWatchAssistant, currentClinicId, assistantUid, assistantWorkspace, workspaceGeneration, mutationScope]);
 
   useEffect(() => {
     if (getDevicePreference() !== 'trusted') return;
@@ -226,6 +276,15 @@ export default function App() {
   const loadDemoClosePage: ClosePageLoader = useCallback((kind, params) => createDemoEndOfDayLoader({
     entries: demoBilling.current?.allEntries() ?? [], patients, consultations, appointments: demoAppointments(),
   })(kind, params), [consultations, demoAppointments, patients]);
+  const followUpUid = sessionUser?.uid ?? '';
+  const followUpIsCurrent = useCallback(() => !leaving.current && mutationScope.isCurrent(workspaceGeneration),
+    [mutationScope, workspaceGeneration]);
+  const clinicScanIsCurrent = () => followUpIsCurrent() && (currentClinicId === 'demo-clinic' || (online && navigator.onLine));
+  const loadFollowUps = useCallback(async (after: FollowUpCursor, endMs: number) => {
+    if (!currentClinicId || !followUpUid || !followUpIsCurrent()) throw new Error('Choose a clinic workspace.');
+    return currentClinicId === 'demo-clinic' ? loadDemoFollowUpPage(demoAppointments(), endMs, after)
+      : loadFollowUpPage({ clinicId: currentClinicId, uid: followUpUid, after, endMs });
+  }, [currentClinicId, demoAppointments, followUpIsCurrent, followUpUid]);
 
   useEffect(() => watchDevicePreference(change => {
     if (change !== 'wipe' && getDevicePreference() !== 'memory') return;
@@ -340,7 +399,7 @@ export default function App() {
   };
 
   // --- ADDITIONAL DATABASE WRITE OPERATIONS ---
-  const createInventoryItem = async (newItem: InventoryItem) => {
+  const createInventoryItem = async (newItem: InventoryItem, csvBatchId?: string) => {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) throw new Error('Workspace is closing. No changes were started.');
     const captured = mutationScope.capture();
     if (!canChangeRecords) throw new Error('Inventory changes require an online owner or editor session.');
@@ -369,7 +428,8 @@ export default function App() {
 
       const saved = await mutateClinicalRecord({
         clinicId: currentClinicId, collection: 'inventory', id: newItem.itemCode,
-        expectedRevision: null, data: newItem, action: 'save'
+        expectedRevision: null, data: newItem, action: 'save',
+        ...(csvBatchId && { inventoryImportBatchId: csvBatchId, expectedUid: sessionUser?.uid }),
       });
       console.log('[Inventory] create success', newItem.itemCode);
       if (!mutationScope.isCurrent(captured)) throw new Error('Workspace changed. The prior clinic’s save may have completed.');
@@ -735,14 +795,15 @@ export default function App() {
     }
   };
 
-  const loadAppointmentPatient = async (id: string, stillOpen: () => boolean = () => true) => {
+  const loadAppointmentPatient = async (id: string, stillOpen: () => boolean = () => true, freshRecord = false) => {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration) || !currentClinicId || !stillOpen()) return null;
-    let patient = patients.find(record => record.id === id);
+    let patient = freshRecord ? undefined : patients.find(record => record.id === id);
     if (!patient && currentClinicId !== 'demo-clinic') {
       const { db, firestore: fs } = await initializeFirebase();
       if (!mutationScope.isCurrent(workspaceGeneration) || !stillOpen()) return null;
       const reference = fs.doc(db, 'clinics', currentClinicId, 'patients', id);
-      const snapshot = await (online ? fs.getDoc(reference) : fs.getDocFromCache(reference));
+      const snapshot = await (freshRecord ? fs.getDocFromServer(reference)
+        : online ? fs.getDoc(reference) : fs.getDocFromCache(reference));
       if (!mutationScope.isCurrent(workspaceGeneration) || !stillOpen()) return null;
       if (!snapshot.exists()) throw new Error('The linked patient is no longer available in this clinic.');
       patient = patientFromDocument(snapshot.id, snapshot.data());
@@ -753,8 +814,8 @@ export default function App() {
     return patient;
   };
 
-  const openAppointmentPatient = async (id: string, stillOpen: () => boolean = () => true) => {
-    const patient = await loadAppointmentPatient(id, stillOpen);
+  const openAppointmentPatient = async (id: string, stillOpen: () => boolean = () => true, freshRecord = false) => {
+    const patient = await loadAppointmentPatient(id, stillOpen, freshRecord);
     if (!patient) return;
     setTreatmentLink(null);
     setPatientToOpen(patient.id); setSearchQuery(patient.id); setActiveTab('patients');
@@ -790,6 +851,104 @@ export default function App() {
     setActiveTab(tab);
   };
 
+  const assistantSchedule = useMemo<AssistantSchedule>(() => ({
+    window: appointments.window,
+    availability: (currentClinicId !== 'demo-clinic' && !online) || appointments.fromCache ? 'offline' :
+      appointments.busy ? 'loading' : appointments.error ? 'error' : appointments.loaded ? 'ready' : 'loading',
+    partial: appointments.hasMore,
+    rows: assistantAllowed ? appointments.rows.filter(row => row.status === 'scheduled')
+      .map(({ id, revision, patientName, dueAt, type }) => ({ id, revision, patientName, dueAt, type })) : [],
+  }), [appointments.window, appointments.fromCache, appointments.busy, appointments.error, appointments.loaded,
+    appointments.hasMore, appointments.rows, assistantAllowed, currentClinicId, online]);
+
+  useLayoutEffect(() => {
+    assistantCurrent.current = assistantCanEdit ? { scopeKey: assistantScopeKey, schedule: assistantSchedule } : null;
+    return () => { assistantCurrent.current = null; };
+  }, [assistantCanEdit, assistantScopeKey, assistantSchedule]);
+
+  const currentReviewProblem = (proposal: AssistantReschedule, stillOpen: () => boolean): string | null => {
+    const current = assistantCurrent.current;
+    if (!stillOpen() || leaving.current || !currentClinicId || !assistantUid ||
+        !mutationScope.isCurrent(workspaceGeneration) || current?.scopeKey !== assistantScopeKey ||
+        (!isDemoWorkspace && assistantAccessRef.current !== verifiedAccess)) {
+      return 'This workspace cannot review the change. No appointment was edited.';
+    }
+    if (current.schedule.availability !== 'ready' || !matchAssistantReschedule(proposal, current.schedule.rows)) {
+      return 'The appointment or schedule changed. Ask again before reviewing.';
+    }
+    return null;
+  };
+
+  const verifyAssistantReview = async (proposal: AssistantReschedule, stillOpen: () => boolean) => {
+    const problem = currentReviewProblem(proposal, stillOpen);
+    if (problem) return problem;
+    if (!isDemoWorkspace && currentClinicId && assistantUid) {
+      const role = await readAssistantRole(currentClinicId, assistantUid);
+      if ((role !== 'owner' && role !== 'editor') || role !== verifiedAccess?.role) {
+        return 'Your clinic access changed or could not be verified. Reopen the assistant before continuing.';
+      }
+    }
+    return currentReviewProblem(proposal, stillOpen);
+  };
+
+  const reviewAssistantReschedule = async (proposal: AssistantReschedule, stillOpen: () => boolean): Promise<string | null> => {
+    const problem = await verifyAssistantReview(proposal, stillOpen) ?? currentReviewProblem(proposal, stillOpen);
+    if (problem) return problem;
+    if (!assistantEditorTime(proposal.proposedDueAt)) {
+      return 'This device cannot represent the proposed time in the appointment editor. Choose a different time.';
+    }
+    setAssistantHandoff({ scopeKey: assistantScopeKey, proposal });
+    navigateTo('appointments');
+    return null;
+  };
+
+  const mayInvestigate = () => !!currentClinicId && !!assistantUid && online && !isDemoWorkspace && assistantAllowed &&
+    !leaving.current && mutationScope.isCurrent(workspaceGeneration) && assistantAccessRef.current === verifiedAccess;
+
+  const lookupAssistantTool = async (call: AssistantToolCall, signal: AbortSignal): Promise<AssistantLookup> => {
+    if (!assistantWorker || !currentClinicId || !mayInvestigate() || signal.aborted) return { error: 'access-denied' };
+    if (call.tool === 'inventory_import_history' && verifiedAccess?.role !== 'owner') return { error: 'access-denied' };
+    const { auth } = await initializeFirebase();
+    const user = auth.currentUser;
+    if (!mayInvestigate() || signal.aborted || !user || user.uid !== assistantUid) return { error: 'access-denied' };
+    const token = await user.getIdToken();
+    if (!mayInvestigate() || signal.aborted || auth.currentUser?.uid !== assistantUid) return { error: 'access-denied' };
+    const reply = await requestAssistantTool(assistantWorker, currentClinicId, token, call, signal);
+    return mayInvestigate() && !signal.aborted && auth.currentUser?.uid === assistantUid ? reply : { error: 'access-denied' };
+  };
+
+  const openAssistantPerson = async (id: string, stillOpen: () => boolean): Promise<string | null> => {
+    const problem = 'Clinic access changed or could not be verified. Ask again before opening a record.';
+    const current = () => stillOpen() && mayInvestigate();
+    if (!currentClinicId || !assistantUid || !assistantResourceId.test(id) || !current()) return problem;
+    const role = await readAssistantRole(currentClinicId, assistantUid);
+    if (!current() || !role || role !== verifiedAccess?.role) return problem;
+    // After a staff click, this is the existing patient-view handoff, not a
+    // data source for the assistant. Refresh rather than opening a cached row.
+    await openAppointmentPatient(id, current, true);
+    return null;
+  };
+
+  const saveAppointmentFromEditor = async (
+    id: string, revision: number | null, draft: Parameters<typeof appointments.save>[2],
+    proposal?: AssistantReschedule, stillOpen = () => true,
+  ) => {
+    if (proposal) {
+      const problem = await verifyAssistantReview(proposal, stillOpen) ?? currentReviewProblem(proposal, stillOpen);
+      if (problem) throw new Error(problem);
+    }
+    return appointments.save(id, revision, draft);
+  };
+
+  const handleFollowUpContact = async (row: Appointment, contacted: boolean) => {
+    if (!currentClinicId || !followUpUid || !canChangeRecords || !followUpIsCurrent()) throw new Error('Choose an online editable clinic.');
+    if (currentClinicId === 'demo-clinic') return appointments.recordDemoFollowUpContact(row, contacted);
+    const updated = await recordFollowUpContact({ clinicId: currentClinicId, uid: followUpUid, row, contacted });
+    if (!followUpIsCurrent()) throw new Error('The clinic workspace changed.');
+    appointments.applyFollowUpContact(updated);
+    return updated;
+  };
+
   // --- RENDER CONTENT DEPENDING ON NAVIGATION TABS ---
   const renderContent = () => {
     switch (activeTab === 'end-of-day-close' && !canOpenClose ? 'dashboard' : activeTab) {
@@ -799,8 +958,16 @@ export default function App() {
           clinicId={currentClinicId} uid={sessionUser.uid} workspaceGeneration={workspaceGeneration}
           isCurrent={mutationScope.isCurrent} enabled={canOpenClose} online={online || currentClinicId === 'demo-clinic'}
           load={currentClinicId === 'demo-clinic' ? loadDemoClosePage : loadEndOfDayPage}
+          clerkPreview={currentClinicId === 'demo-clinic' && sessionUser.isDemo && aiEnabled
+            ? <AIClerkDemo key={workspaceGeneration} /> : undefined}
           onOpenPatient={openAppointmentPatient} onBack={() => navigateTo('dashboard')}
         />;
+      case 'follow-ups':
+        return canReadClinic ? <FollowUpQueue
+          key={JSON.stringify([currentClinicId, followUpUid, currentClinicRole, online, workspaceGeneration])}
+          canEdit={canChangeRecords} online={online || currentClinicId === 'demo-clinic'} isCurrent={followUpIsCurrent}
+          load={loadFollowUps} onContact={handleFollowUpContact} onOpenPatient={openAppointmentPatient} onBack={() => navigateTo('dashboard')}
+        /> : null;
       case 'dashboard':
       default:
         return (
@@ -814,6 +981,8 @@ export default function App() {
             clinicName={currentClinicName}
             canEdit={canChangeRecords}
             canOpenClose={canOpenClose}
+            canOpenFollowUps={canReadClinic}
+            canOpenStockAlerts={canReadClinic}
             onNavigate={navigateTo}
             onRecordVisit={handleRecordVisit}
             onOpenPatient={openAppointmentPatient}
@@ -832,12 +1001,14 @@ export default function App() {
         );
       case 'appointments':
         return currentClinicId ? <AppointmentsView
-          key={`${currentClinicId}:${sessionUser?.uid}`}
+          key={JSON.stringify([currentClinicId, sessionUser?.uid, workspaceGeneration])}
           {...appointments} patients={patients} canEdit={canChangeRecords}
           isDemo={sessionUser?.isDemo === true} online={online} clinicId={currentClinicId}
           searchQuery={searchQuery} onWindow={appointments.changeWindow} onLoad={appointments.load}
-          onSave={appointments.save} onOpenPatient={openAppointmentPatient}
+          onSave={saveAppointmentFromEditor} onOpenPatient={openAppointmentPatient}
           onRecordTreatment={openAppointmentTreatment}
+          assistantEnabled={assistantCanEdit}
+          assistantReview={assistantReview}
         /> : null;
       case 'patients':
         return (
@@ -859,6 +1030,17 @@ export default function App() {
             onDeletePatient={deletePatientRecord}
             onToggleStatus={toggleConsultationStatus}
             triggerToast={notifyCurrentWorkspace}
+            patientSearch={currentClinicId && canReadClinic ? {
+              scopeKey: clinicScanKey, online: clinicScanOnline, isCurrent: clinicScanIsCurrent,
+              load: async after => currentClinicId === 'demo-clinic'
+                ? loadDemoClinicScanPage(patients, patient => patient.id, after)
+                : loadClinicScanPage(currentClinicId, 'patients', after),
+              loadPatient: async (id, stillOpen) => {
+                const patient = await loadAppointmentPatient(id, stillOpen);
+                if (patient && stillOpen()) setTreatmentLink(null);
+                return patient;
+              },
+            } : undefined}
             paging={currentClinicId === 'demo-clinic' ? undefined : {
               active: clinicPages.state.activePatients,
               discharged: clinicPages.state.dischargedPatients,
@@ -880,6 +1062,12 @@ export default function App() {
             onDeleteInventoryItem={deleteInventoryItem}
             searchQuery={searchQuery}
             triggerToast={notifyCurrentWorkspace}
+            stockAlerts={currentClinicId && canReadClinic ? <StockAlerts
+              key={clinicScanKey} online={clinicScanOnline} isCurrent={clinicScanIsCurrent}
+              load={async after => currentClinicId === 'demo-clinic'
+                ? loadDemoClinicScanPage(inventory, item => item.itemCode, after)
+                : loadClinicScanPage(currentClinicId, 'inventory', after)}
+            /> : undefined}
             partialData={currentClinicId !== 'demo-clinic'}
             canEdit={canChangeRecords}
           />
@@ -894,6 +1082,7 @@ export default function App() {
           {currentClinicId && currentClinicId !== 'demo-clinic' && currentClinicRole === 'owner' &&
             <ImageStorageControls key={currentClinicId} clinicId={currentClinicId} online={online} />}
           <SystemSettingsView
+            key={JSON.stringify([currentClinicId, sessionUser?.uid, workspaceGeneration])}
             inventory={inventory}
             onAddInventoryItem={createInventoryItem}
             aiEnabled={aiEnabled}
@@ -1143,6 +1332,12 @@ export default function App() {
           currentClinicRole={currentClinicRole}
           onRecordVisit={handleRecordVisit}
           canEdit={canChangeRecords}
+          assistantAction={assistantAllowed ? <WorkspaceAssistant
+            key={assistantScopeKey} schedule={assistantSchedule} canEdit={assistantCanEdit}
+            onNavigate={navigateTo} onReview={reviewAssistantReschedule}
+            onLookup={!isDemoWorkspace && assistantToolEndpoint(assistantWorker) ? lookupAssistantTool : undefined}
+            onOpenPerson={openAssistantPerson}
+          /> : undefined}
         />
 
         <main tabIndex={-1} className="flex-1 overflow-y-auto px-4 py-6 sm:px-7 sm:py-7">

@@ -111,6 +111,77 @@ test('appointments are bounded, clinic-scoped, audited and role-protected', asyn
       ['future actual visit', { status: 'completed', occurredAt: fs.Timestamp.fromMillis(Date.now() + 86400000) }],
       ['actual time on scheduled appointment', { occurredAt: fs.Timestamp.now() }],
     ]) await t.test(`rules reject direct audited write: ${label}`, () => denied(() => direct(patch)));
+
+    await t.test('clinic-wide follow-up pages and audited contact leave the visit scheduled', async () => {
+      const billingValues = await compile('billing-values.ts');
+      const followValues = await compile('follow-up-values.ts', { '@/lib/billing-values': billingValues });
+      const followUrl = await compile('follow-up.ts', { '@/lib/firebase': handles, '@/lib/appointments': appointmentUrl,
+        '@/lib/clinical-mutations': mutationUrl, '@/lib/follow-up-values': followValues });
+      const { loadFollowUpPage, recordFollowUpContact } = await import(followUrl);
+      const { followUpDayEndMs, currentFollowUpContact } = await import(followValues);
+      const endMs = followUpDayEndMs(Date.now());
+      const dueAt = new Date(endMs - 90 * 86400000).toISOString();
+      const input = { clinicId, uid, endMs };
+      const eligible = await save('follow-old', null, { dueAt, type: 'Follow-up' });
+      const missed = await save('follow-missed', null, { dueAt, type: 'Follow-up', status: 'no-show' });
+      const future = await save('follow-future', null, { dueAt: new Date(endMs).toISOString(), type: 'Follow-up' });
+      const fixture = { patientName: 'Queue paging fixture', status: 'scheduled', type: 'Follow-up' };
+      const listed = await fetch(`http://${host}/v1/projects/${projectId}/databases/(default)/documents:commit`, {
+        method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ writes: Array.from({ length: 25 }, (_, index) => ({ update: {
+          name: `projects/${projectId}/databases/(default)/documents/clinics/${clinicId}/appointments/follow-page-${String(index).padStart(2, '0')}`,
+          fields: { ...Object.fromEntries(Object.entries(fixture).map(([k, v]) => [k, { stringValue: v }])),
+            dueAt: { timestampValue: dueAt }, revision: { integerValue: '1' } },
+        } })) }),
+      });
+      assert.equal(listed.status, 200);
+      const first = await loadFollowUpPage(input);
+      assert.equal(first.rows.length, 25);
+      assert.ok(first.next);
+      const second = await loadFollowUpPage({ ...input, after: first.next });
+      const old = [...first.rows, ...second.rows].filter(row => row.id === 'follow-old' || row.id.startsWith('follow-page-'));
+      assert.equal(old.length, 26);
+      assert.equal(new Set(old.map(row => row.id)).size, 26);
+      assert.ok([...first.rows, ...second.rows].every(row => row.id !== missed.id && row.id !== future.id && row.type === 'Follow-up'));
+      const changeContact = patch => mutateClinicalRecord({ clinicId, collection: 'appointments', id: eligible.id,
+        expectedRevision: eligible.revision, action: 'save', data: patch });
+      const original = (await fs.getDoc(ref(owner, 'appointments', eligible.id))).data();
+      const forged = { ...original, updatedAt: fs.serverTimestamp(), updatedBy: uid,
+        followUpContact: { dueAt: original.dueAt, contactedAt: fs.serverTimestamp(), contactedBy: 'different-account' } };
+      await denied(() => changeContact(forged));
+      await denied(() => changeContact({ ...forged, notes: 'Different appointment details',
+        followUpContact: { ...forged.followUpContact, contactedBy: uid } }));
+      await assert.rejects(() => recordFollowUpContact({ ...input, row: missed }), /due follow-up/i);
+      await assert.rejects(() => recordFollowUpContact({ ...input, row: future }), /due follow-up/i);
+      const viewer = select('viewer');
+      assert.equal((await loadFollowUpPage({ ...input, uid: viewer.auth.currentUser.uid })).rows.length, 25);
+      await denied(() => recordFollowUpContact({ ...input, uid: viewer.auth.currentUser.uid, row: eligible }));
+      const outsider = select('outsider');
+      await denied(() => loadFollowUpPage({ ...input, uid: outsider.auth.currentUser.uid }));
+      const editor = select('editor');
+      const editorUid = editor.auth.currentUser.uid;
+      const contacted = await recordFollowUpContact({ ...input, uid: editorUid, row: eligible });
+      assert.equal(contacted.status, 'scheduled');
+      assert.equal(currentFollowUpContact(contacted).contactedBy, editorUid);
+      await assert.rejects(() => recordFollowUpContact({ ...input, uid: editorUid, row: eligible }), /changed/i);
+      await assert.rejects(() => recordFollowUpContact({ ...input, uid: editorUid, row: contacted }), /already/i);
+      select('owner');
+      assert.equal((await fs.getDoc(ref(owner, 'auditHeads', `appointments_${eligible.id}`))).data().seq, 2);
+      const note = await save(eligible.id, contacted.revision, { dueAt, type: 'Follow-up', notes: 'Retained on edit' });
+      assert.deepEqual(note.followUpContact, contacted.followUpContact);
+      const moved = await save(eligible.id, note.revision, { dueAt: new Date(endMs - 3600000).toISOString(), type: 'Follow-up' });
+      assert.equal(currentFollowUpContact(moved), null);
+      const recordedAgain = await recordFollowUpContact({ ...input, row: moved });
+      assert.equal(currentFollowUpContact(recordedAgain).dueAt, moved.dueAt);
+      select('viewer');
+      await denied(() => recordFollowUpContact({ ...input, uid: viewer.auth.currentUser.uid, row: recordedAgain, contacted: false }));
+      select('owner');
+      const cleared = await recordFollowUpContact({ ...input, row: recordedAgain, contacted: false });
+      assert.equal(currentFollowUpContact(cleared), null);
+      assert.equal(cleared.status, 'scheduled');
+      assert.equal(cleared.dueAt, moved.dueAt);
+      assert.equal((await fs.getDoc(ref(owner, 'auditHeads', `appointments_${eligible.id}`))).data().seq, cleared.revision);
+    });
     await t.test('unaudited writes and all hard deletes are denied', async () => {
       await denied(() => fs.updateDoc(ref(owner, 'appointments', 'visit'), { notes: 'No audit' }));
       await denied(() => fs.deleteDoc(ref(owner, 'appointments', 'visit')));

@@ -222,7 +222,10 @@ test('the static export applies the saved or system theme before hydration', { t
         await navigation.getByRole('button', { name: 'Clinic setup', exact: true }).click();
         await assertDarkSurface(page.getByRole('heading', { name: 'Image storage safeguards' }));
         await navigation.getByRole('button', { name: 'Laboratory & AI', exact: true }).click();
-        await assertDarkSurface(page.getByRole('main').locator('textarea').first());
+        const labExample = page.getByRole('button', { name: 'Show fictional example' });
+        await assertDarkSurface(labExample);
+        await labExample.click();
+        await assertDarkSurface(page.getByText(/Example report status: no results available/));
         await navigation.getByRole('button', { name: /Current clinic/ }).click();
         await page.setViewportSize({ width: 320, height: 720 });
         await assertDarkSurface(page.getByRole('heading', { name: 'Your clinic workspace' }));

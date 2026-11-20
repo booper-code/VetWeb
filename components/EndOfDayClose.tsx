@@ -9,6 +9,7 @@ type ViewProps = {
   report: ReturnType<typeof useEndOfDay>;
   onOpenPatient: (id: string, stillOpen: () => boolean) => Promise<void>;
   onBack: () => void;
+  clerkPreview?: ReactNode;
 };
 
 const methods: Record<PaymentMethod, string> = { cash: 'Cash', 'e-wallet': 'E-wallet', 'bank-transfer': 'Bank transfer', card: 'Card', other: 'Other' };
@@ -30,12 +31,12 @@ function ClosePanel({ title, state, onMore, moreLabel, children }: {
   </section>;
 }
 
-export function WorkspaceEndOfDayClose({ onOpenPatient, onBack, ...options }: Omit<ViewProps, 'report'> & Parameters<typeof useEndOfDay>[0]) {
+export function WorkspaceEndOfDayClose({ onOpenPatient, onBack, clerkPreview, ...options }: Omit<ViewProps, 'report'> & Parameters<typeof useEndOfDay>[0]) {
   const report = useEndOfDay(options);
-  return <EndOfDayClose report={report} onOpenPatient={onOpenPatient} onBack={onBack} />;
+  return <EndOfDayClose report={report} onOpenPatient={onOpenPatient} onBack={onBack} clerkPreview={clerkPreview} />;
 }
 
-export function EndOfDayClose({ report, onOpenPatient, onBack }: ViewProps) {
+export function EndOfDayClose({ report, onOpenPatient, onBack, clerkPreview }: ViewProps) {
   const { day, dayError, sections } = report;
   const patientRequest = useRef(0);
   const [patientError, setPatientError] = useState('');
@@ -68,6 +69,7 @@ export function EndOfDayClose({ report, onOpenPatient, onBack }: ViewProps) {
       </div>
       <button type="button" className="vc-btn" onClick={() => { cancelPatientOpen(); onBack(); }}>Back to overview</button>
     </div>
+    {clerkPreview}
     <div className="flex flex-wrap items-end gap-3">
       <label className="vc-label min-w-0">Business day (Asia/Manila)
         <input className="vc-input min-w-0 max-w-full" type="date" value={day} max={report.latestDay}

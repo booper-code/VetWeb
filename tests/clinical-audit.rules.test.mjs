@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
+import { build } from 'esbuild';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword } from 'firebase/auth';
 import * as fs from 'firebase/firestore';
@@ -28,7 +29,7 @@ test('clinical writes require atomic immutable audits and reject stale revisions
   const ref = (client, collection, id) => fs.doc(client.db, 'clinics', clinicId, collection, id);
   const denied = operation => assert.rejects(operation, error => error.code === 'permission-denied');
   try {
-    for (const role of ['owner', 'editor', 'viewer']) {
+    for (const role of ['owner', 'editor', 'viewer', 'outsider']) {
       const app = initializeApp({ apiKey: 'fake-key', projectId }, `${clinicId}-${role}`);
       const auth = getAuth(app);
       connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
@@ -247,6 +248,100 @@ test('clinical writes require atomic immutable audits and reject stale revisions
         await denied(attempt.commit);
         assert.equal((await fs.getDoc(valid.entity)).data().revision, 1);
       }
+    });
+    await t.test('inventory expiry is optional, calendar-valid and written through the existing audit', async () => {
+      const data = { itemCode: 'dated-item', itemName: 'Synthetic medicine', category: 'Medicine', stock: 5 };
+      const save = (id, expectedRevision, fields) => mutateClinicalRecord({
+        clinicId, collection: 'inventory', id, expectedRevision, action: 'save', data: fields,
+      });
+      const editor = selectClient('editor');
+      await save('dated-item', null, { ...data, expiryDate: '2028-02-29' });
+      const item = ref(editor, 'inventory', 'dated-item');
+      assert.equal((await fs.getDoc(item)).data().expiryDate, '2028-02-29');
+      for (const [index, expiryDate] of ['2026-2-01', '2026-02-29', '2100-02-29', '0000-01-01', '2026-04-31', null, 20261120].entries()) {
+        await denied(() => save(`bad-expiry-${index}`, null, { ...data, expiryDate }));
+      }
+      await denied(() => save('dated-service', null, { ...data, category: 'Service', expiryDate: '2028-02-29' }));
+      await denied(() => save('dated-item', 1, { ...data, category: 'Grooming', expiryDate: '2028-02-29' }));
+      await denied(() => save('dated-item', 1, { ...data, expiryDate: '2026-11-31' }));
+      await save('dated-item', 1, { ...data, expiryDate: '2000-02-29' });
+      await save('dated-item', 2, { ...data, stock: 3, expiryDate: '2000-02-29' });
+      assert.equal((await fs.getDoc(item)).data().expiryDate, '2000-02-29');
+      await save('dated-item', 3, { ...data, stock: 3 });
+      assert.equal((await fs.getDoc(item)).data().expiryDate, undefined);
+      assert.equal((await fs.getDoc(ref(owner, 'auditHeads', 'inventory_dated-item'))).data().seq, 4);
+      await save('item', 1, { itemCode: 'item', stock: 8 });
+      assert.equal((await fs.getDoc(ref(editor, 'inventory', 'item'))).data().stock, 8);
+      for (const role of ['viewer', 'outsider']) {
+        selectClient(role);
+        await denied(() => save(`${role}-expiry`, null, { ...data, expiryDate: '2028-02-29' }));
+      }
+    });
+
+    await t.test('assistant gateway reads only authorized names and tracks only audited CSV creates', async () => {
+      const bundle = await build({ entryPoints: ['workers/assistant-tools/src/index.ts'], bundle: true,
+        platform: 'node', format: 'esm', write: false });
+      const { handleAssistantTools } = await import(moduleUrl(bundle.outputFiles[0].text));
+      selectClient('owner');
+      const clinicDoc = fs.doc(owner.db, 'clinics', clinicId);
+      await fs.updateDoc(clinicDoc, { aiEnabled: true });
+
+      const batchId = '00000000-0000-4000-8000-000000000000';
+      const receipts = fs.collection(owner.db, 'clinics', clinicId, 'inventoryImportReceipts');
+      const writeReceipt = itemId => fs.setDoc(fs.doc(receipts, itemId), { batchId, at: fs.serverTimestamp() });
+      await denied(() => writeReceipt('missing-item'));
+      await denied(() => writeReceipt('item')); // Existing manual item cannot become an import.
+      selectClient('editor');
+      await mutateClinicalRecord({ clinicId, collection: 'inventory', id: 'tracked-csv', expectedRevision: null,
+        data: { itemCode: 'tracked-csv', stock: 17 }, action: 'save', inventoryImportBatchId: batchId });
+      const receipt = fs.doc(receipts, 'tracked-csv');
+      assert.equal((await fs.getDocFromServer(receipt)).data()?.batchId, batchId);
+      await denied(() => fs.updateDoc(receipt, { batchId: '10000000-0000-4000-8000-000000000000' }));
+      await denied(() => fs.deleteDoc(receipt));
+      await denied(() => fs.getDocs(fs.collection(clients.editor.db, 'clinics', clinicId, 'inventoryImportReceipts')));
+      await assert.rejects(mutateClinicalRecord({ clinicId, collection: 'inventory', id: 'tracked-csv', expectedRevision: null,
+        data: { itemCode: 'tracked-csv', stock: 17 }, action: 'save', inventoryImportBatchId: batchId }), { name: 'ClinicalConflictError' });
+      for (const id of ['person-milo', 'person-luna']) {
+        await mutateClinicalRecord({ clinicId, collection: 'patients', id, expectedRevision: null, action: 'save', data: {
+          name: id === 'person-milo' ? 'Milo' : 'Luna', ownerName: 'Alex Reyes', ownerContact: '555-000-1111',
+          ownerAddress: 'Private fictional address', ownerEmail: 'hidden@example.com', notes: 'Protected fictional notes',
+        } });
+      }
+      const origin = 'http://127.0.0.1:3000';
+      const day = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
+      const call = async (as, tool, input, target = clinicId) => {
+        const jwt = await clients[as].auth.currentUser.getIdToken();
+        // The Auth emulator emits an unsigned JWT; the production gateway
+        // rejects empty signatures. Only the loopback transport strips this
+        // placeholder so the Firestore emulator receives the real Auth token.
+        const requestToken = jwt.endsWith('.') ? `${jwt}emulator` : jwt;
+        return handleAssistantTools(new Request('http://127.0.0.1:8787/v1/lookup', {
+          method: 'POST', headers: { Authorization: `Bearer ${requestToken}`, Origin: origin, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clinicId: target, tool, input }),
+        }), { FIREBASE_PROJECT_ID: projectId, ALLOWED_ORIGINS: origin },
+        (url, options) => fetch(url.replace('https://firestore.googleapis.com', `http://${host}`), {
+          ...options, headers: { ...options.headers, Authorization: `Bearer ${jwt}` },
+        }));
+      };
+      const matching = await call('viewer', 'find_person_by_name', { name: 'Alex Reyes' });
+      assert.equal(matching.status, 200, await matching.clone().text());
+      assert.deepEqual((await matching.json()).result, { more: false, matches: [
+        { name: 'Alex Reyes', reference: 'person-luna', patientName: 'Luna' },
+        { name: 'Alex Reyes', reference: 'person-milo', patientName: 'Milo' },
+      ] });
+      assert.equal((await call('viewer', 'find_person_by_name', { name: 'Alex Reyes' }, secondClinic)).status, 403);
+      assert.equal((await call('outsider', 'find_person_by_name', { name: 'Alex Reyes' })).status, 403);
+      const range = { from: day, through: day };
+      const history = await call('owner', 'inventory_import_history', range);
+      assert.equal(history.status, 200, await history.clone().text());
+      const { result } = await history.json();
+      assert.equal(result.count, 1);
+      assert.equal(result.recent.length, 1);
+      assert.equal(result.recent[0].batchId, batchId);
+      assert.equal((await call('viewer', 'inventory_import_history', range)).status, 403);
+      await fs.updateDoc(clinicDoc, { aiEnabled: false });
+      assert.equal((await call('viewer', 'find_person_by_name', { name: 'Alex Reyes' })).status, 403);
+      assert.equal((await call('owner', 'inventory_import_history', range)).status, 403);
     });
   } finally {
     delete globalThis.__auditHandles;

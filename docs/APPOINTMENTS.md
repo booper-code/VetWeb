@@ -39,6 +39,14 @@ do not deploy or change live data without renewed authorization.
 - Appointments use the enforced head/event audit protocol and are included in
   the owner JSON backup. Hard deletes are denied, even for owners.
 
+## Follow-up queue
+
+Open **Follow-up queue** from **Overview** for scheduled **Follow-up** visits due today or overdue in Asia/Manila. This is a clinic-wide query, independent of the appointment schedule window; use **Load more follow-ups** if the list is incomplete. Missed, completed, cancelled, and future-day visits stay in Appointments.
+
+After contacting the owner manually, choose **Mark contacted**. This records the time and staff account for that scheduled date without sending a message or changing the appointment status. Use **Undo contact** to correct a mistaken entry. Contact is tied to the exact due time; it doesn't apply to a different slot after rescheduling. Viewers cannot record or undo contact. The queue requires a connection outside the fictional demo.
+
+Local checks: `node --test tests/follow-up-values.test.mjs tests/follow-up-workflow.test.mjs`, `npm run test:rules`, and `npm run build:staging` followed by `node --test tests/follow-up.browser.test.mjs`.
+
 ## Deliberate limits
 
 - Marking complete **does not** record vaccination, diagnosis, treatment, stock

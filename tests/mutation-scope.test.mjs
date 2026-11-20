@@ -11,13 +11,15 @@ const consultation = { id: 'shared-id', status: 'Draft', patient: 'Synthetic A' 
 
 async function mountApp({ readPatient = async () => ({ exists: () => false }),
   init = async () => ({ auth: {}, db: {}, firestore: { doc: (_, ...path) => path, getDoc: readPatient } }),
-  restore, trusted = false, billingCommit, billingRecords } = {}) {
+  restore, trusted = false, billingCommit, billingRecords, appointmentRows = [], appointmentSave = async () => true,
+  assistantEnabled } = {}) {
   const dom = domHarness();
   const props = {};
   const pending = deferred();
   const signout = deferred();
   const calls = [];
-  let deviceListener;
+  let deviceListener, watchRole;
+  let membership = 'owner';
   const scopes = loadSource('../../lib/mutation-scope.ts');
   const stub = name => value => { props[name] = value; return null; };
   const components = new Proxy({}, { get: (_, name) => stub(name) });
@@ -25,9 +27,17 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
     react: React, 'lucide-react': { Sparkles: () => null },
     '@/lib/mutation-scope': scopes,
     '@/lib/useAppointments': { useAppointments: () => ({
-      rows: [], busy: false, error: '', fromCache: false, hasMore: false,
-      window: { from: '2026-11-01', through: '2026-12-01' }, load: async () => {}, save: async () => true,
+      rows: appointmentRows, busy: false, loaded: true, error: '', fromCache: false, hasMore: false,
+      window: { from: '2026-11-01', through: '2026-12-01' }, load: async () => {}, save: appointmentSave,
     }) },
+    '@/lib/workspace-assistant-access': {
+      watchAssistantRole: async (_clinicId, _uid, onRole) => {
+        watchRole = onRole;
+        onRole(membership);
+        return () => {};
+      },
+      readAssistantRole: async () => membership,
+    },
     '@/lib/clinic-pages': {
       patientFromDocument: (id, data) => ({ ...data, id, balance: data.billing ? data.billing.balanceMinor / 100 : data.balance }),
       inventoryFromDocument: (itemCode, data) => ({ ...data, itemCode }),
@@ -59,7 +69,13 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
     '@/lib/patients': { nextPatientId: () => 'demo-id' },
     '@/lib/images': { MAX_PATIENT_DOC_BYTES: 900000, firestoreDocBytes: () => 100, formatBytes: String },
     '@/lib/record-validation': loadSource('../../lib/record-validation.ts'),
-    '@/lib/clinics': { subscribeClinicAI: async () => () => {}, renameClinic: () => pending.promise },
+    '@/lib/clinics': {
+      subscribeClinicAI: async (_clinicId, onValue) => {
+        if (assistantEnabled !== undefined) onValue(assistantEnabled);
+        return () => {};
+      },
+      renameClinic: () => pending.promise,
+    },
     ...Object.fromEntries(['PageControls', 'OfflineDeviceSettings', 'AuditLogView', 'ImageStorageControls',
       'LoginScreen', 'Sidebar', 'Header', 'DashboardHome', 'PatientRecordsView', 'InventoryControlView',
       'AILaboratoryView', 'SystemSettingsView', 'AccountSettingsView', 'StaffPayrollView',
@@ -68,6 +84,7 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
     ])),
   }, {
     window: dom.window, navigator: dom.window.navigator,
+    process: { env: {} }, // Next replaces public build settings in the browser bundle.
     // Toast timers are irrelevant here and must not keep Node alive.
     setTimeout: () => 0,
     console: { log() {}, error() {} },
@@ -75,12 +92,17 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
   // Real React state/effects; shallow child doubles expose the page's callbacks.
   await act(() => dom.root.render(React.createElement(source.default)));
   await act(() => props.LoginScreen.onLoginSuccess({ uid: 'owner', email: 'fixture@example.com', displayName: 'Fixture' }));
-  const select = async clinicId => act(() => props.ClinicWorkspaceScreen.onSelectClinic({
-    clinicId, clinicName: clinicId, role: 'owner',
-  }));
+  const select = async (clinicId, role = 'owner') => act(() => {
+    membership = role;
+    props.ClinicWorkspaceScreen.onSelectClinic({ clinicId, clinicName: clinicId, role });
+  });
   await select('clinic-a');
   return { ...dom, props, pending, signout, calls, select,
     wipe: () => deviceListener('wipe'),
+    changeMembership: async (role, publish = true) => act(() => {
+      membership = role;
+      if (publish) watchRole?.(role);
+    }),
     tab: async name => act(() => props.Sidebar.setActiveTab(name)),
   };
 }
@@ -121,6 +143,50 @@ test('uncertain checkout blocks a replacement and survives a clinic switch', asy
     await act(async () => { await gateway.submit(unresolved.operationId, unresolved.draft, patient.id, unresolved.expectedPatientRevision); });
     assert.equal(sends, 2);
     assert.equal(app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
+  } finally { await app.close(); }
+});
+
+test('assistant handoff is not a save and cannot be replayed in a different clinic or as viewer', async () => {
+  const row = {
+    id: 'shared-appointment', revision: 3, patientName: 'Synthetic A', type: 'Checkup', status: 'scheduled',
+    dueAt: '2026-11-24T02:30:00.000Z', ownerContact: 'DO-NOT-PROJECT',
+  };
+  const proposal = {
+    appointmentId: row.id, expectedRevision: row.revision, originalDueAt: row.dueAt, proposedDueAt: '2026-11-24T06:30:00.000Z',
+  };
+  let saves = 0;
+  const app = await mountApp({ assistantEnabled: true, appointmentRows: [row], appointmentSave: async () => { saves++; return true; } });
+  try {
+    const owner = app.props.Header.assistantAction.props;
+    assert.deepEqual(Object.keys(owner.schedule.rows[0]).sort(), ['dueAt', 'id', 'patientName', 'revision', 'type']);
+    assert.match(await owner.onReview({ ...proposal, expectedRevision: 2 }, () => true), /appointment or schedule changed/i);
+    let stillOpen = true;
+    const cancelled = owner.onReview(proposal, () => stillOpen);
+    stillOpen = false;
+    assert.match(await cancelled, /cannot review/i);
+    assert.equal(app.props.Sidebar.activeTab, 'dashboard');
+    await app.changeMembership('viewer', false);
+    assert.match(String(await owner.onReview(proposal, () => true)), /access changed/i);
+    await app.changeMembership('owner');
+    await act(async () => assert.equal(await owner.onReview(proposal, () => true), null));
+    assert.equal(app.props.AppointmentsView.assistantReview, proposal);
+    assert.equal(saves, 0);
+    await app.changeMembership('viewer', false);
+    await assert.rejects(app.props.AppointmentsView.onSave(proposal.appointmentId, proposal.expectedRevision, {}, proposal), /access changed/i);
+    await app.changeMembership('viewer');
+    assert.equal(app.props.Header.assistantAction.props.canEdit, false);
+    assert.equal(app.props.AppointmentsView.assistantReview, undefined);
+
+    await act(() => app.props.Sidebar.onSwitchClinic());
+    await app.select('clinic-b', 'viewer');
+    const viewer = app.props.Header.assistantAction.props;
+    assert.equal(viewer.canEdit, false);
+    assert.match(await viewer.onReview(proposal, () => true), /cannot review/i);
+    assert.match(await owner.onReview(proposal, () => true), /cannot review/i);
+    await app.tab('appointments');
+    assert.equal(app.props.AppointmentsView.canEdit, false);
+    assert.equal(app.props.AppointmentsView.assistantReview, undefined);
+    assert.equal(saves, 0);
   } finally { await app.close(); }
 });
 

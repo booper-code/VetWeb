@@ -7,8 +7,14 @@ import type { AppointmentWindow } from '@/lib/appointment-values';
 
 export type AppointmentCursor = QueryDocumentSnapshot<DocumentData> | null;
 const iso = (value: { toDate?: () => Date } | undefined | null) => value?.toDate?.().toISOString() ?? '';
+function contactFromDocument(value: DocumentData | undefined) {
+  const dueAt = iso(value?.dueAt), contactedAt = iso(value?.contactedAt);
+  return dueAt && contactedAt && typeof value?.contactedBy === 'string'
+    ? { followUpContact: { dueAt, contactedAt, contactedBy: value.contactedBy } } : {};
+}
 export function appointmentFromDocument(id: string, data: DocumentData): Appointment {
-  return { ...data, id, dueAt: iso(data.dueAt), occurredAt: iso(data.occurredAt) || null,
+  const { followUpContact, ...values } = data;
+  return { ...values, ...contactFromDocument(followUpContact), id, dueAt: iso(data.dueAt), occurredAt: iso(data.occurredAt) || null,
     createdAt: iso(data.createdAt), updatedAt: iso(data.updatedAt) } as Appointment;
 }
 export async function loadAppointmentsPage(clinicId: string, window: AppointmentWindow, cursor: AppointmentCursor = null) {
@@ -29,7 +35,7 @@ export async function loadAppointmentsPage(clinicId: string, window: Appointment
 
 /** Fixed, validated domain action; a future assistant must use this, not arbitrary writes. */
 export async function saveAppointment(input: {
-  clinicId: string; id: string; expectedRevision: number | null; draft: AppointmentDraft;
+  clinicId: string; id: string; expectedRevision: number | null; draft: AppointmentDraft; expectedUid?: string;
 }): Promise<Appointment> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('Reconnect before saving. Appointment changes are not queued offline.');
   const invalid = appointmentValidationError(input.draft);
@@ -38,6 +44,7 @@ export async function saveAppointment(input: {
   const { db, firestore: fs, auth } = await initializeFirebase();
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error('Sign in before saving an appointment.');
+  if (input.expectedUid && input.expectedUid !== uid) throw new Error('The signed-in account changed. Reopen the appointment before saving.');
   const existing = await fs.getDoc(fs.doc(db, 'clinics', input.clinicId, 'appointments', input.id));
   if ((existing.exists() ? existing.data().revision : null) !== input.expectedRevision) throw new ClinicalConflictError();
   const previous = existing.data();
@@ -52,15 +59,17 @@ export async function saveAppointment(input: {
     ownerName: source.ownerName ?? '', ownerContact: source.ownerContact ?? '', ownerEmail: source.ownerEmail ?? '',
     createdAt: previous?.createdAt ?? fs.serverTimestamp(), createdBy: previous?.createdBy ?? uid,
     updatedAt: fs.serverTimestamp(), updatedBy: uid,
+    ...(previous?.followUpContact ? { followUpContact: previous.followUpContact } : {}),
   };
   const saved = await mutateClinicalRecord({ clinicId: input.clinicId, id: input.id,
-    collection: 'appointments', expectedRevision: input.expectedRevision, action: 'save', data });
+    collection: 'appointments', expectedRevision: input.expectedRevision, expectedUid: uid, action: 'save', data });
   // Prefer server entry times, never present a guessed client time as recorded.
   try {
     const confirmed = await fs.getDoc(fs.doc(db, 'clinics', input.clinicId, 'appointments', saved.id));
     if (confirmed.exists()) return appointmentFromDocument(confirmed.id, confirmed.data());
   } catch { /* The audited commit succeeded; a failed readback is not a failed save. */ }
   return { ...input.draft, id: saved.id, revision: saved.revision,
+    ...contactFromDocument(previous?.followUpContact),
     patientName: data.patientName, ownerName: data.ownerName, ownerContact: data.ownerContact, ownerEmail: data.ownerEmail,
     createdAt: previous ? iso(previous.createdAt) : '', updatedAt: '', createdBy: data.createdBy, updatedBy: uid };
 }

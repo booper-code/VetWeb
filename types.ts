@@ -20,6 +20,8 @@ export type InventoryItem = {
   buyingPrice: number;
   sellingPrice: number;
   threshold: number;
+  /** Earliest recorded expiry among stocked units, Manila calendar date (YYYY-MM-DD). */
+  expiryDate?: string;
 };
 
 export type LabResult = {
@@ -128,6 +130,7 @@ export type ConsultationDraft = {
 
 export type AppointmentType = 'Checkup' | 'Vaccination' | 'Deworming' | 'Grooming' | 'Surgery' | 'Follow-up';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
+export type FollowUpContact = { dueAt: string; contactedAt: string; contactedBy: string };
 /** UI timestamps are UTC ISO strings; Firestore stores real timestamps. */
 export type Appointment = {
   id: string;
@@ -147,6 +150,7 @@ export type Appointment = {
   updatedAt: string;
   createdBy: string;
   updatedBy: string;
+  followUpContact?: FollowUpContact;
 };
 export type AppointmentDraft = Pick<Appointment,
   'patientId' | 'type' | 'status' | 'dueAt' | 'durationMinutes' | 'notes' | 'occurredAt'>;

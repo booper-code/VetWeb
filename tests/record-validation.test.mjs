@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { patientValidationError, inventoryValidationError } from '../lib/record-validation.ts';
+import { loadSource } from './helpers/tsx-harness.mjs';
+const { patientValidationError, inventoryValidationError } = loadSource('../../lib/record-validation.ts');
 const patient = {
   name: 'Synthetic patient', gender: 'Unknown', status: 'Waiting', weight: 0, balance: 0,
   ownerContact: '0917-123-4567'
@@ -17,4 +18,10 @@ test('non-finite, negative and invalid clinical fields are rejected', () => {
   for (const change of [{ stock: -1 }, { sellingPrice: Infinity }, { threshold: NaN }, { category: 'Other' }, { itemName: '' }]) {
     assert.ok(inventoryValidationError({ ...item, ...change }));
   }
+});
+
+test('only stocked categories may have a real expiry date', () => {
+  assert.equal(inventoryValidationError({ ...item, expiryDate: '2028-02-29' }), null);
+  assert.match(inventoryValidationError({ ...item, expiryDate: '2026-02-29' }), /expiry date/i);
+  assert.match(inventoryValidationError({ ...item, expiryDate: '2028-02-29', category: 'Service' }), /expiry date/i);
 });

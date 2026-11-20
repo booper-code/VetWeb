@@ -18,7 +18,9 @@ const compile = async (file, replacements = {}) => {
 const handles = url('export const initializeFirebase = async () => globalThis.__billingHandles;');
 
 test('the patient balance projection does not confuse missing legacy data with verified zero', async () => {
-  const { patientFromDocument } = await import(await compile('clinic-pages.ts', { '@/lib/firebase': handles }));
+  const { patientFromDocument } = await import(await compile('clinic-pages.ts', {
+    '@/lib/firebase': handles, '@/lib/stock-alert-values': await compile('stock-alert-values.ts'),
+  }));
   assert.equal(patientFromDocument('legacy', {}).legacyBillingBalance, null);
   assert.equal(patientFromDocument('zero', { balance: 0 }).legacyBillingBalance, 0);
   assert.equal(patientFromDocument('malformed', { balance: -4.5 }).balance, 0);

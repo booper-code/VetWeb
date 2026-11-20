@@ -10,6 +10,7 @@ import { exportPatientsPdf } from '@/lib/pdf';
 import { PageControls } from '@/components/PageControls';
 import { ClinicalActivity } from '@/components/ClinicalActivity';
 import { WorkspacePatientBilling } from '@/components/PatientBilling';
+import { ClinicPatientSearch, type ClinicPatientSearchProps } from '@/components/ClinicPatientSearch';
 import type { BillingGateway } from '@/lib/useBilling';
 import type { PageStatus } from '@/lib/useClinicPages';
 
@@ -32,6 +33,7 @@ export const PatientRecordsView = ({
   onDeletePatient,
   triggerToast,
   paging,
+  patientSearch,
   canEdit = true,
   staffUid = '',
   staffName = ''
@@ -53,6 +55,10 @@ export const PatientRecordsView = ({
   onToggleStatus: (id: string) => void;
   triggerToast: (msg: string) => void;
   paging?: { active: PageStatus; discharged: PageStatus; load: (kind: 'Active' | 'Discharged') => void };
+  patientSearch?: Omit<ClinicPatientSearchProps, 'onOpenPatient'> & {
+    scopeKey: string;
+    loadPatient: (id: string, stillOpen: () => boolean) => Promise<PatientRecord | null>;
+  };
   canEdit?: boolean;
   staffUid?: string;
   staffName?: string;
@@ -346,6 +352,19 @@ const visiblePatients =
             Export {paging ? 'loaded records ' : ''}PDF
         </button>
       </div>
+
+      {patientSearch && <ClinicPatientSearch
+        key={patientSearch.scopeKey}
+        online={patientSearch.online} isCurrent={patientSearch.isCurrent} load={patientSearch.load}
+        onOpenPatient={async (id, stillOpen) => {
+          const patient = await patientSearch.loadPatient(id, stillOpen);
+          if (!patient || !stillOpen()) return;
+          setSelectedPatient(patient);
+          setIsEditing(false);
+          setShowDeleteConfirm(false);
+          setShowFullReport(true);
+        }}
+      />}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         {/* --- LEFT COLUMN: ADMISSION FORM --- */}

@@ -12,12 +12,21 @@ npm run test:offline
 npm run test:records
 npm run test:workflows
 npm run test:appointments
+node --test tests/ai-clerk-demo.test.mjs
+node --test tests/ai-model-discovery.test.mjs
+node --test tests/workspace-assistant.test.mjs
+node --test tests/workspace-assistant-access.test.mjs
+node --test tests/assistant-investigation.test.mjs
 npm run test:rules
 npx playwright install chromium
 npm run test:offline:browser
 npm run build
 npm run build:staging
+node --test tests/ai-clerk-demo.browser.test.mjs tests/ai-clerk-qa.browser.test.mjs
+node --test tests/ai-provider-settings.browser.test.mjs
+node --test tests/workspace-assistant.browser.test.mjs
 npm run test:appointments:browser
+npm run test:theme
 npm run test:prototype
 ```
 
@@ -60,20 +69,51 @@ If Java is unpacked privately, prepend its `bin` directory to `PATH`.
   patient dossier, download a calendar file, enter a past actual visit time,
   cancel, and check the 390px layout. External requests are blocked, with
   an assertion of no Firebase/R2 traffic. It never signs into a live account.
-  Its contrast checks emulate light/dark system preferences and require black
-  appointment labels, inputs, ordinary buttons and secondary text on light panels.
+  Its contrast checks emulate light/dark system preferences and require at least
+  4.5:1 contrast for the sampled appointment text and controls on flat surfaces.
+- The AI Clerk and lab/CSV browser tests also require a fresh static export.
+  They block external requests and exercise the AI switch, fictional previews,
+  rejection of ambiguous and oversized notes, unchanged appointment records,
+  demo-only lab copy, and inventory CSV validation before saving.
+- AI model discovery tests intercept HTTP with fictional keys. The browser
+  suite mounts the real Clinic setup component in a local fixture; it checks
+  model search and selection, explicit saving, late responses, manual entry,
+  catalog labels, and the demo gate. It does not need a static export and
+  does not verify live provider availability or browser access to their APIs.
+- Workspace assistant browser tests use the static demo export and a local role
+  and schedule fixture. They verify focus, mobile layout, disambiguation, no
+  write before confirmation, and that a Manila-time reschedule updates only
+  the selected fixture appointment on a device in another timezone. The
+  workflow suite verifies the actual page's clinic/role handoff boundary
+  with local doubles. The assistant access suite checks canonical membership
+  reads/listeners and account-change guards with a test-only Firebase adapter;
+  no live site or AI provider is contacted.
+- The assistant investigation suite reports deterministic routing correctness and
+  local elapsed time on fictional English/Tagalog/Taglish prompts. It checks
+  typed contract errors, mismatched evidence, access denial, timeout/cancellation,
+  and that instructions in prompts or records cannot select unrestricted tools.
+  Model tokens and calls are zero by design; there is no DeepSeek comparison yet.
+  The rules and signed-in browser emulator suites exercise the real Worker
+  handler with projected owner/patient names and verified import receipt counts.
+- `test:theme`: requires a fresh static export. Holds the Next.js bundle back
+  to check the initial canvas and color scheme, tests persisted overrides and
+  live System changes, and samples dark surfaces in the real offline demo.
+  Clinic selection, verification notices, team, audit and owner settings also
+  run in an isolated browser fixture using the real components and exported CSS
+  with local data adapters. These are not live authentication or permission tests.
 - `test:prototype`: opens the standalone HTML directly from `file://`, with
   external network requests blocked. Checks navigation, mock appointment forms,
   search/role previews, dossier tabs, mobile layout and reset-on-reload behavior.
   It tests a disposable design artifact, not production business logic.
 - `test:offline:browser`: real Chromium, Firebase Auth/Firestore emulators,
-  actual IndexedDB, and the actual device-settings component. Test-only bundle
-  adapters replace project configuration and wire both SDKs to loopback.
-  Browser requests to other hosts are blocked. Cases cover two memory-only
-  tabs without a consent key, a trusted initialization/wipe race, blocked
-  IndexedDB deletion, status surviving sign-out/remount, and successful retry.
-  The small browser fixture is not the full staging app; page-level wipe
-  wiring is covered separately by `test:workflows`.
+  and actual IndexedDB. The device-settings fixture covers cross-tab sign-out,
+  a trusted initialization/wipe race, blocked deletion, status surviving
+  sign-out/remount, and retry. A separate test-only bundle renders the main app
+  page and signs in with fictional Viewer and Owner accounts: the same
+  `docs/sample-inventory.csv` leaves the Viewer’s clinic unchanged, saves 24
+  rows and their audit records as Owner, and creates no duplicates after a
+  fresh sign-in and retry. Both bundles connect only to loopback; neither is
+  the hosted staging app.
 - `test:offline`: public service-worker cache policy and consent defaults.
   Browser/emulator passes do not establish physically separate-device behavior,
   staging deployment, or production readiness.
@@ -82,4 +122,5 @@ The IndexedDB cleanup deadline is ten seconds. A blocked deletion must report
 failure and require closing other tabs/retrying, not claim that data is erased.
 The SDK's underlying deletion may complete later after the blocker closes.
 
-GitHub CI includes these checks but has not run from this workspace (no `.git`).
+The GitHub workflow runs on pushes to `main` and pull requests. Check its
+result separately; passing locally does not verify the GitHub run.

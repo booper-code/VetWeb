@@ -18,7 +18,8 @@ export const Header = ({
   setSearchQuery,
   currentClinicRole,
   onRecordVisit,
-  canEdit
+  canEdit,
+  assistantAction
 }: {
   toggleSidebar: () => void;
   searchQuery: string;
@@ -26,6 +27,7 @@ export const Header = ({
   currentClinicRole: ClinicRole | null;
   onRecordVisit: () => void;
   canEdit: boolean;
+  assistantAction?: React.ReactNode;
 }) => (
   <header className="sticky top-0 z-40 border-b border-line bg-panel">
     <div className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2.5 md:flex md:gap-3 md:px-6 md:py-3">
@@ -64,16 +66,19 @@ export const Header = ({
         />
       </label>
 
-      <button
-        type="button"
-        onClick={onRecordVisit}
-        disabled={!canEdit}
-        title={canEdit ? 'Record a visit for a patient' : 'An online owner or editor session is required to record a visit.'}
-        className="vc-btn vc-btn-primary col-start-3 row-start-2 h-10 md:order-2"
-      >
-        <Plus className="h-4 w-4" aria-hidden="true" />
-        Record visit
-      </button>
+      <div className={`col-start-3 row-start-2 flex items-center justify-end gap-2 md:order-2 ${assistantAction ? 'max-[359px]:col-span-3 max-[359px]:row-start-3' : ''}`}>
+        {assistantAction}
+        <button
+          type="button"
+          onClick={onRecordVisit}
+          disabled={!canEdit}
+          title={canEdit ? 'Record a visit for a patient' : 'An online owner or editor session is required to record a visit.'}
+          className="vc-btn vc-btn-primary h-10"
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          Record visit
+        </button>
+      </div>
     </div>
   </header>
 );

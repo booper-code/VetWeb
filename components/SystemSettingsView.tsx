@@ -1,19 +1,9 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Sparkles, Loader2, FileSpreadsheet, Database } from 'lucide-react';
+import { Sparkles, FileSpreadsheet, Database } from 'lucide-react';
 import type { InventoryItem } from '@/types';
-import {
-  AI_PROVIDERS,
-  defaultAIConfig,
-  getProvider,
-  loadAIConfig,
-  saveAIConfig,
-  clearAIConfig,
-  generateText,
-  type AIConfig,
-  type AIProviderId
-} from '@/lib/ai';
+import { AIProviderSettings } from '@/components/AIProviderSettings';
 
 export const SystemSettingsView = ({
   inventory, 
@@ -25,67 +15,21 @@ export const SystemSettingsView = ({
   triggerToast 
 }: { 
   inventory: InventoryItem[]; 
-  onAddInventoryItem: (item: InventoryItem) => Promise<void>;
+  onAddInventoryItem: (item: InventoryItem, csvBatchId?: string) => Promise<void>;
   aiEnabled: boolean;
   canManageAI: boolean;
   isDemo: boolean;
   onSetAIEnabled: (enabled: boolean) => Promise<void>;
   triggerToast: (msg: string) => void; 
 }) => {
-  const [apiStatus, setApiStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-  const [apiResponse, setApiResponse] = useState('');
   const [isSavingToggle, setIsSavingToggle] = useState(false);
   const [toggleError, setToggleError] = useState('');
-  const [aiConfig, setAIConfig] = useState<AIConfig>(() => loadAIConfig() ?? defaultAIConfig());
-
-  const provider = getProvider(aiConfig.provider);
-  const isConfigured = Boolean(aiConfig.model.trim()) && (!provider.keyRequired || aiConfig.apiKey.trim());
-
-  const handleProviderChange = (id: AIProviderId) => {
-    // Keys are provider-specific, so start clean instead of reusing another one.
-    setAIConfig(defaultAIConfig(id));
-    setApiStatus('idle');
-    setApiResponse('');
-  };
-
-  const handleSaveAI = () => {
-    saveAIConfig(aiConfig);
-    triggerToast('AI settings saved to this browser.');
-  };
-
-  const handleClearAI = () => {
-    clearAIConfig();
-    setAIConfig(defaultAIConfig());
-    setApiStatus('idle');
-    setApiResponse('');
-    triggerToast('AI settings cleared from this browser.');
-  };
-
-  const handleTestConnection = async () => {
-    setApiStatus('testing');
-    setApiResponse('');
-
-    try {
-      // Sends a lightweight greeting to verify the key and endpoint are reachable
-      saveAIConfig(aiConfig);
-      const response = await generateText(
-        aiConfig,
-        "Hello! This is Biñan Animal Clinic testing your connection. Please reply with a short, friendly one sentence greeting."
-      );
-      setApiResponse(response);
-      setApiStatus('success');
-      triggerToast(`${provider.label} connection verified successfully!`);
-    } catch (error) {
-      setApiStatus('error');
-      setApiResponse(error instanceof Error ? error.message : "Connection failed. Please verify your API key.");
-      triggerToast(`${provider.label} connection failed.`);
-    }
-  };
 
   const parseCSVLine = (line: string) => {
     const result: string[] = [];
     let current = '';
     let insideQuotes = false;
+    let closedQuote = false;
 
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
@@ -95,15 +39,25 @@ export const SystemSettingsView = ({
         current += '"';
         i++;
       } else if (char === '"') {
-        insideQuotes = !insideQuotes;
+        if (insideQuotes) {
+          insideQuotes = false;
+          closedQuote = true;
+        } else {
+          if (closedQuote || current.trim()) return null;
+          insideQuotes = true;
+        }
       } else if (char === ',' && !insideQuotes) {
         result.push(current.trim());
         current = '';
+        closedQuote = false;
+      } else if (closedQuote) {
+        if (char.trim()) return null;
       } else {
         current += char;
       }
     }
 
+    if (insideQuotes) return null;
     result.push(current.trim());
     return result;
   };
@@ -111,7 +65,7 @@ export const SystemSettingsView = ({
   const normalizeCategory = (value: string): InventoryItem['category'] => {
     const cleaned = value.toLowerCase().trim();
 
-    if (cleaned.includes('supply')) return 'Supplies';
+    if (cleaned.includes('supply') || cleaned.includes('supplies')) return 'Supplies';
     if (cleaned.includes('service') || cleaned.includes('procedure')) return 'Service';
     if (cleaned.includes('groom')) return 'Grooming';
 
@@ -135,15 +89,20 @@ export const SystemSettingsView = ({
         const text = String(reader.result || '');
         const rows = text
           .split(/\r?\n/)
-          .map(row => row.trim())
-          .filter(Boolean);
+          .map((row, index) => ({ text: row.trim(), line: index + 1 }))
+          .filter(row => row.text);
 
         if (rows.length < 2) {
           triggerToast("CSV import failed. File has no data rows.");
           return;
         }
 
-        const headers = parseCSVLine(rows[0]).map(header =>
+        const headerValues = parseCSVLine(rows[0].text);
+        if (!headerValues) {
+          triggerToast(`CSV row ${rows[0].line}: invalid field quoting. Nothing was imported.`);
+          return;
+        }
+        const headers = headerValues.map(header =>
           header.toLowerCase().replace(/\s+/g, '').trim()
         );
 
@@ -159,30 +118,36 @@ export const SystemSettingsView = ({
         const importedItems: InventoryItem[] = [];
 
         if (rows.length > 501) throw new Error('Import at most 500 inventory rows at a time.');
-        rows.slice(1).forEach(row => {
-          const values = parseCSVLine(row);
+        for (const row of rows.slice(1)) {
+          const values = parseCSVLine(row.text);
+          if (!values) {
+            triggerToast(`CSV row ${row.line}: invalid field quoting. Nothing was imported.`);
+            return;
+          }
 
           const itemName = getValue(values, ['itemname', 'name', 'description']);
-          if (!itemName) return;
+          if (!itemName) continue;
 
           const category = normalizeCategory(
             getValue(values, ['category', 'type', 'classification'])
           );
 
           const isService = category === 'Service' || category === 'Grooming';
+          const rawStock = getValue(values, ['stock', 'quantity', 'qty']);
+          const stock = isService ? 999 : Number(rawStock);
+          if (!isService && (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(rawStock) || !Number.isFinite(stock))) {
+            triggerToast(`CSV row ${row.line}: stock must be a non-negative number. Nothing was imported.`);
+            return;
+          }
 
           const rawCode = getValue(values, ['itemcode', 'code', 'sku']);
           const prefix = isService ? 'SRV' : 'ITM';
           const generatedCode = `${prefix}-CSV-${crypto.randomUUID()}`;
           const itemCode = rawCode || generatedCode;
 
-          if (existingCodes.has(itemCode)) return;
+          if (existingCodes.has(itemCode)) continue;
 
           existingCodes.add(itemCode);
-
-          const stock = isService
-            ? 999
-            : Number(getValue(values, ['stock', 'quantity', 'qty'])) || 0;
 
           const buyingPrice = isService
             ? 0
@@ -204,15 +169,16 @@ export const SystemSettingsView = ({
             sellingPrice,
             threshold
           });
-        });
+        }
 
         if (importedItems.length === 0) {
           triggerToast("No new valid inventory items found in CSV.");
           return;
         }
 
+        const batchId = process.env.NEXT_PUBLIC_CSV_IMPORT_RECEIPTS === '1' && !isDemo ? crypto.randomUUID() : undefined;
         for (const item of importedItems) {
-          await onAddInventoryItem(item);
+          await onAddInventoryItem(item, batchId);
           savedCount += 1;
         }
 
@@ -274,127 +240,12 @@ export const SystemSettingsView = ({
             </div>
             {toggleError && <p role="alert" className="text-xs font-bold text-danger-text">{toggleError}</p>}
             {aiEnabled && <>
-            <p className="text-sm text-content-secondary leading-relaxed">
-              Bring your own key for any provider. It is saved in this browser only and never written to the clinic database.
-            </p>
-            <p className="text-xs font-bold text-warning-text">Lab extraction and summaries are currently demonstrations with example data, not real AI analysis. Do not use them for clinical decisions.</p>
-
-            <div className="space-y-2">
-              <label htmlFor="aiProvider" className="text-[10px] font-bold text-content-faint uppercase tracking-wider block">
-                Provider
-              </label>
-              <select
-                id="aiProvider"
-                value={aiConfig.provider}
-                onChange={e => handleProviderChange(e.target.value as AIProviderId)}
-                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-bold text-content-title outline-none"
-              >
-                {AI_PROVIDERS.map(option => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-              </select>
-
-              <label htmlFor="aiModel" className="text-[10px] font-bold text-content-faint uppercase tracking-wider block pt-1">
-                Model
-              </label>
-              <input
-                id="aiModel"
-                type="text"
-                value={aiConfig.model}
-                placeholder={provider.model || 'model-name'}
-                onChange={e => setAIConfig(prev => ({ ...prev, model: e.target.value }))}
-                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-mono text-content-title outline-none"
-              />
-
-              <label htmlFor="aiKey" className="text-[10px] font-bold text-content-faint uppercase tracking-wider block pt-1">
-                API Key
-              </label>
-              <input
-                id="aiKey"
-                type="password"
-                value={aiConfig.apiKey}
-                placeholder={provider.keyRequired ? 'Paste your key' : 'Not required'}
-                onChange={e => setAIConfig(prev => ({ ...prev, apiKey: e.target.value }))}
-                className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-mono text-content-title outline-none"
-              />
-              <p className="text-[10px] text-content-faint font-medium">{provider.keyHint}</p>
-
-              <details className="pt-1">
-                <summary className="text-[10px] font-bold text-content-faint uppercase tracking-wider cursor-pointer">
-                  Advanced: base URL
-                </summary>
-                <input
-                  type="text"
-                  value={aiConfig.baseUrl}
-                  placeholder={provider.baseUrl || 'https://host/v1'}
-                  onChange={e => setAIConfig(prev => ({ ...prev, baseUrl: e.target.value }))}
-                  className="mt-2 w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-mono text-content-title outline-none"
-                />
-              </details>
-            </div>
-
-            {apiStatus !== 'idle' && (
-              <div className={`p-4 rounded-xl border text-sm leading-relaxed transition-all ${
-                apiStatus === 'testing' ? 'bg-panel-subtle border-outline-soft text-content-hint' :
-                apiStatus === 'success' ? 'bg-success-wash border-success-stroke text-content-title font-medium' :
-                'bg-danger-wash border-danger-stroke text-danger-text-deep font-medium'
-              }`}>
-                {apiStatus === 'testing' && (
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin text-brand-mark" />
-                    <span>Contacting {provider.label}…</span>
-                  </div>
-                )}
-                {apiStatus === 'success' && (
-                  <div>
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-success-icon block mb-1">Model Response:</span>
-                    <span className="text-content-title font-bold">{apiResponse}</span>
-                  </div>
-                )}
-                {apiStatus === 'error' && (
-                  <div>
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-danger-icon block mb-1">Error Details:</span>
-                    <span>{apiResponse}</span>
-                  </div>
-                )}
-              </div>
-            )}
+              <p className="text-xs font-bold text-warning-text">Lab extraction and summaries are currently demonstrations with example data, not real AI analysis. Do not use them for clinical decisions.</p>
+              {isDemo
+                ? <p className="vc-note">Provider connections are unavailable in the offline demo.</p>
+                : <AIProviderSettings triggerToast={triggerToast} />}
             </>}
           </div>
-
-          {aiEnabled && <div className="space-y-2">
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleSaveAI}
-                className="flex-1 bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 text-sm transition-all"
-              >
-                Save AI Settings
-              </button>
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={apiStatus === 'testing' || !isConfigured}
-                className="flex-1 bg-teal-600 text-white font-bold py-3 rounded-xl hover:bg-teal-700 text-sm transition-all flex items-center justify-center gap-2 shadow-md shadow-teal-600/10 disabled:opacity-50"
-              >
-                <Sparkles className="w-4 h-4 text-yellow-300" />
-                Test Connection
-              </button>
-            </div>
-            {isConfigured ? (
-              <button
-                type="button"
-                onClick={handleClearAI}
-                className="w-full text-[11px] font-bold text-content-faint hover:text-danger-icon transition-colors"
-              >
-                Clear saved AI settings
-              </button>
-            ) : (
-              <p className="text-[11px] text-content-faint text-center font-medium">
-                Add a {provider.keyRequired ? 'key' : 'model'} to enable the connection test.
-              </p>
-            )}
-          </div>}
         </div>
 
         {/* Legacy Data Ingestion Block */}
@@ -405,7 +256,7 @@ export const SystemSettingsView = ({
               <h3 className="text-lg font-bold text-content-heading">Legacy Data Migration</h3>
             </div>
             <p className="text-sm text-content-secondary leading-relaxed">
-              Import existing inventory records from a CSV file. Use this to bulk-load medicines, supplies, services, and grooming items for testing or migration.
+              Import medicines, supplies, services, and grooming items from a CSV file. Give medicines and supplies an explicit stock quantity (use 0 for none).
             </p>
           </div>
           <input

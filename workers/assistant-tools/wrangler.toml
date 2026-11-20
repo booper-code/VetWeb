@@ -1,0 +1,8 @@
+name = "vetcloudpro-assistant-tools"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+workers_dev = false
+preview_urls = false
+
+# Intentionally no active project, origins, routes, or account configuration.
+# Supply FIREBASE_PROJECT_ID and the exact ALLOWED_ORIGINS per approved environment.

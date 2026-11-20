@@ -19,10 +19,12 @@ export type ClinicalMutation = {
   collection: ClinicalCollection;
   id?: string;
   expectedRevision: number | null;
+  expectedUid?: string;
   data?: DocumentData;
   action: 'save' | 'delete';
   preservePatientBilling?: boolean;
   billingStockEntryId?: string;
+  inventoryImportBatchId?: string;
 };
 
 export async function mutateClinicalRecord(input: ClinicalMutation): Promise<{ id: string; revision: number }> {
@@ -36,6 +38,9 @@ export async function mutateClinicalRecords(inputs: ClinicalMutation[]): Promise
   const fs = initializedModule as typeof import('firebase/firestore') | null;
   const uid = auth?.currentUser?.uid;
   if (!db || !fs || !uid) throw new Error('Sign in and connect before saving.');
+  if (inputs.some(input => input.expectedUid !== undefined && input.expectedUid !== uid)) {
+    throw new Error('The signed-in account changed. Reopen the record before saving.');
+  }
   const stableInputs = inputs.map(input =>
     !input.id && input.expectedRevision === null && input.action === 'save' && input.clinicId
       ? { ...input, id: fs.doc(fs.collection(db, 'clinics', input.clinicId, input.collection)).id }
@@ -43,6 +48,9 @@ export async function mutateClinicalRecords(inputs: ClinicalMutation[]): Promise
   );
   return fs.runTransaction(db, async tx => {
     const stage = await prepareClinicalWrites(db, fs, tx, stableInputs);
+    if (inputs.some(input => input.expectedUid !== undefined) && auth.currentUser?.uid !== uid) {
+      throw new Error('The signed-in account changed. Reopen the record before saving.');
+    }
     return stage(uid);
   });
 }
@@ -58,6 +66,8 @@ export async function prepareClinicalWrites(db: Firestore, fs: typeof import('fi
     || (input.expectedRevision !== null && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0))
     || (input.action === 'delete' && input.expectedRevision === null)
     || (input.expectedRevision !== null && !input.id)
+    || (input.inventoryImportBatchId !== undefined &&
+      (input.collection !== 'inventory' || input.expectedRevision !== null || input.action !== 'save'))
     || (input.action === 'save' && !input.data)) throw new Error('Invalid clinical mutation.');
   const entries = inputs.map(input => {
     const entity = input.id
@@ -106,6 +116,10 @@ export async function prepareClinicalWrites(db: Firestore, fs: typeof import('fi
     else tx.set(entity, { ...data, id: entity.id, revision: seq });
     tx.set(event, metadata);
     tx.set(head, metadata);
+    if (input.inventoryImportBatchId !== undefined) {
+      const receipt = fs.doc(db, 'clinics', input.clinicId, 'inventoryImportReceipts', entity.id);
+      tx.set(receipt, { batchId: input.inventoryImportBatchId, at: fs.serverTimestamp() });
+    }
     return { id: entity.id, revision: seq };
   });
 }

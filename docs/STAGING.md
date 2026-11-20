@@ -21,6 +21,27 @@ For Checkout and End-of-Day Close testing, use the separate `vetcloudpro-staging
 
 An explicit staging build rejects incomplete or mixed production settings at sign-in and disables the shared image Worker. The default build is unchanged. Use fictional data only, and use a separate hosting target if publishing the isolated preview.
 
+To use the isolated **cloud database from localhost** without publishing a
+website, run this in a new PowerShell session from the repository:
+
+```powershell
+$project = 'vetcloudpro-staging-6f819b'
+$appId = '1:989304337142:web:c6fd25c912cbbb1ee532d7'
+$output = npx --yes firebase-tools@15.36.0 apps:sdkconfig WEB $appId --project $project --json --non-interactive
+if ($LASTEXITCODE -ne 0) { throw 'Could not load isolated Firebase config.' }
+$config = ($output | Out-String | ConvertFrom-Json).result.sdkConfig
+if ($config.projectId -ne $project -or $config.authDomain -ne "$project.firebaseapp.com" -or $config.appId -ne $appId) {
+  throw 'Refusing to start: unexpected Firebase target.'
+}
+$env:NEXT_PUBLIC_FIREBASE_STAGING_CONFIG = $config | ConvertTo-Json -Compress
+npm run dev
+```
+
+Use the URL printed by Next.js, then sign in with an account created **in the
+isolated project**. An account from the shared project does not carry over.
+Use a fictional clinic and records only. The override lives in that terminal
+session, not in `.env.local`; close the terminal when done.
+
 After verifying that the export shows **Isolated Firebase project**, publish it to a temporary channel in the staging project:
 
 ```sh
@@ -28,6 +49,36 @@ npx firebase-tools@15.36.0 hosting:channel:deploy checkout --expires 30d --proje
 ```
 
 This does not update the shared site above. The preview URL is shareable, not access-controlled; do not enter real clinic records.
+
+### Inventory CSV release check
+
+On localhost, an ordinary clinic sign-in still uses the configured cloud
+project; only the built-in demo skips Firestore. The shared rules inspected on
+2026-11-20 predate the inventory audit transaction. If the current app reports
+`Missing or insufficient permissions` before saving any rows, do not change
+the CSV or relax the rules to work around a version mismatch.
+
+1. Run `npm run test:rules` and `npm run test:offline:browser` sequentially.
+   The latter signs in as fictional users, uploads `docs/sample-inventory.csv`,
+   and validates both inventory and audit records in the emulator.
+2. For a hosted rehearsal, use the isolated Firebase project above. Before
+   uploading, verify the preview shows **Isolated Firebase project**, the
+   isolated project has the rules from the same revision as the app, and
+   the selected clinic is fictional and empty. Do not test the release on a
+   real clinic.
+3. In **Clinic setup → Import Inventory CSV**, try the sample as Viewer first:
+   nothing should save. Then sign in as Owner and import it: expect 24 rows
+   and a create audit for each. Sign out and back in, then import again:
+   expect no new items and no additional audit records.
+4. Treat a shared rollout as a separate approval. Use the coordinated
+   app/rules rollout below and have staff reload. Publishing new rules
+   alone can block older app clients from saving.
+
+Rehearsal on 2026-11-20: a localhost static build imported all 24 rows as a
+fictional Owner into the isolated cloud database. A separate server read
+confirmed 24 inventory records and 24 matching create audit events. The
+cloud browser retry after a fresh sign-in did not complete; the Viewer and
+duplicate checks passed in the emulator. No website or rules were published.
 
 ## Build and deploy
 
