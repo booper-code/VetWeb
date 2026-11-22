@@ -9,6 +9,7 @@ import {
 } from '@/lib/billing-values';
 import { exportPaymentReceiptPdf } from '@/lib/pdf';
 import { useBilling, type BillingGateway, type BillingSession } from '@/lib/useBilling';
+import { BILLING_RECONCILIATION_LIMIT, billingLedgerKey, type BillingReconciliation } from '@/lib/billing-reconciliation';
 
 const methods: Record<PaymentMethod, string> = { cash: 'Cash', 'e-wallet': 'E-wallet', 'bank-transfer': 'Bank transfer', card: 'Card', other: 'Other' };
 const control = 'vc-input w-full';
@@ -25,6 +26,35 @@ type Reviewed = Pick<BillingOperation, 'operationId' | 'draft' | 'expectedPatien
 const amountOrUnknown = (minor: number | null) => minor === null ? 'Unknown amount' : formatBillingAmount(minor);
 const reviewedStock = (draft: BillingDraft) => draft.kind === 'charge' ? draft.lines.map(line => line.itemCode)
   : draft.kind === 'reversal' ? Object.keys(draft.expectedStockRevisions) : [];
+
+function BillingReconciliationControl({ check, disabled }: { check: BillingSession['reconcile']; disabled: boolean }) {
+  const [result, setResult] = useState<BillingReconciliation | 'error' | null>(null);
+  const [checking, setChecking] = useState(false);
+  const inFlight = useRef(false);
+  const run = async () => {
+    if (inFlight.current || disabled) return;
+    inFlight.current = true;
+    setChecking(true);
+    setResult(null);
+    try { setResult(await check()); }
+    catch { setResult('error'); }
+    finally { inFlight.current = false; setChecking(false); }
+  };
+  const status = result && result !== 'error' ? result.status : result;
+  const problem = status === 'balance-mismatch' || status === 'history-mismatch' || status === 'error';
+  const message = !result ? '' : result === 'error' ? 'Could not verify the ledger. Try again online.'
+    : result.status === 'match' ? `The ledger matches the stored balance at the time of this check: ${formatBillingAmount(result.balanceMinor)} (${result.count} posted ${result.count === 1 ? 'entry' : 'entries'}).`
+      : result.status === 'balance-mismatch' ? `Balance mismatch: stored ${formatBillingAmount(result.storedMinor)}; ledger totals ${formatBillingAmount(result.computedMinor)}. Review the source records.`
+        : result.status === 'history-mismatch' ? 'The ledger history does not reconcile. An entry, sequence, or opening balance is inconsistent; review the posted history.'
+          : result.status === 'changed' ? 'The balance changed during the check. Try again.'
+            : result.status === 'limit' ? `Not verified: this check covers up to ${BILLING_RECONCILIATION_LIMIT} posted entries per patient.`
+              : 'No verified ledger is available for this patient.';
+  return <div className="space-y-1">
+    <button type="button" className={button} disabled={disabled || checking} onClick={() => void run()}>Check ledger balance</button>
+    {checking && <p role="status" className="text-sm text-content-hint">Checking posted entries…</p>}
+    {message && <p role={problem ? 'alert' : 'status'} className={problem ? 'text-sm text-danger-text' : 'text-sm text-content-hint'}>{message} No records were changed.</p>}
+  </div>;
+}
 
 export function WorkspacePatientBilling({ patient, inventory, canEdit, gateway }: {
   patient: PatientRecord; inventory: InventoryItem[]; canEdit: boolean; gateway: BillingGateway;
@@ -268,6 +298,7 @@ export function PatientBilling({ patient, inventory, canEdit, billing }: {
       <div className="flex flex-wrap items-center justify-between gap-2"><h5 className="font-bold text-content-heading">Billing history</h5>
         <button type="button" className={button} disabled={billing.busy}
           onClick={() => void billing.refresh().catch(() => setError('Could not refresh the patient record. Try again online.'))}>Refresh billing</button></div>
+      {patient.billing && <BillingReconciliationControl key={billingLedgerKey(patient.billing)} check={billing.reconcile} disabled={!!billing.pending || saving} />}
       {billing.error && <p role="alert" className="text-danger-text">{billing.error}</p>}
       {billing.busy && <p role="status" className="text-sm text-content-hint">Loading billing history…</p>}
       {!billing.entries.length && !billing.busy && !billing.error && <p className="text-sm text-content-hint">No new billing entries.</p>}

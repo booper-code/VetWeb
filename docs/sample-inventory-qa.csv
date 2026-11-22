@@ -1,0 +1,10 @@
+Item Code,Item Name,Category,Stock,Buying Price,Selling Price,Threshold
+QA-MED-001,Sample tablet pack,Medicine,24,40.00,75.00,8
+QA-MED-002,Sample ear rinse,Medicine,3,90.00,150.00,5
+QA-SUP-001,"Sample gauze, 10-pack",Supplies,40,25.00,45.00,10
+QA-SUP-002,Sample exam gloves,Supplies,0,180.00,280.00,5
+QA-SUP-003,Sample bandage roll,Supplies,12,35.00,60.00,4
+QA-SRV-001,Sample wellness exam,Service,0,0.00,450.00,0
+QA-SRV-002,Sample follow-up visit,Service,0,0.00,250.00,0
+QA-GRM-001,Sample bath and brush,Grooming,0,0.00,550.00,0
+QA-GRM-002,Sample nail trim,Grooming,0,0.00,180.00,0

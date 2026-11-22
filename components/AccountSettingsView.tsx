@@ -83,10 +83,11 @@ export const AccountSettingsView = ({
     setIsExportingBackup(true);
     try {
       const result = await exportClinicBackup({ clinicId, clinicName });
-      triggerToast(`Backup downloaded: ${result.documentCount} documents across ${result.collectionCount} collections.`);
+      triggerToast(`JSON export downloaded: ${result.documentCount} documents across ${result.collectionCount} record collections.`);
     } catch (error) {
       console.error('[Account settings] Backup failed:', error);
-      triggerToast(error instanceof Error ? error.message : 'Could not create the clinic backup.');
+      triggerToast(error instanceof Error && error.message.startsWith('Export stopped:') ? error.message
+        : 'Could not export clinic records. Check your connection and clinic access, then try again.');
     } finally {
       setIsExportingBackup(false);
     }
@@ -172,7 +173,7 @@ export const AccountSettingsView = ({
               <h3 className="text-lg font-bold text-content-heading">Sign-in &amp; Security</h3>
             </div>
             <p className="text-sm text-content-secondary leading-relaxed">
-              Clinic access is tied to this login. Your role applies to every clinic you belong to.
+              Clinic access is tied to this login. Your role can differ between clinics.
             </p>
 
             <div className="space-y-2">
@@ -215,10 +216,11 @@ export const AccountSettingsView = ({
           <div className="flex items-start gap-3">
             <Database className="w-5 h-5 text-brand-text shrink-0 mt-0.5" />
             <div>
-              <h3 className="text-lg font-bold text-content-heading">Clinic data backup</h3>
+              <h3 className="text-lg font-bold text-content-heading">Clinic records export</h3>
               <p className="text-sm text-content-secondary leading-relaxed mt-1">
-                Download a JSON snapshot of patients, inventory, consultations, staff, payroll, members, and invitations. Keep it somewhere safe before bulk changes.
-                Images stored in R2 are referenced by key, not included in this file; back up the R2 bucket separately.
+                Download selected clinic records as an unencrypted JSON file. Run it online when clinic edits are paused,
+                and move the file to restricted, encrypted storage. This is not a full backup: image files,
+                sign-in accounts, and some Firestore data are not included. There is no in-app restore.
               </p>
             </div>
           </div>
@@ -229,7 +231,7 @@ export const AccountSettingsView = ({
             className="shrink-0 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50"
           >
             {isExportingBackup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            Download backup
+            Download records JSON
           </button>
         </div>
       )}

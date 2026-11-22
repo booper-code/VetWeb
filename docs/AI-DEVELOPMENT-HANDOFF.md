@@ -1,5 +1,9 @@
 # VetCloudPro AI development handoff — before Phase 2B
 
+For the current AI Clerk integration and the paused inventory-count change, start with the [AI Clerk integration handoff](AI-CLERK-INTEGRATION-HANDOFF.md).
+
+**Latest update:** [Phase 2B is complete as an offline prototype](ASSISTANT-PHASE-2B-RESULTS.md). The deterministic scope gate matched the scripted single-plan fallback without planner calls. [Phase 3](ASSISTANT-PHASE-3.md) has started as a fictional appointment confirmation rehearsal only. Do not infer authorization for a paid run, integration, or deployment. The snapshot and instructions below are retained as historical context.
+
 **Snapshot:** 2026-11-20. **Start here:** preserve the dirty checkout, then design an independently scored fictional holdout for **deterministic routing plus a single-plan DeepSeek fallback**. Do not connect the lab runner to the clinic app. Phase 2B has not been implemented, and this handoff does not authorize a paid run, hosted rollout, security-rule deployment, or use of real clinic data.
 
 ## 1. Repository and runtime state

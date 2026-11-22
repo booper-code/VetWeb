@@ -2,6 +2,43 @@
 
 **Remaining work for the next chat:** `docs/NEXT-TASKS.md` (actionable list only).
 
+**Latest AI status:** The [Phase 2B offline lab](ASSISTANT-PHASE-2B-RESULTS.md)
+is complete. Deterministic scope extraction matched the scripted fallback on the
+fictional holdout. [Phase 3](ASSISTANT-PHASE-3.md) now rehearses appointment
+confirmation, atomic in-memory fixture updates, and receipt recovery after a
+lost response. A separate Firestore emulator suite checks rollback, contention,
+and receipt recovery on synthetic records. No hosted model, app integration, or live execution path was
+added. The older next-task list predates the checkout and assistant
+work; use the AI handoff and Phase 2B results for the current assistant state.
+
+**Unified front desk (local preview):** the popup's provider toggle was removed.
+One Ask input handles both local requests and conversation. Native deterministic
+requests (counts, appointment lookup, draft reschedules and typed lookups) stay
+local in the same transcript; only non-native general questions go to the
+provider saved in Clinic setup, with prior successful turns from that same setup
+only. History is keyed by workspace scope and the saved setup's generation, so
+changing provider/model/key starts fresh. The transport fails closed for custom
+or unverified endpoints, and the sender sees a generic "configured AI provider"
+disclosure. No live model call, deployment, account, record or AI-setting change
+was made. See [UNIFIED-FRONT-DESK.md](UNIFIED-FRONT-DESK.md).
+
+**Local daily briefing (2026-11-22):** the same assistant now answers clear
+briefing intents (“What should I check today?”, “who needs checking?”, the exact
+“are there any things in the clinic that i should be mindful of”, and close
+variants) with a deterministic local aggregator over the signed-in clinic’s real
+staging appointments, due/overdue follow-ups and stock alerts. It makes no
+provider call, forwards no clinic data and writes nothing; ordinary general
+conversation stays on the configured provider. Reads are fresh, bounded and
+clinic-scoped with Manila date/stock helpers, avoid the known-failing Follow-up
+Queue composite query, and report unavailable vs no-results and partial vs
+complete independently. Same localhost/staging gates; no rollout or live
+smoke test. See [DAILY-BRIEFING.md](DAILY-BRIEFING.md).
+
+**Local fixes:** Projected patient names now follow the dossier's display-name
+limits, End-of-Day Close can finish paging from the Paid in full panel, and
+owners/editors can [check a patient ledger](BILLING.md#storage-and-verification)
+without modifying billing records. No rollout was performed.
+
 ## Product planning / Claude handoff
 
 The user requested a complete feature-and-screen plan before a later major UI

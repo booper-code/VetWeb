@@ -1,5 +1,8 @@
 # Security status — 2026-11-15
 
+See [Private use](PRIVATE-USE.md) for account recovery and access removal,
+and [Clinic recovery](CLINIC-RECOVERY.md) for the planned isolated restore drill.
+
 **Rollback warning:** older rules backups predate invitation email verification
 and may reopen that admission flaw. They are recovery evidence, not a safe
 automatic rollback target. Preserve the verified-email admission checks when

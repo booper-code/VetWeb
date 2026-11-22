@@ -24,6 +24,13 @@ New entries are clinic- and patient-scoped and append-only. Patient summaries pr
 
 Local checks: `node --test tests/billing-values.test.mjs tests/billing-workflow.test.mjs`, `npm run test:rules`, and `npm run build:staging` followed by `npm run test:billing:browser`. The last check exercises the actual static export without live Firebase or image-service requests. Do not publish new rules or indexes separately from the checkout UI.
 
+Owners and editors can use **Check ledger balance** in Billing history. It
+rebuilds the balance from the posted opening, corrections, charges, payments,
+settlements, and reversals and flags discrepancies without writing anything.
+The online check compares the same patient ledger before and after reading up to
+250 entries; a changing or larger ledger is not reported as reconciled. It
+does not verify the original paper balance or provide proof against tampering.
+
 ## End-of-Day Close
 
 Owners and editors can open **End-of-Day Close** from **Overview** and select a Manila business day. Collections use the received date and exclude reversed payments and unitemized settlements. Corrections appear on their recording day. Outstanding balances are current regardless of the selected date. Use **Load more** if a section is incomplete and **Refresh report** after changes. The report never locks a day. **No linked treatment** means the completed visit has no explicitly linked completed treatment record; it does not mean no treatment happened.

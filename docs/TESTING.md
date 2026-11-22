@@ -1,5 +1,8 @@
 # Local regression checks
 
+For the staged functionality pass, isolation preflight, and release criteria,
+see the [full QA plan](FULL-QA-PLAN.md).
+
 Use the pinned Node version in `.node-version` and Java 21 for emulator tests.
 No command below needs live credentials or writes to the staging/shared backend.
 

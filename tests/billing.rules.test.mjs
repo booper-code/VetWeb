@@ -35,6 +35,7 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
   const mutationUrl = await compile('clinical-mutations.ts', { '@/lib/firebase': handles });
   const serviceUrl = await compile('billing.ts', {
     '@/lib/firebase': handles, '@/lib/clinical-mutations': mutationUrl, '@/lib/billing-values': valuesUrl,
+    '@/lib/billing-reconciliation': await compile('billing-reconciliation.ts'),
   });
   const { commitBilling, loadBillingHistory, loadPaymentReceipt } = await import(serviceUrl);
   const { mutateClinicalRecord } = await import(mutationUrl);

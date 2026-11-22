@@ -12,7 +12,7 @@ class FixtureDate extends Date {
   static now() { return Date.parse('2026-11-19T12:00:00Z'); }
 }
 
-async function setup({ patient = base, entries = [], canEdit = true, onSubmit = async () => {}, onReceipt = async () => receipt } = {}) {
+async function setup({ patient = base, entries = [], canEdit = true, onSubmit = async () => {}, onReceipt = async () => receipt, onReconcile = async () => ({ status: 'unverified' }) } = {}) {
   const dom = domHarness();
   const submissions = [], pdfs = [], refreshes = [];
   const { PatientBilling } = loadSource('../../components/PatientBilling.tsx', {
@@ -22,7 +22,7 @@ async function setup({ patient = base, entries = [], canEdit = true, onSubmit = 
   const billing = {
     entries, busy: false, error: '', hasMore: false,
     submit: async operation => { submissions.push(operation); return onSubmit(operation); },
-    receipt: onReceipt, refresh: async () => { refreshes.push(true); }, loadMore: async () => {},
+    receipt: onReceipt, refresh: async () => { refreshes.push(true); }, loadMore: async () => {}, reconcile: onReconcile,
   };
   const render = (next = patient) => act(() => dom.root.render(React.createElement(PatientBilling, { patient: next, inventory: [], canEdit, billing })));
   await render();
@@ -44,6 +44,19 @@ async function setup({ patient = base, entries = [], canEdit = true, onSubmit = 
   };
   return { ...dom, doc, click, fill, render, submissions, pdfs, refreshes };
 }
+
+test('checking a ledger discrepancy is read-only and clears when the displayed balance changes', async () => {
+  const patient = { ...base, billing: state };
+  const app = await setup({ patient, onReconcile: async () => ({ status: 'balance-mismatch', storedMinor: 120000, computedMinor: 115000 }) });
+  try {
+    await app.click('Check ledger balance');
+    assert.match(app.doc.querySelector('[role="alert"]').textContent, /Balance mismatch: stored PHP 1,200\.00; ledger totals PHP 1,150\.00/);
+    assert.match(app.doc.body.textContent, /No records were changed/);
+    assert.equal(app.submissions.length, 0);
+    await app.render({ ...patient, billing: { ...state, balanceMinor: 115000 } });
+    assert.doesNotMatch(app.doc.body.textContent, /Balance mismatch/);
+  } finally { await app.close(); }
+});
 
 test('mark paid in full confirms once without installment details', async () => {
   const app = await setup({ patient: { ...base, billing: { ...state, balanceMinor: 70000 } } });

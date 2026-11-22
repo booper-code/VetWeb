@@ -21,6 +21,13 @@ For Checkout and End-of-Day Close testing, use the separate `vetcloudpro-staging
 
 An explicit staging build rejects incomplete or mixed production settings at sign-in and disables the shared image Worker. The default build is unchanged. Use fictional data only, and use a separate hosting target if publishing the isolated preview.
 
+For a persistent local setup, put the validated SDK configuration in the
+ignored `.env.development.local` as `NEXT_PUBLIC_FIREBASE_STAGING_CONFIG`
+and use `npm run dev -- --port 3000`. This does not select the test project
+for production builds. Keep `NEXT_PUBLIC_CSV_IMPORT_RECEIPTS=0` unless the
+isolated rules support that optional collection; normal inventory audit
+records are independent of those receipts.
+
 To use the isolated **cloud database from localhost** without publishing a
 website, run this in a new PowerShell session from the repository:
 

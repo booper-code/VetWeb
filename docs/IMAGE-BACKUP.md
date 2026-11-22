@@ -15,6 +15,9 @@ uploads and objects absent from that clinic export are not included. It does not
 provide point-in-time consistency with Firestore, and it does not automatically
 restore patient documents or recreate original object keys.
 
+For the planned records-and-images rehearsal and retention guidance, see
+[Clinic recovery](CLINIC-RECOVERY.md).
+
 ## Plan the backup first (no network)
 
 ```sh

@@ -1,6 +1,7 @@
 import type { DocumentData, QueryDocumentSnapshot, Transaction } from 'firebase/firestore';
 import { initializeFirebase } from '@/lib/firebase';
 import { ClinicalConflictError, prepareClinicalWrites, type ClinicalMutation } from '@/lib/clinical-mutations';
+import { BILLING_RECONCILIATION_LIMIT, reviewBillingLedger, type LedgerRow } from '@/lib/billing-reconciliation';
 import {
   BILLING_TIME_ZONE, billingDayStartMs, calculateBillingTransition, readLegacyBalance,
   type BillingDraft, type BillingState, type BillingStockMove, type PaymentMethod, type ResolvedBillingDraft,
@@ -33,7 +34,7 @@ async function billingConnection(clinicId: string, patientId: string) {
   const { db, firestore: fs, auth } = await initializeFirebase();
   const uid = auth?.currentUser?.uid;
   if (!db || !fs || !uid) throw new Error('Sign in and connect before accessing billing.');
-  return { db, fs, uid };
+  return { db, fs, uid, auth };
 }
 
 const decoded = (id: string, { recordedAt, ...data }: DocumentData): BillingEntry =>
@@ -194,6 +195,32 @@ export async function loadBillingHistory({ clinicId, patientId, after }: { clini
     ...(after ? [fs.startAfter(after)] : []), fs.limit(PAGE_SIZE),
   ));
   return { entries: snapshot.docs.map(doc => decoded(doc.id, doc.data())), next: snapshot.size === PAGE_SIZE ? snapshot.docs.at(-1) ?? null : null };
+}
+
+export async function checkBillingReconciliation(clinicId: string, patientId: string, assertWorkspace: () => void) {
+  assertWorkspace();
+  const { db, fs, uid, auth } = await billingConnection(clinicId, patientId);
+  const assertCurrent = () => {
+    assertWorkspace();
+    if (auth.currentUser?.uid !== uid) throw new Error('Billing access changed.');
+  };
+  const patient = fs.doc(db, 'clinics', clinicId, 'patients', patientId);
+  return reviewBillingLedger(async () => {
+    assertCurrent();
+    const snapshot = await fs.getDocFromServer(patient);
+    assertCurrent();
+    if (!snapshot.exists() || snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) throw new Error('Could not verify the patient balance.');
+    return snapshot.data().billing ?? null;
+  }, async () => {
+    assertCurrent();
+    const snapshot = await fs.getDocsFromServer(fs.query(
+      fs.collection(db, 'clinics', clinicId, 'billingEntries'), fs.where('patientId', '==', patientId),
+      fs.limit(BILLING_RECONCILIATION_LIMIT + 1),
+    ));
+    assertCurrent();
+    if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) throw new Error('Could not verify the posted billing entries.');
+    return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }) as LedgerRow);
+  });
 }
 
 export async function loadPaymentReceipt({ clinicId, patientId, entryId }: { clinicId: string; patientId: string; entryId: string }): Promise<PaymentReceipt> {

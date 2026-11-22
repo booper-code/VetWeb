@@ -23,7 +23,8 @@ const MANILA_OFFSET_MS = 8 * 3_600_000;
 const isoDay = /^\d{4}-\d{2}-\d{2}$/;
 const stamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const personName = /^[\p{L}\p{M}][\p{L}\p{M} .'\u2019-]{0,99}$/u;
-const displayName = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} .'\u2019-]{0,99}$/u;
+// The projected patient label is plain display text, not a lookup argument.
+const patientDisplayNameLimit = 150; // Mirrors the dossier's name limit.
 export const assistantResourceId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export const assistantBatchId = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const daySchema = { type: 'string', format: 'date' } as const;
@@ -98,7 +99,7 @@ export const assistantToolRegistry = {
         type: 'array', maxItems: ASSISTANT_PERSON_LIMIT, items: {
           type: 'object', additionalProperties: false, required: ['reference', 'name', 'patientName'],
           properties: { reference: { type: 'string', pattern: assistantResourceId.source },
-            name: { type: 'string', maxLength: 100 }, patientName: { type: 'string', maxLength: 100 } },
+            name: { type: 'string', maxLength: 100 }, patientName: { type: 'string', minLength: 1, maxLength: patientDisplayNameLimit } },
         },
       } },
     },
@@ -114,7 +115,7 @@ export const assistantToolRegistry = {
         value.matches.every(row => exactAssistantObject(row, ['reference', 'name', 'patientName']) &&
           typeof row.reference === 'string' && assistantResourceId.test(row.reference) &&
           typeof row.name === 'string' && personName.test(row.name) &&
-          typeof row.patientName === 'string' && displayName.test(row.patientName));
+          typeof row.patientName === 'string' && !!row.patientName.trim() && row.patientName.length <= patientDisplayNameLimit);
     },
   },
 } as const;
@@ -133,10 +134,13 @@ export function parseAssistantToolResult<K extends AssistantToolId>(tool: K, val
 
 export function routeAssistantTool(prompt: string, now = Date.now()): AssistantToolCall | { kind: 'clarify'; message: string } | { kind: 'other' } {
   if (prompt.length > 400 || /[\r\n]/.test(prompt.trim())) return { kind: 'other' };
-  const text = prompt.trim().replace(/[?.!]$/, '').trim();
+  const text = prompt.trim().replace(/[?.!]+$/, '').trim();
   const name = /^(?:find (?:person )?|look up (?:person )?|hanapin si )(.+)$/i.exec(text);
   if (name) {
-    const input = parseAssistantToolInput('find_person_by_name', { name: name[1].trim() }, now);
+    const exactName = name[1].trim().replace(/,?\s+please$/i, '');
+    // Do not interpret a qualifier as a clinic selector or as part of the recorded name.
+    const input = /\s+from\s+/i.test(exactName) ? null
+      : parseAssistantToolInput('find_person_by_name', { name: exactName }, now);
     return input ? { kind: 'tool', tool: 'find_person_by_name', input }
       : { kind: 'clarify', message: 'Enter the exact recorded owner name only. Contact details are not available to the assistant.' };
   }
@@ -146,6 +150,6 @@ export function routeAssistantTool(prompt: string, now = Date.now()): AssistantT
   const input = explicit ? parseAssistantToolInput('inventory_import_history', { from: explicit[1], through: explicit[2] }, now)
     : recent ? recentRange(now) : null;
   return input ? { kind: 'tool', tool: 'inventory_import_history', input } : {
-    kind: 'clarify', message: 'Do you mean CSV catalog items imported, rather than stock units received? Ask for recent imports or give two Manila dates (YYYY-MM-DD), at most 31 days apart.',
+    kind: 'clarify', message: 'This lookup counts catalog items imported by CSV, not payments or stock received. For CSV imports, ask for recent imports or give two Manila dates (YYYY-MM-DD), at most 31 days apart.',
   };
 }

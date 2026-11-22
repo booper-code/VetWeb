@@ -17,6 +17,8 @@ export function AIProviderSettings({ triggerToast }: { triggerToast: (message: s
   const [config, setConfig] = useState(() => loadAIConfig() ?? emptyConfig());
   const [state, setState] = useState<DiscoveryState>({ kind: 'idle' });
   const [search, setSearch] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerButton = useRef<HTMLButtonElement>(null);
   const pending = useRef<AbortController | null>(null);
   const provider = getProvider(config.provider);
   const done = state.kind === 'ready' ? state.result : null;
@@ -33,6 +35,7 @@ export function AIProviderSettings({ triggerToast }: { triggerToast: (message: s
     pending.current = null;
     setState({ kind: 'idle' });
     setSearch('');
+    setPickerOpen(false);
   }
 
   async function discover() {
@@ -40,6 +43,7 @@ export function AIProviderSettings({ triggerToast }: { triggerToast: (message: s
     const request = new AbortController();
     pending.current = request;
     setSearch('');
+    setPickerOpen(false);
     setState({ kind: 'loading' });
     try {
       const result = await discoverAIModels(config, request.signal);
@@ -126,18 +130,34 @@ export function AIProviderSettings({ triggerToast }: { triggerToast: (message: s
         ? <p>No compatible models were reported. You can enter a model ID manually.</p>
         : <p className="vc-note">A listing does not guarantee that a model can run or that it is free to use.</p>}
     </div>}
-    {done && done.models.length > 0 && <div className="space-y-1">
-      <label htmlFor={`${id}-search`} className={labelClass}>Search models</label>
-      <input id={`${id}-search`} type="search" className={fieldClass} value={search}
-        onChange={event => setSearch(event.target.value)} placeholder="Filter by name or ID" />
-      <label htmlFor={`${id}-picker`} className={labelClass}>Discovered model</label>
-      <select id={`${id}-picker`} className={fieldClass}
-        value={visible.some(model => model.id === config.model) ? config.model : ''}
-        onChange={event => { const model = event.target.value; setConfig(prev => ({ ...prev, model })); }}>
-        <option value="" disabled>Choose a model</option>
-        {visible.map(model => <option key={model.id} value={model.id}>{model.name === model.id ? model.id : `${model.name} — ${model.id}`}</option>)}
-      </select>
-      {visible.length === 0 && <p className="vc-note">No models match your search.</p>}
+    {done && done.models.length > 0 && <div className="space-y-2" onKeyDown={event => {
+      if (event.key !== 'Escape' || !pickerOpen) return;
+      event.preventDefault();
+      setPickerOpen(false);
+      pickerButton.current?.focus();
+    }}>
+      <button type="button" ref={pickerButton} className="vc-btn" aria-expanded={pickerOpen}
+        aria-controls={`${id}-model-results`} onClick={() => setPickerOpen(open => !open)}>
+        Browse discovered models
+      </button>
+      <div id={`${id}-model-results`} hidden={!pickerOpen}>
+        <label htmlFor={`${id}-search`} className={labelClass}>Search models</label>
+        <input id={`${id}-search`} type="search" className={fieldClass} value={search}
+          onChange={event => setSearch(event.target.value)} placeholder="Filter by name or ID" />
+        {visible.length === 0 ? <p className="vc-note">No models match your search.</p>
+          : <ul aria-label="Discovered models" className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+            {visible.map(model => <li key={model.id}>
+              <button type="button" className="vc-btn w-full justify-start whitespace-normal break-all text-left"
+                onClick={() => {
+                  setConfig(prev => ({ ...prev, model: model.id }));
+                  setPickerOpen(false);
+                  pickerButton.current?.focus();
+                }}>
+                {model.name === model.id ? model.id : `${model.name} — ${model.id}`}
+              </button>
+            </li>)}
+          </ul>}
+      </div>
     </div>}
     <div className="space-y-1">
       <label htmlFor={`${id}-model`} className={labelClass}>Model ID</label>

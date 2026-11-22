@@ -669,9 +669,43 @@
   }
 }
 
+.vc-assistant-dialog {
+  opacity: 0;
+  transform: translateY(-0.75rem) scale(0.96);
+  transform-origin: top right;
+  transition: opacity 160ms ease, transform 160ms ease, display 160ms allow-discrete, overlay 160ms allow-discrete;
+}
+
+.vc-assistant-dialog[open] {
+  opacity: 1;
+  transform: none;
+}
+
+.vc-assistant-dialog::backdrop {
+  opacity: 0;
+  transition: opacity 160ms ease, display 160ms allow-discrete, overlay 160ms allow-discrete;
+}
+
+.vc-assistant-dialog[open]::backdrop {
+  opacity: 1;
+}
+
+@starting-style {
+  .vc-assistant-dialog[open] {
+    opacity: 0;
+    transform: translateY(-0.75rem) scale(0.96);
+  }
+
+  .vc-assistant-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vc-btn,
-  .vc-action-card {
+  .vc-action-card,
+  .vc-assistant-dialog,
+  .vc-assistant-dialog::backdrop {
     transition: none;
   }
 }

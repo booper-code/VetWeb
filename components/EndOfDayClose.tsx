@@ -99,7 +99,7 @@ export function EndOfDayClose({ report, onOpenPatient, onBack, clerkPreview }: V
           </li>)}
         </ul> : <p className="vc-note">No payment or settlement corrections recorded this day.</p>}
       </ClosePanel>
-      <ClosePanel title="Paid in full — not itemized" state={sections.entries}>
+      <ClosePanel title="Paid in full — not itemized" state={sections.entries} onMore={() => report.loadMore('entries')} moreLabel="Load more payments and settlements">
         <p className="text-sm text-warning-text-deep">Installment dates and methods weren’t itemized. These amounts are not included in daily collections.</p>
         {settlements.length ? <ul className="space-y-2">
           {settlements.map(({ entry, reversed }) => <li key={entry.id} className="break-words border-b border-hairline pb-2">

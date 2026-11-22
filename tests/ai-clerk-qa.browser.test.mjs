@@ -37,7 +37,10 @@ test('CSV import keeps the canonical Supplies category and accepts an explicit z
   await withStaticDemoBrowser(async ({ page, button, go }) => {
     await goToSettings(page, button);
     await uploadCsv(page, 'Item Code,Item Name,Category,Stock\nCSV-SUP,"Example Gauze, roll",Supplies,"0"');
-    await page.getByRole('status').filter({ hasText: 'Imported 1 inventory item' }).waitFor();
+    const result = page.getByRole('status', { name: 'Inventory CSV import result' });
+    await result.filter({ hasText: 'Imported 1 inventory item' }).waitFor();
+    // Completion belongs to the import panel, not the auto-dismissed global toast.
+    assert.match(await result.innerText(), /Imported 1 inventory item/);
     await go('Inventory');
     const row = page.getByRole('row').filter({ hasText: 'Example Gauze' });
     await row.getByRole('cell', { name: '0 unit/s', exact: true }).waitFor();
@@ -60,7 +63,7 @@ test('invalid or missing stock stops the entire CSV import before any rows are s
     for (const [index, [code, quantity, issue]] of cases.entries()) {
       await uploadCsv(page, `Item Code,Item Name,Category,Stock\nCSV-FIRST,Example First Row,Medicine,6\n${'\n'.repeat(index + 1)}${code},Example Bad Row,Supplies,${quantity}`);
       await page.waitForFunction(() => document.querySelector('#inventoryCsvUpload').value === '');
-      const status = page.getByRole('status').filter({ hasText: /CSV/ });
+      const status = page.getByRole('status', { name: 'Inventory CSV import result' }).filter({ hasText: /CSV row/ });
       await status.first().waitFor();
       assert.match(await status.first().innerText(), new RegExp(`row ${index + 4}.*${issue}.*nothing was imported`, 'i'));
     }

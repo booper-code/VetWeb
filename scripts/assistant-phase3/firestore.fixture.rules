@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Emulator fixtures only. This file is not referenced by the app's firebase.json.
+    function fixtureActor() {
+      return request.auth != null && request.auth.uid == 'fixture-owner';
+    }
+    match /phase3Fixtures/{fixture} {
+      allow get: if fixtureActor();
+      match /{collection}/{id} {
+        allow get: if fixtureActor() && collection in ['approvals', 'appointments', 'receipts'];
+        allow update: if fixtureActor() && collection == 'appointments';
+        allow create: if fixtureActor() && collection == 'receipts'
+          && request.resource.data.actorId == request.auth.uid
+          && request.resource.data.auditedAt == request.time;
+      }
+    }
+  }
+}

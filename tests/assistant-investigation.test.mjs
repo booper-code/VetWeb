@@ -66,6 +66,7 @@ test('typed validators reject unknown properties, invalid Manila dates, and inje
 
 test('gateway projects only names, caps results, and never forwards unknown fields', async () => {
   const seen = [];
+  const patientNames = ['Milo (Rescue)', `Milo ${'A'.repeat(145)}`, 'Milo 2', 'Milo 3', 'Milo 4', 'Milo 5'];
   const response = await handleAssistantTools(request('find_person_by_name', { name: 'Alex Reyes' }), env, async (url, init) => {
     seen.push([String(url), init]);
     if (String(url).includes('/members/')) return json({ fields: { role: { stringValue: 'viewer' } } });
@@ -73,13 +74,19 @@ test('gateway projects only names, caps results, and never forwards unknown fiel
     return json(Array.from({ length: 6 }, (_, index) => ({
       document: {
         name: `${reference}/patients/record-${index}`,
-        fields: { ownerName: { stringValue: 'Alex Reyes' }, name: { stringValue: `Milo ${index}` } },
+        fields: { ownerName: { stringValue: 'Alex Reyes' }, name: { stringValue: patientNames[index] } },
       },
     })));
   }, () => clock);
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(body.result.matches.length, 5);
+  assert.deepEqual(body.result.matches.map(row => row.patientName), patientNames.slice(0, 5));
+  for (const patientName of ['  ', 'A'.repeat(151)]) {
+    assert.equal(parseAssistantToolResult('find_person_by_name', {
+      more: false, matches: [{ reference: 'safe-record', name: 'Alex Reyes', patientName }],
+    }), null);
+  }
   assert.equal(body.result.more, true);
   assert.equal(seen.filter(([, init]) => init.body).length, 1);
   const query = JSON.parse(seen.find(([, init]) => init.body)[1].body).structuredQuery;

@@ -15,16 +15,29 @@ export const LoginScreen = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
   const [error, setError] = useState('');
+  const [resetSubmitted, setResetSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const isCreatingAccount = mode === 'signup';
+  const isResettingPassword = mode === 'reset';
 
   const handleAuth = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isLoading) return;
     setIsLoading(true);
     setError('');
+    setResetSubmitted(false);
 
     try {
+      if (isResettingPassword) {
+        const { auth } = await initializeFirebase();
+        const { sendPasswordResetEmail } = await import('firebase/auth');
+        await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+        setResetSubmitted(true);
+        return;
+      }
+
       // Keep the offline demo available independently of Firebase Auth.
       if (!isCreatingAccount && email === 'admin@binanvet.com' && password === 'admin123') {
         onLoginSuccess({
@@ -68,10 +81,18 @@ export const LoginScreen = ({
         displayName: credential.user.displayName || displayName.trim() || normalizedEmail.split('@')[0]
       });
     } catch (err: unknown) {
-      console.error(`[Auth] ${isCreatingAccount ? 'Account creation' : 'Sign-in'} failed:`, err);
+      const authError = err as { code?: string; message?: string } | null;
+      const code = authError?.code ?? '';
+      if (isResettingPassword) {
+        if (code === 'auth/user-not-found' || code === 'auth/user-disabled') setResetSubmitted(true);
+        else if (code === 'auth/invalid-email') setError('Enter a valid email address.');
+        else if (code === 'auth/too-many-requests') setError('Too many requests. Wait and try again later.');
+        else if (code === 'auth/network-request-failed') setError('Check your internet connection and try again.');
+        else setError('Could not request a reset link. Try again later.');
+        return;
+      }
 
-      const authError = err as { code?: string; message?: string };
-      const code = authError.code ?? '';
+      // Expected sign-in failures are shown in the form, not the Next.js error overlay.
       if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
         setError('Invalid email or password.');
       } else if (code === 'auth/email-already-in-use') {
@@ -85,19 +106,20 @@ export const LoginScreen = ({
       } else if (code === 'auth/network-request-failed') {
         setError('Cannot reach Firebase. Check your internet connection.');
       } else {
-        setError(authError.message || 'Authentication failed.');
+        console.error(`[Auth] ${isCreatingAccount ? 'Account creation' : 'Sign-in'} failed:`, err);
+        setError(authError?.message || 'Authentication failed.');
       }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const toggleAccountMode = () => {
-    setIsCreatingAccount(value => !value);
+  const changeMode = (nextMode: typeof mode) => {
+    setMode(nextMode);
     setDisplayName('');
-    setEmail('');
     setPassword('');
     setError('');
+    setResetSubmitted(false);
   };
 
   return (
@@ -175,20 +197,26 @@ export const LoginScreen = ({
               </div>
 
                 <h2 className="text-3xl font-black text-content-title tracking-tight">
-                {isCreatingAccount ? 'Create your account' : 'Secure Staff Login'}
+                {isResettingPassword ? 'Reset your password' : isCreatingAccount ? 'Create your account' : 'Secure Staff Login'}
                 </h2>
                 <p className="text-sm text-content-hint mt-2 font-medium">
-                {isCreatingAccount
+                {isResettingPassword ? 'Enter the email you use to sign in.'
+                  : isCreatingAccount
                   ? 'Create an account, then set up your clinic or accept an invitation.'
                   : 'Sign in to choose a clinic or accept an invitation.'}
                 </p>
             </div>
 
             {error && (
-              <div className="bg-danger-wash border border-danger-stroke text-danger-text px-4 py-3 rounded-xl text-sm font-medium mb-6 flex items-start gap-3">
+              <div role="alert" className="bg-danger-wash border border-danger-stroke text-danger-text px-4 py-3 rounded-xl text-sm font-medium mb-6 flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 flex-shrink-0" />
                 <p>{error}</p>
               </div>
+            )}
+            {resetSubmitted && (
+              <p role="status" className="mb-6 text-sm font-medium text-content-secondary">
+                If this email is eligible for a password reset, you&apos;ll get a link. Check your inbox and spam folder.
+              </p>
             )}
             
             <form onSubmit={handleAuth} className="space-y-5">
@@ -220,16 +248,18 @@ export const LoginScreen = ({
                   <input
                     id="loginEmail"
                     type="email"
+                    autoComplete="email"
+                    disabled={isLoading}
                     required
                     className="w-full pl-12 pr-4 py-3.5 bg-field-subtle border border-field-outline rounded-2xl text-sm font-bold text-content-title focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
                     placeholder="you@example.com"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => { setEmail(e.target.value); setResetSubmitted(false); }}
                   />
                 </div>
               </div>
 
-              <div>
+              {!isResettingPassword && <div>
                 <label htmlFor="loginPassword" className="text-xs font-black text-content-hint uppercase tracking-wider block mb-2">
                   Password
                 </label>
@@ -240,6 +270,7 @@ export const LoginScreen = ({
                   <input
                     id="loginPassword"
                     type="password"
+                    autoComplete={isCreatingAccount ? 'new-password' : 'current-password'}
                     required
                     className="w-full pl-12 pr-4 py-3.5 bg-field-subtle border border-field-outline rounded-2xl text-sm font-bold text-content-title focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all"
                     placeholder="Enter your password"
@@ -247,7 +278,7 @@ export const LoginScreen = ({
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </div>
-              </div>
+              </div>}
 
               <button
                 type="submit"
@@ -257,25 +288,34 @@ export const LoginScreen = ({
                 {isLoading ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin text-teal-300" />
-                    {isCreatingAccount ? 'Creating account…' : 'Authenticating…'}
+                    {isResettingPassword ? 'Requesting link…' : isCreatingAccount ? 'Creating account…' : 'Authenticating…'}
                   </>
                 ) : (
                   <>
-                    {isCreatingAccount ? 'Create Account' : 'Sign In'}
+                    {isResettingPassword ? 'Send reset link' : isCreatingAccount ? 'Create Account' : 'Sign In'}
                     <ChevronRight className="w-5 h-5 text-teal-300" />
                   </>
                 )}
               </button>
             </form>
 
+            {mode === 'signin' && (
+              <p className="text-center text-sm mt-5">
+                <button type="button" disabled={isLoading} onClick={() => changeMode('reset')}
+                  className="font-bold text-brand-text-strong hover:text-brand-text-deep">
+                  Forgot password?
+                </button>
+              </p>
+            )}
             <p className="text-center text-sm text-content-hint mt-5">
-              {isCreatingAccount ? 'Already have an account?' : 'New to VetCloudPro?'}{' '}
+              {isCreatingAccount ? 'Already have an account? ' : mode === 'signin' ? 'New to VetCloudPro? ' : ''}
               <button
                 type="button"
-                onClick={toggleAccountMode}
+                disabled={isLoading}
+                onClick={() => changeMode(mode === 'signin' ? 'signup' : 'signin')}
                 className="font-bold text-brand-text-strong hover:text-brand-text-deep"
               >
-                {isCreatingAccount ? 'Sign in' : 'Create an account'}
+                {isResettingPassword ? 'Back to sign in' : isCreatingAccount ? 'Sign in' : 'Create an account'}
               </button>
             </p>
 

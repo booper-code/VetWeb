@@ -1,5 +1,9 @@
 # VetCloudPro assistant Phase 2A lab
 
+For the separate **Phase 2B offline holdout**, run `npm run test:assistant:phase2b`
+and `npm run --silent eval:assistant:phase2b`. Its CLI has no live mode. See the
+[Phase 2B results](../../docs/ASSISTANT-PHASE-2B-RESULTS.md).
+
 This CLI is not imported by the app or any Worker. It evaluates three paths
 against the same **120 fictional fixtures**: the Phase 1 router, DeepSeek
 single-plan routing, and bounded DeepSeek orchestration. A fourth,

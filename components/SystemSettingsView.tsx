@@ -24,6 +24,8 @@ export const SystemSettingsView = ({
 }) => {
   const [isSavingToggle, setIsSavingToggle] = useState(false);
   const [toggleError, setToggleError] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState('');
 
   const parseCSVLine = (line: string) => {
     const result: string[] = [];
@@ -73,15 +75,26 @@ export const SystemSettingsView = ({
   };
 
   const handleCSVFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const input = e.currentTarget;
+    const file = input.files?.[0];
+    if (!file || isImporting) return;
     if (file.size > 2 * 1024 * 1024) {
-      triggerToast('CSV files must be at most 2 MB. Nothing was imported.');
-      e.target.value = '';
+      setImportResult('CSV files must be at most 2 MB. Nothing was imported.');
+      input.value = '';
       return;
     }
 
+    setImportResult('');
+    setIsImporting(true);
+    const finishImport = () => {
+      input.value = '';
+      setIsImporting(false);
+    };
     const reader = new FileReader();
+    reader.onerror = reader.onabort = () => {
+      setImportResult('CSV file could not be read. Nothing was imported.');
+      finishImport();
+    };
 
     reader.onload = async () => {
       let savedCount = 0;
@@ -93,13 +106,13 @@ export const SystemSettingsView = ({
           .filter(row => row.text);
 
         if (rows.length < 2) {
-          triggerToast("CSV import failed. File has no data rows.");
+          setImportResult('CSV import failed. File has no data rows.');
           return;
         }
 
         const headerValues = parseCSVLine(rows[0].text);
         if (!headerValues) {
-          triggerToast(`CSV row ${rows[0].line}: invalid field quoting. Nothing was imported.`);
+          setImportResult(`CSV row ${rows[0].line}: invalid field quoting. Nothing was imported.`);
           return;
         }
         const headers = headerValues.map(header =>
@@ -121,7 +134,7 @@ export const SystemSettingsView = ({
         for (const row of rows.slice(1)) {
           const values = parseCSVLine(row.text);
           if (!values) {
-            triggerToast(`CSV row ${row.line}: invalid field quoting. Nothing was imported.`);
+            setImportResult(`CSV row ${row.line}: invalid field quoting. Nothing was imported.`);
             return;
           }
 
@@ -136,7 +149,7 @@ export const SystemSettingsView = ({
           const rawStock = getValue(values, ['stock', 'quantity', 'qty']);
           const stock = isService ? 999 : Number(rawStock);
           if (!isService && (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(rawStock) || !Number.isFinite(stock))) {
-            triggerToast(`CSV row ${row.line}: stock must be a non-negative number. Nothing was imported.`);
+            setImportResult(`CSV row ${row.line}: stock must be a non-negative number. Nothing was imported.`);
             return;
           }
 
@@ -172,7 +185,7 @@ export const SystemSettingsView = ({
         }
 
         if (importedItems.length === 0) {
-          triggerToast("No new valid inventory items found in CSV.");
+          setImportResult('No new valid inventory items found in CSV.');
           return;
         }
 
@@ -182,12 +195,12 @@ export const SystemSettingsView = ({
           savedCount += 1;
         }
 
-        triggerToast(`Imported ${importedItems.length} inventory item/s from CSV.`);
+        setImportResult(`Imported ${savedCount} inventory item/s from CSV.`);
       } catch (error) {
         console.error("CSV import failed:", error);
-        triggerToast(`CSV import stopped after ${savedCount} saved item(s). ${error instanceof Error ? error.message : 'Check the file and retry.'}`);
+        setImportResult(`CSV import stopped after ${savedCount} saved item(s). ${error instanceof Error ? error.message : 'Check the file and retry.'}`);
       } finally {
-        e.target.value = '';
+        finishImport();
       }
     };
 
@@ -263,6 +276,7 @@ export const SystemSettingsView = ({
             type="file"
             id="inventoryCsvUpload"
             accept=".csv,text/csv"
+            disabled={isImporting}
             className="hidden"
             onChange={handleCSVFileImport}
           />
@@ -272,8 +286,11 @@ export const SystemSettingsView = ({
             className="w-full bg-slate-950 text-white font-bold py-3 rounded-xl hover:bg-slate-800 text-sm transition-all flex items-center justify-center gap-2 shadow-sm mt-4 cursor-pointer"
           >
             <Database className="w-4 h-4 text-teal-400" />
-            Import Inventory CSV
+            {isImporting ? 'Importing inventory…' : 'Import Inventory CSV'}
           </label>
+          <p role="status" aria-label="Inventory CSV import result" className="text-sm font-medium text-content-secondary">
+            {isImporting ? 'Importing CSV…' : importResult}
+          </p>
         </div>
 
       </div>

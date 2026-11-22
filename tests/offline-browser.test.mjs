@@ -311,7 +311,7 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
   };
   const upload = async (page, report) => {
     await page.locator('#inventoryCsvUpload').setInputFiles(file);
-    const status = page.getByRole('status').filter({ hasText: /CSV import|inventory item\/s from CSV|No new valid inventory items/ });
+    const status = page.getByRole('status', { name: 'Inventory CSV import result' }).filter({ hasText: report });
     await status.waitFor();
     assert.match(await status.innerText(), report);
   };

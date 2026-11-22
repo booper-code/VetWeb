@@ -8,7 +8,8 @@ import { nextPatientId } from '@/lib/patients';
 import { useClinicPages } from '@/lib/useClinicPages';
 import { PageControls } from '@/components/PageControls';
 import { mutateClinicalRecord } from '@/lib/clinical-mutations';
-import { commitBilling, loadBillingHistory, loadBillingRecords, loadPaymentReceipt, type BillingOperation, type BillingRecords } from '@/lib/billing';
+import { checkBillingReconciliation, commitBilling, loadBillingHistory, loadBillingRecords, loadPaymentReceipt, type BillingOperation, type BillingRecords } from '@/lib/billing';
+import { reconcileBillingLedger } from '@/lib/billing-reconciliation';
 import { createDemoBilling } from '@/lib/demo-billing';
 import { createDemoEndOfDayLoader, loadEndOfDayPage, type ClosePageLoader } from '@/lib/end-of-day';
 import type { BillingGateway } from '@/lib/useBilling';
@@ -23,7 +24,7 @@ import { AppointmentsView } from '@/components/AppointmentsView';
 import { FollowUpQueue } from '@/components/FollowUpQueue';
 import { loadDemoFollowUpPage, loadFollowUpPage, recordFollowUpContact, type FollowUpCursor } from '@/lib/follow-up';
 import type { Appointment } from '@/types';
-import { inventoryFromDocument, loadClinicScanPage, loadDemoClinicScanPage, patientFromDocument } from '@/lib/clinic-pages';
+import { inventoryFromDocument, loadClinicScanPage, loadDemoClinicScanPage, loadInventoryCatalogCount, patientFromDocument } from '@/lib/clinic-pages';
 import { saveConsultation } from '@/lib/consultations';
 import {
   buildConsultationRecord,
@@ -41,6 +42,12 @@ import { Header } from '@/components/Header';
 import { WorkspaceAssistant } from '@/components/WorkspaceAssistant';
 import { assistantEditorTime, matchAssistantReschedule, type AssistantReschedule, type AssistantSchedule } from '@/lib/workspace-assistant';
 import { readAssistantRole, watchAssistantRole } from '@/lib/workspace-assistant-access';
+import { workspaceAIConfigIdentity, resetWorkspaceAIContext, workspaceAIPreviewAvailable,
+  workspaceAIHistoryLimit, planWorkspaceClinicQuery, type ClinicPlanTurn } from '@/lib/workspace-ai';
+import { executeClinicQueries, type ClinicQueryReply } from '@/lib/clinic-query';
+import { readClinicQuerySource } from '@/lib/clinic-query-client';
+import { loadDailyBriefing } from '@/lib/daily-briefing-client';
+import type { DailyBriefingOutcome } from '@/lib/daily-briefing';
 import { assistantResourceId, type AssistantToolCall } from '@/lib/assistant-tools';
 import { assistantToolEndpoint, requestAssistantTool, type AssistantLookup } from '@/lib/assistant-tool-client';
 import { DashboardHome } from '@/components/DashboardHome';
@@ -64,6 +71,9 @@ export default function App() {
   const [mutationScope] = useState(createMutationScope);
   const workspaceGeneration = mutationScope.capture();
   const leaving = useRef(false);
+  // Chat history is owned here, keyed by workspace scope + saved AI setup, so a
+  // provider/model/key change can never forward the previous setup's turns.
+  const clinicQueryHistory = useRef<{ key: string; turns: ClinicPlanTurn[] }>({ key: '', turns: [] });
   const [loggingOut, setLoggingOut] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [assistantHandoff, setAssistantHandoff] = useState<{ scopeKey: string; proposal: AssistantReschedule } | null>(null);
@@ -143,6 +153,9 @@ export default function App() {
     }).catch(() => publish(null));
     return () => { active = false; assistantAccessRef.current = null; stop?.(); };
   }, [shouldWatchAssistant, currentClinicId, assistantUid, assistantWorkspace, workspaceGeneration, mutationScope]);
+
+  // A different workspace/account must not inherit the previous chat context.
+  useEffect(() => { resetWorkspaceAIContext(); }, [assistantScopeKey]);
 
   useEffect(() => {
     if (getDevicePreference() !== 'trusted') return;
@@ -705,6 +718,15 @@ export default function App() {
       activeBillingClinic();
       return result;
     },
+    async reconcile(patientId) {
+      const clinicId = activeBillingClinic();
+      if (clinicId === 'demo-clinic') {
+        const patient = patients.find(row => row.id === patientId);
+        if (!patient) throw new Error('This patient is no longer available.');
+        return reconcileBillingLedger(patient.billing ?? null, demoBilling.current?.history(patientId).entries ?? []);
+      }
+      return checkBillingReconciliation(clinicId, patientId, activeBillingClinic);
+    },
     async refreshRecords(patientId, itemCodes) {
       const clinicId = activeBillingClinic();
       if (clinicId === 'demo-clinic') return;
@@ -915,6 +937,85 @@ export default function App() {
     if (!mayInvestigate() || signal.aborted || auth.currentUser?.uid !== assistantUid) return { error: 'access-denied' };
     const reply = await requestAssistantTool(assistantWorker, currentClinicId, token, call, signal);
     return mayInvestigate() && !signal.aborted && auth.currentUser?.uid === assistantUid ? reply : { error: 'access-denied' };
+  };
+
+  const countAssistantInventory = async (signal: AbortSignal): Promise<number | null> => {
+    if (signal.aborted || !assistantAllowed || leaving.current || !mutationScope.isCurrent(workspaceGeneration)) return null;
+    if (isDemoWorkspace) return inventory.length;
+    if (!currentClinicId || !mayInvestigate()) return null;
+    const { auth } = await initializeFirebase();
+    const current = () => !signal.aborted && navigator.onLine && mayInvestigate() && auth.currentUser?.uid === assistantUid;
+    if (!current()) return null;
+    const count = await loadInventoryCatalogCount(currentClinicId);
+    return current() ? count : null;
+  };
+
+  const chatWithClinicQuery = async (
+    prompt: string, history: readonly ClinicPlanTurn[], signal: AbortSignal,
+  ): Promise<ClinicQueryReply> => {
+    const unavailable = () => new Error('Clinic queries are unavailable. Reopen the assistant in the signed-in localhost sample workspace.');
+    const configKey = workspaceAIConfigIdentity();
+    if (!workspaceAIPreviewAvailable() || !currentClinicId || !assistantUid || signal.aborted || !mayInvestigate()) throw unavailable();
+    const { app, auth } = await initializeFirebase();
+    const current = () => !signal.aborted && navigator.onLine && mayInvestigate() &&
+      auth.currentUser?.uid === assistantUid && app.options.projectId === 'vetcloudpro-staging-6f819b';
+    if (!current()) throw unavailable();
+    const configIsCurrent = () => workspaceAIConfigIdentity() === configKey;
+    const setupChanged = () => new Error('AI setup changed. Ask again to use the saved configuration.');
+    if (!configIsCurrent()) throw setupChanged();
+
+    // The provider returns plans only, never clinic evidence.
+    // The component's empty history also marks the first send after Clear chat.
+    const historyKey = `${assistantScopeKey}:${configKey}`;
+    if (!history.length || clinicQueryHistory.current.key !== historyKey) {
+      clinicQueryHistory.current = { key: historyKey, turns: [] };
+    }
+    const context = clinicQueryHistory.current;
+    const action = await planWorkspaceClinicQuery(prompt, context.turns, signal);
+    if (!current()) throw unavailable();
+    if (!configIsCurrent()) throw setupChanged();
+    if (action.kind === 'conversation') {
+      context.turns = [...context.turns, { prompt, plan: null }].slice(-workspaceAIHistoryLimit);
+      return { kind: 'decline', message: action.message, plan: null };
+    }
+    if (action.kind === 'decline') return { kind: 'decline',
+      message: 'I couldn’t verify an answer from clinic records for that question. Try naming the record, list, or field you want me to check.', plan: null };
+
+    const plans = 'plans' in action ? action.plans : [action.plan];
+    const notice = 'notice' in action ? action.notice : undefined;
+    const outcomes = await executeClinicQueries(plans, table => readClinicQuerySource(
+      { clinicId: currentClinicId, uid: assistantUid, role: verifiedAccess?.role ?? null },
+      table, signal, () => current() && configIsCurrent(),
+    ));
+    if (!current()) throw unavailable();
+    if (!configIsCurrent()) throw setupChanged();
+    // The verified answer with patient names or amounts is rendered locally and
+    // never leaves this device; only plans with verified sources are retained.
+    const verified = plans.filter((_, index) => outcomes[index].status === 'ok' || outcomes[index].status === 'partial');
+    if (verified.length && !notice && clinicQueryHistory.current === context) {
+      const turn = verified.length === 1 ? { prompt, plan: verified[0] } : { prompt, plans: verified };
+      context.turns = [...context.turns, turn].slice(-workspaceAIHistoryLimit);
+    }
+    if (plans.length === 1) return { kind: 'result', outcome: outcomes[0], plan: plans[0], ...(notice ? { notice } : {}) };
+    return { kind: 'results', results: plans.map((plan, index) => ({ plan, outcome: outcomes[index] })) };
+  };
+
+  // Local, read-only front-desk briefing. It reads the signed-in clinic's real
+  // staging records, makes no provider call and forwards nothing. The same
+  // localhost/staging and access gates as the other preview callbacks apply.
+  const briefingForClinic = async (signal: AbortSignal): Promise<DailyBriefingOutcome> => {
+    const unavailable = (): DailyBriefingOutcome => ({ kind: 'unavailable',
+      message: 'Today’s briefing is unavailable. Reopen the assistant in the signed-in localhost staging workspace.' });
+    if (!workspaceAIPreviewAvailable() || !currentClinicId || !assistantUid || signal.aborted || !mayInvestigate()) return unavailable();
+    const { app, auth } = await initializeFirebase();
+    const current = () => !signal.aborted && navigator.onLine && mayInvestigate() &&
+      auth.currentUser?.uid === assistantUid && app.options.projectId === 'vetcloudpro-staging-6f819b';
+    if (!current()) return unavailable();
+    const outcome = await loadDailyBriefing({
+      clinicId: currentClinicId, uid: assistantUid, role: verifiedAccess?.role ?? null,
+      signal, isCurrent: current,
+    });
+    return current() ? outcome : unavailable();
   };
 
   const openAssistantPerson = async (id: string, stillOpen: () => boolean): Promise<string | null> => {
@@ -1335,6 +1436,9 @@ export default function App() {
           assistantAction={assistantAllowed ? <WorkspaceAssistant
             key={assistantScopeKey} schedule={assistantSchedule} canEdit={assistantCanEdit}
             onNavigate={navigateTo} onReview={reviewAssistantReschedule}
+            onCountInventory={countAssistantInventory}
+            onClinicQuery={!isDemoWorkspace && workspaceAIPreviewAvailable() ? chatWithClinicQuery : undefined}
+            onDailyBriefing={!isDemoWorkspace && workspaceAIPreviewAvailable() ? briefingForClinic : undefined}
             onLookup={!isDemoWorkspace && assistantToolEndpoint(assistantWorker) ? lookupAssistantTool : undefined}
             onOpenPerson={openAssistantPerson}
           /> : undefined}

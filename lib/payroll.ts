@@ -325,27 +325,28 @@ export const verifyPayrollChain = async (
   return { ok: true, count: sorted.length };
 };
 
-const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+// Payroll periods are calendar dates, not instants in the device timezone.
+const payrollDate = (value: string): Date | null => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith('0000')) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? date : null;
+};
 
-const countWorkingDays = (startDate: string, endDate: string): number => {
-  const start = new Date(`${startDate}T00:00:00`);
-  const end = new Date(`${endDate}T00:00:00`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
-
+const countWorkingDays = (start: Date, end: Date): number => {
   let days = 0;
-  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
-    const weekday = cursor.getDay();
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const weekday = cursor.getUTCDay();
     if (weekday !== 0 && weekday !== 6) days += 1;
   }
   return days;
 };
 
-const workingDaysInMonth = (startDate: string): number => {
-  const start = new Date(`${startDate}T00:00:00`);
-  if (Number.isNaN(start.getTime())) return 0;
-  const first = new Date(start.getFullYear(), start.getMonth(), 1);
-  const last = new Date(start.getFullYear(), start.getMonth() + 1, 0);
-  return countWorkingDays(isoDate(first), isoDate(last));
+const workingDaysInMonth = (date: Date): number => {
+  const first = new Date(date);
+  first.setUTCDate(1);
+  const last = new Date(first);
+  last.setUTCMonth(first.getUTCMonth() + 1, 0);
+  return countWorkingDays(first, last);
 };
 
 export const basePayForPeriod = (
@@ -353,11 +354,14 @@ export const basePayForPeriod = (
   period: Pick<PayrollPeriod, 'startDate' | 'endDate'>
 ): number => {
   if (!profile) return 0;
-  const periodDays = countWorkingDays(period.startDate, period.endDate);
+  const start = payrollDate(period.startDate);
+  const end = payrollDate(period.endDate);
+  if (!start || !end || end < start) return 0;
+  const periodDays = countWorkingDays(start, end);
   if (profile.payBasis === 'daily') return profile.rate * periodDays;
 
   // Monthly rates are pro-rated by working days so half-month cutoffs are fair.
-  const monthDays = workingDaysInMonth(period.startDate);
+  const monthDays = workingDaysInMonth(start);
   return monthDays > 0 ? (profile.rate * periodDays) / monthDays : profile.rate;
 };
 

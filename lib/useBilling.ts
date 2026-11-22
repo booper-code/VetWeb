@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BillingCommit, BillingCursor, BillingEntry, BillingOperation, BillingPage, PaymentReceipt } from '@/lib/billing';
+import type { BillingReconciliation } from '@/lib/billing-reconciliation';
 
 export type BillingGateway = {
   submit(operationId: string, draft: BillingOperation['draft'], patientId: string, expectedPatientRevision: number): Promise<BillingCommit>;
   pending(patientId: string): BillingOperation | null;
   history(patientId: string, after?: BillingCursor): Promise<BillingPage>;
+  reconcile(patientId: string): Promise<BillingReconciliation>;
   receipt(patientId: string, entryId: string): Promise<PaymentReceipt>;
   refreshRecords(patientId: string, itemCodes: string[]): Promise<void>;
 };
@@ -54,6 +56,7 @@ export function useBilling(patientId: string, gateway: BillingGateway, enabled: 
       if (mounted.current) await load();
     },
     loadMore: async () => { if (!busy && next) await load(next); },
+    reconcile: () => gateway.reconcile(patientId),
     receipt: (entryId: string) => gateway.receipt(patientId, entryId),
     submit: async (operation: Pick<BillingOperation, 'operationId' | 'draft' | 'expectedPatientRevision'>) => {
       const { operationId, draft, expectedPatientRevision } = operation;

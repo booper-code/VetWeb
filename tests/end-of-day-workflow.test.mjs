@@ -77,6 +77,23 @@ test('late loads cannot display another day, clinic, account, or previous role d
   }
 });
 
+test('the paid-in-full panel can finish paging from its own control', async () => {
+  const settlement = { entry: { id: 'settled', kind: 'unitemized-settlement', amountMinor: 40000, patientId: 'pet' }, reversed: false };
+  const app = await setup(async (kind, { after }) => kind !== 'entries' ? empty
+    : after === null ? { rows: [payment], next: 25 } : { rows: [settlement], next: null });
+  try {
+    await app.render();
+    const panel = [...app.doc.querySelectorAll('section')].find(node => node.querySelector('h2')?.textContent === 'Paid in full — not itemized');
+    assert.ok(panel);
+    const button = panel.querySelector('button');
+    assert.match(button.textContent, /Load more/);
+    assert.doesNotMatch(panel.textContent, /PHP 400\.00/);
+    await act(async () => button.click());
+    assert.match(panel.textContent, /PHP 400\.00/);
+    assert.doesNotMatch(panel.textContent, /Incomplete coverage/);
+  } finally { await app.close(); }
+});
+
 test('changing the date invalidates a patient open already in progress', async () => {
   const delayed = deferred();
   let navigated = false;

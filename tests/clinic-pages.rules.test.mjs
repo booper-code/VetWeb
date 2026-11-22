@@ -27,7 +27,7 @@ let source = await readFile(new URL('../lib/clinic-pages.ts', import.meta.url), 
 source = source.replace('@/lib/firebase', url('export const initializeFirebase = async () => globalThis.__pagingHandles;'));
 source = source.replace('firebase/firestore/lite', import.meta.resolve('firebase/firestore/lite'));
 source = source.replace('@/lib/stock-alert-values', new URL('../lib/stock-alert-values.ts', import.meta.url).href);
-const { loadClinicPage, loadClinicScanPage, appendUnique, CLINIC_PAGE_SIZE } = await import(url(ts.transpileModule(source, {
+const { loadClinicPage, loadClinicScanPage, loadInventoryCatalogCount, appendUnique, CLINIC_PAGE_SIZE } = await import(url(ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
 }).outputText));
 
@@ -57,7 +57,7 @@ test('real Firestore cursors bound pages, preserve legacy history and isolate cl
     });
     for (let index = 0; index < 7; index++) add('patients', `history-${index}`, { name: 'Legacy history', status: 'Discharged' });
     for (let index = 0; index < 57; index++) add('inventory', `item-${String(index).padStart(3, '0')}`, {
-      itemName: 'Synthetic item', category: 'Supplies', stock: 1,
+      itemName: 'Synthetic item', category: 'Supplies', stock: index ? 1 : 20,
       ...(index === 55 ? { expiryDate: '2026-11-20', threshold: 1 } : {}),
       ...(index === 56 ? { expiryDate: '2026-11-31' } : {}),
     });
@@ -117,6 +117,12 @@ test('real Firestore cursors bound pages, preserve legacy history and isolate cl
       assert.equal(later.rows.find(row => row.itemCode === 'item-056').expiryDate, undefined);
       await assert.rejects(loadClinicScanPage(`${clinicId}-not-a-member`, 'inventory', null),
         error => error.code === 'permission-denied');
+    });
+    await t.test('catalog aggregate counts past page one under Firestore membership rules', async () => {
+      assert.equal(await loadInventoryCatalogCount(clinicId), 57, 'counts documents, not stock units or loaded rows');
+      await assert.rejects(loadInventoryCatalogCount('demo-clinic'));
+      await createUserWithEmailAndPassword(auth, `nonmember-${Date.now()}@example.com`, 'PagingFixture123!');
+      await assert.rejects(loadInventoryCatalogCount(clinicId), { code: 'permission-denied' });
     });
   } finally {
     delete globalThis.__pagingHandles;

@@ -37,7 +37,13 @@ jobs:
       - run: npm run test:offline
       - run: npm run test:records
       - run: npm run test:workflows
+      - run: node --test tests/login-recovery.test.mjs
+      - run: node --test tests/payroll-values.test.mjs
       - run: node --test tests/assistant-investigation.test.mjs
+      - run: npm run test:assistant:phase2b
+      - run: npm run test:assistant:phase3
+      - run: npm run test:assistant:phase3:firestore
+      - run: node --test tests/billing-reconciliation.test.mjs tests/billing-workflow.test.mjs tests/end-of-day-workflow.test.mjs
       - run: npm run test:appointments
       - run: npx playwright install --with-deps chromium
       - run: npm run test:prototype

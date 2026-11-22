@@ -83,6 +83,14 @@ export const loadClinicPage = async (
   };
 };
 
+/** Server aggregation returns only the catalog size, not inventory documents or cached page counts. */
+export async function loadInventoryCatalogCount(clinicId: string): Promise<number> {
+  if (!clinicId || clinicId === 'demo-clinic') throw new Error('A cloud inventory count requires a real clinic.');
+  const { db, firestore: fs } = await initializeFirebase();
+  const snapshot = await fs.getCountFromServer(fs.collection(db, 'clinics', clinicId, 'inventory'));
+  return snapshot.data().count;
+}
+
 type ClinicScanRecords = { patients: PatientRecord; inventory: InventoryItem };
 const scanMappers: { [K in keyof ClinicScanRecords]: (id: string, data: DocumentData) => ClinicScanRecords[K] } = {
   patients: patientFromDocument,

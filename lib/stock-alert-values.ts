@@ -11,8 +11,12 @@ const manilaDate = new Intl.DateTimeFormat('en-US', {
   timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 
-export function isStockedCategory(category: InventoryItem['category']): boolean {
+export function isStockedCategory(category: unknown): boolean {
   return category === 'Medicine' || category === 'Supplies';
+}
+
+export function isReorderDue(stock: number, threshold: number): boolean {
+  return threshold > 0 && stock <= threshold;
 }
 
 export function isExpiryDate(value: unknown): value is string {
@@ -30,7 +34,7 @@ export function stockAlertFor(item: InventoryItem, today: string): StockAlert | 
   if (!isStockedCategory(item.category)) return null;
   const { itemCode, itemName, stock, threshold, expiryDate } = item;
   const reasons: StockAlertReason[] = [];
-  if (threshold > 0 && stock <= threshold) reasons.push('reorder');
+  if (isReorderDue(stock, threshold)) reasons.push('reorder');
   const date = isExpiryDate(expiryDate) ? expiryDate : null;
   if (stock > 0 && date) {
     // Date-only values are compared as calendar days, not hours left in Manila.
