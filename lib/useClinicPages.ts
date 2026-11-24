@@ -32,6 +32,8 @@ export function useClinicPages({
   const listenerVersion = useRef(0);
   const listenerSize = useRef(0);
   const inventoryError = useRef('');
+  const inventoryRetrySource = useRef<'listener' | 'page' | null>(null);
+  const inventoryPageRetryAdvance = useRef(false);
 
   const releaseListener = useCallback((target: InventoryListener) => {
     if (target.released) return;
@@ -72,6 +74,8 @@ export function useClinicPages({
       if (!isCurrent()) return;
       const message = error.message || 'Could not keep inventory in sync.';
       inventoryError.current = message;
+      inventoryRetrySource.current = 'listener';
+      inventoryPageRetryAdvance.current = false;
       stopInventoryListener();
       setState(previous => ({ ...previous, inventory: { ...previous.inventory,
         busy: false, error: message } }));
@@ -84,10 +88,14 @@ export function useClinicPages({
 
   const load = useCallback(async (kind: ClinicPageKind, reset = false) => {
     if (!authenticated || !clinicId || clinicId === 'demo-clinic' || inFlight.current.has(kind)) return;
-    // PageControls uses the same onLoad for Retry and Load more; an existing
-    // inventory error means Retry, which must not consume another page.
-    const retry = kind === 'inventory' && inventoryError.current !== '';
-    if (retry) inventoryError.current = '';
+    // PageControls uses the same onLoad for Retry and Load more. Remember what
+    // failed: a listener retry restarts at the same size, while a page-read
+    // retry repeats its intended read (which may be the next page).
+    const retrySource = kind === 'inventory' && inventoryError.current ? inventoryRetrySource.current : null;
+    if (retrySource) {
+      inventoryError.current = '';
+      inventoryRetrySource.current = null;
+    }
     const version = generation.current;
     inFlight.current.add(kind);
     setState(previous => ({ ...previous, [kind]: { ...previous[kind], busy: true, error: '' } }));
@@ -106,9 +114,13 @@ export function useClinicPages({
         if (reset) {
           loadedPages.current[kind] = 1;
           startInventoryListener(clinicId, CLINIC_PAGE_SIZE);
-        } else if (retry) {
+        } else if (retrySource === 'listener') {
           loadedPages.current[kind] = Math.max(pages, 1);
           startInventoryListener(clinicId, listenerSize.current || CLINIC_PAGE_SIZE * loadedPages.current[kind]!);
+        } else if (retrySource === 'page') {
+          loadedPages.current[kind] = inventoryPageRetryAdvance.current ? pages + 1 : Math.max(pages, 1);
+          inventoryPageRetryAdvance.current = false;
+          startInventoryListener(clinicId, CLINIC_PAGE_SIZE * loadedPages.current[kind]!);
         } else if (page.records.length > 0 || page.hasMore) {
           // Only an explicit Load more (with rows or a stale boundary) widens
           // the watched prefix.
@@ -125,7 +137,16 @@ export function useClinicPages({
       setState(previous => ({ ...previous, [kind]: { busy: false, loaded: true, hasMore: page.hasMore, error: '' } }));
     } catch {
       if (generation.current !== version) return;
-      if (kind === 'inventory') inventoryError.current = 'Could not load this page. Check your connection and retry.';
+      if (kind === 'inventory') {
+        inventoryError.current = 'Could not load this page. Check your connection and retry.';
+        if (retrySource === 'listener') {
+          inventoryRetrySource.current = 'listener';
+        } else {
+          inventoryRetrySource.current = 'page';
+          // Preserve the original intent across repeated page-read failures.
+          if (retrySource !== 'page') inventoryPageRetryAdvance.current = !reset;
+        }
+      }
       setState(previous => ({ ...previous, [kind]: {
         ...previous[kind], busy: false, error: 'Could not load this page. Check your connection and retry.'
       } }));
@@ -141,6 +162,8 @@ export function useClinicPages({
     inFlight.current = new Set();
     listenerSize.current = 0;
     inventoryError.current = '';
+    inventoryRetrySource.current = null;
+    inventoryPageRetryAdvance.current = false;
     stopInventoryListener();
     if (!authenticated || !clinicId || clinicId === 'demo-clinic') return;
     let active = true;

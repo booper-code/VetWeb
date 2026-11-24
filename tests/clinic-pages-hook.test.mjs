@@ -415,3 +415,72 @@ test('an empty terminal read keeps the prefix while an explicit stale-boundary l
   } finally { await hook.dom.close(); }
 });
 
+test('a retried failed page read widens once and survives the wider confirmed snapshot', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(request.kind === 'inventory'
+        ? snapshotPage([inventoryItem('ITM-1', 'One')], 'cursor-1', true)
+        : snapshotPage([], null, false));
+    });
+    await act(async () => hook.subscriptions[0].resolve(() => hook.unsubscribes.push('first')));
+    await act(async () => hook.subscriptions[0].onServer(snapshotPage([
+      inventoryItem('ITM-1', 'One'),
+    ], 'cursor-1', true)));
+
+    let loading;
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads[3].cursor, 'cursor-1');
+    await act(async () => {
+      hook.loads[3].reject(new Error('Page read failed'));
+      await loading;
+    });
+    assert.equal(hook.current().pages.state.inventory.error,
+      'Could not load this page. Check your connection and retry.');
+
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads[4].cursor, 'cursor-1');
+    await act(async () => {
+      hook.loads[4].resolve(snapshotPage([inventoryItem('ITM-2', 'Two')], 'cursor-2', true));
+      await loading;
+    });
+    assert.deepEqual(hook.current().inventory.map(item => item.itemCode), ['ITM-1', 'ITM-2']);
+    assert.equal(hook.subscriptions.length, 2);
+    assert.equal(hook.subscriptions[1].size, 100, 'a retried page read keeps its intended wider prefix');
+
+    await act(async () => hook.subscriptions[1].resolve(() => hook.unsubscribes.push('second')));
+    await act(async () => hook.subscriptions[1].onServer(snapshotPage([
+      inventoryItem('ITM-1', 'One'), inventoryItem('ITM-2', 'Two'),
+    ], 'cursor-2', false)));
+    assert.deepEqual(hook.current().inventory.map(item => item.itemCode), ['ITM-1', 'ITM-2'],
+      'the wider confirmed snapshot must not drop the retried rows');
+  } finally { await hook.dom.close(); }
+});
+
+test('a retried first-page read still starts a 50-row listener', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(snapshotPage([], null, false));
+    });
+    await act(async () => hook.subscriptions[0].resolve(() => hook.unsubscribes.push('first')));
+
+    let loading;
+    await act(async () => { loading = hook.current().pages.load('inventory', true); });
+    await act(async () => {
+      hook.loads[3].reject(new Error('First page failed'));
+      await loading;
+    });
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads[4].cursor, null);
+    await act(async () => {
+      hook.loads[4].resolve(snapshotPage([inventoryItem('ITM-1', 'First')], 'cursor-1', false));
+      await loading;
+    });
+    assert.equal(hook.subscriptions.length, 2);
+    assert.equal(hook.subscriptions[1].size, 50);
+  } finally { await hook.dom.close(); }
+});
+
