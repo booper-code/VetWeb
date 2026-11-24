@@ -295,15 +295,19 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
   const { handleAssistantTools } = await import(`data:text/javascript;base64,${Buffer.from(gateway.outputFiles[0].text).toString('base64')}`);
   const app = await startFixture(inventoryFixture, handleAssistantTools);
   const file = resolve('docs/sample-inventory.csv');
-  const inSettings = async (role, run) => {
+  const signIn = async role => {
     const context = await app.newContext();
+    const errors = [];
+    const page = await app.open(context, errors);
+    await page.getByPlaceholder('you@example.com').fill(accounts[role].email);
+    await page.getByPlaceholder('Enter your password').fill(password);
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(`${clinicName}.*${role}`, 'i') }).click();
+    return { context, page, errors };
+  };
+  const inSettings = async (role, run) => {
+    const { context, page, errors } = await signIn(role);
     try {
-      const errors = [];
-      const page = await app.open(context, errors);
-      await page.getByPlaceholder('you@example.com').fill(accounts[role].email);
-      await page.getByPlaceholder('Enter your password').fill(password);
-      await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-      await page.getByRole('button', { name: new RegExp(`${clinicName}.*${role}`, 'i') }).click();
       await page.getByRole('navigation', { name: 'Administration' }).getByRole('button', { name: 'Clinic setup' }).click();
       await run(page);
       assert.deepEqual(errors, []);
@@ -322,9 +326,17 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     await popup.getByRole('button', { name: 'Ask', exact: true }).click();
     return popup;
   };
+  let viewer;
   try {
     await inSettings('viewer', page => upload(page, /stopped after 0 saved item.*online owner or editor/));
     for (const collection of ['inventory', 'auditHeads', 'auditEvents', 'inventoryImportReceipts']) assert.deepEqual(await list(collection), []);
+
+    // An authorized viewer that already has Inventory open must see the owner's
+    // confirmed rows without refreshing. This is the stale-view regression.
+    viewer = await signIn('viewer');
+    await viewer.page.getByRole('navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
+    await viewer.page.getByText('All available records loaded.').waitFor();
+    assert.deepEqual(viewer.errors, []);
 
     await inSettings('owner', page => upload(page, /Imported 24 inventory item\/s from CSV/));
     const rows = await list('inventory');
@@ -349,6 +361,8 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     }
     assert.equal(rows.find(row => row.name.endsWith('/MED-ENR50')).fields.stock.integerValue, '0');
     assert.equal(rows.find(row => row.name.endsWith('/GRM-FULL')).fields.itemName.stringValue, 'Full groom (bath, haircut, nails)');
+    await viewer.page.getByRole('row').filter({ hasText: 'Full groom (bath, haircut, nails)' }).waitFor();
+    assert.deepEqual(viewer.errors, []);
 
     // A clean login exercises the real inventory read and detects existing codes.
     await inSettings('owner', async page => {
@@ -391,5 +405,8 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     const afterPartial = await list('inventoryImportReceipts');
     assert.equal(afterPartial.length, 25);
     assert.deepEqual(afterPartial.filter(doc => doc.name.includes('CSV-')).map(doc => doc.name.split('/').at(-1)), ['CSV-PARTIAL']);
-  } finally { await app.close(); }
+  } finally {
+    await viewer?.context.close();
+    await app.close();
+  }
 });

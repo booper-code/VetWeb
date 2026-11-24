@@ -83,6 +83,32 @@ export const loadClinicPage = async (
   };
 };
 
+/**
+ * Server-confirmed inventory prefix. Metadata changes are included so the first
+ * server snapshot arrives even when an identical cached snapshot was already
+ * delivered; cache-only and pending-write snapshots are not confirmations.
+ */
+export async function subscribeClinicInventory(
+  clinicId: string,
+  size: number,
+  onServer: (page: { records: InventoryItem[]; hasMore: boolean }) => void,
+  onError: (error: Error) => void,
+): Promise<() => void> {
+  if (!clinicId || clinicId === 'demo-clinic') throw new Error('Inventory sync requires a real clinic.');
+  const { db, firestore: fs } = await initializeFirebase();
+  const query = fs.query(
+    fs.collection(db, 'clinics', clinicId, 'inventory'),
+    fs.orderBy(fs.documentId()),
+    fs.limit(size + 1),
+  );
+  return fs.onSnapshot(query, { includeMetadataChanges: true }, snapshot => {
+    if (snapshot.metadata?.fromCache || snapshot.metadata?.hasPendingWrites) return;
+    const records = snapshot.docs.slice(0, size).map(document =>
+      inventoryFromDocument(document.id, document.data()));
+    onServer({ records, hasMore: snapshot.size > size });
+  }, error => onError(error instanceof Error ? error : new Error(String(error))));
+}
+
 /** Server aggregation returns only the catalog size, not inventory documents or cached page counts. */
 export async function loadInventoryCatalogCount(clinicId: string): Promise<number> {
   if (!clinicId || clinicId === 'demo-clinic') throw new Error('A cloud inventory count requires a real clinic.');

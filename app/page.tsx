@@ -278,7 +278,7 @@ export default function App() {
   };
 
   const clinicPages = useClinicPages({
-    clinicId: currentClinicId, authenticated: isAuthenticated,
+    clinicId: currentClinicId, uid: sessionUser?.uid ?? null, authenticated: isAuthenticated,
     setPatients, setInventory, setConsultations
   });
   const appointments = useAppointments({
