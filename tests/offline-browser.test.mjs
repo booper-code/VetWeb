@@ -55,7 +55,8 @@ const inventoryFixture = `
   import React from 'react';
   import {createRoot} from 'react-dom/client';
   import App from './app/page';
-  createRoot(document.getElementById('root')).render(<App />);
+  import OfflineStatus from './components/OfflineStatus';
+  createRoot(document.getElementById('root')).render(<><OfflineStatus staticShell={false} /><App /></>);
   window.fixture = true;
 `;
 const gatewayOrigin = 'http://127.0.0.1:8787';
@@ -244,7 +245,7 @@ test('real browser device cleanup uses only emulators', { timeout: 120000 }, asy
   } finally { await fixture.close(); }
 });
 
-test('signed-in CSV upload saves audited inventory for an owner but not a viewer', { timeout: 120000 }, async () => {
+test('signed-in CSV upload saves audited inventory for an owner but not a viewer', { timeout: 180000 }, async () => {
   const clinicId = `csv-release-${Date.now()}`;
   const clinicName = 'Fictional CSV release clinic';
   const password = 'SyntheticCsvFixture123!';
@@ -283,6 +284,32 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     ] }),
   });
   assert.equal(seed.status, 200, await seed.text());
+
+  // A separate fictional clinic and account in the same emulator, with no
+  // membership in the CSV clinic. It gets its own browser context below.
+  const otherClinicId = `csv-isolated-${Date.now()}`;
+  const otherClinicName = 'Fictional unrelated clinic';
+  const otherEmail = `${otherClinicId}-owner@example.com`;
+  const otherSignup = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-key', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: otherEmail, password, returnSecureToken: true }),
+  });
+  const otherResult = await otherSignup.json();
+  assert.equal(otherSignup.status, 200, otherResult.error?.message);
+  assert.ok(otherResult.localId);
+  const otherClinic = `${documents}/clinics/${otherClinicId}`;
+  const otherSeed = await fetch(`http://${host}/v1/${documents}:commit`, {
+    method: 'POST', headers: admin,
+    body: JSON.stringify({ writes: [
+      write(otherClinic, { name: otherClinicName, ownerId: otherResult.localId, aiEnabled: false }),
+      write(`${otherClinic}/members/${otherResult.localId}`, { uid: otherResult.localId, email: otherEmail, role: 'owner' }),
+      write(`${documents}/users/${otherResult.localId}/clinics/${otherClinicId}`, {
+        clinicId: otherClinicId, clinicName: otherClinicName, role: 'owner',
+      }),
+    ] }),
+  });
+  assert.equal(otherSeed.status, 200, await otherSeed.text());
+
   const list = async collection => {
     const response = await fetch(`http://${host}/v1/${clinic}/${collection}?pageSize=100`, { headers: admin });
     const result = await response.json();
@@ -294,15 +321,16 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     platform: 'node', format: 'esm', write: false });
   const { handleAssistantTools } = await import(`data:text/javascript;base64,${Buffer.from(gateway.outputFiles[0].text).toString('base64')}`);
   const app = await startFixture(inventoryFixture, handleAssistantTools);
+  const offlineBanner = page => page.getByRole('status').filter({ hasText: 'No internet connection' });
   const file = resolve('docs/sample-inventory.csv');
-  const signIn = async role => {
+  const signIn = async (role, targetClinicName = clinicName, email = accounts[role].email) => {
     const context = await app.newContext();
     const errors = [];
     const page = await app.open(context, errors);
-    await page.getByPlaceholder('you@example.com').fill(accounts[role].email);
+    await page.getByPlaceholder('you@example.com').fill(email);
     await page.getByPlaceholder('Enter your password').fill(password);
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-    await page.getByRole('button', { name: new RegExp(`${clinicName}.*${role}`, 'i') }).click();
+    await page.getByRole('button', { name: new RegExp(`${targetClinicName}.*${role}`, 'i') }).click();
     return { context, page, errors };
   };
   const inSettings = async (role, run) => {
@@ -326,7 +354,7 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     await popup.getByRole('button', { name: 'Ask', exact: true }).click();
     return popup;
   };
-  let viewer;
+  let viewer, other, remote;
   try {
     await inSettings('viewer', page => upload(page, /stopped after 0 saved item.*online owner or editor/));
     for (const collection of ['inventory', 'auditHeads', 'auditEvents', 'inventoryImportReceipts']) assert.deepEqual(await list(collection), []);
@@ -337,6 +365,13 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     await viewer.page.getByRole('navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
     await viewer.page.getByText('All available records loaded.').waitFor();
     assert.deepEqual(viewer.errors, []);
+
+    // A member of a different clinic has the same Inventory view open in an
+    // independent context before the owner imports anything.
+    other = await signIn('owner', otherClinicName, otherEmail);
+    await other.page.getByRole('navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
+    await other.page.getByText('All available records loaded.').waitFor();
+    assert.deepEqual(other.errors, []);
 
     await inSettings('owner', page => upload(page, /Imported 24 inventory item\/s from CSV/));
     const rows = await list('inventory');
@@ -363,6 +398,9 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     assert.equal(rows.find(row => row.name.endsWith('/GRM-FULL')).fields.itemName.stringValue, 'Full groom (bath, haircut, nails)');
     await viewer.page.getByRole('row').filter({ hasText: 'Full groom (bath, haircut, nails)' }).waitFor();
     assert.deepEqual(viewer.errors, []);
+    assert.equal(await other.page.getByRole('row').filter({ hasText: 'Full groom (bath, haircut, nails)' }).count(), 0);
+    const otherRows = await fetch(`http://${host}/v1/${otherClinic}/inventory?pageSize=100`, { headers: admin });
+    assert.deepEqual((await otherRows.json()).documents ?? [], []);
 
     // A clean login exercises the real inventory read and detects existing codes.
     await inSettings('owner', async page => {
@@ -405,7 +443,97 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     const afterPartial = await list('inventoryImportReceipts');
     assert.equal(afterPartial.length, 25);
     assert.deepEqual(afterPartial.filter(doc => doc.name.includes('CSV-')).map(doc => doc.name.split('/').at(-1)), ['CSV-PARTIAL']);
+
+    // A real owner edit and delete must reach the viewer's already-open view,
+    // while the unrelated clinic's open view stays untouched.
+    remote = await signIn('owner');
+    await remote.page.getByRole('navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
+    await remote.page.getByRole('row').filter({ hasText: 'MED-ENR50' }).waitFor();
+    const renamed = 'Full groom - remote update';
+    await remote.page.getByRole('row').filter({ hasText: 'Full groom (bath, haircut, nails)' }).click();
+    const details = remote.page.getByRole('dialog', { name: 'Inventory item details' });
+    await details.getByRole('button', { name: 'Edit Item Details' }).click();
+    await details.locator('input[type="text"]').first().fill(renamed);
+    await details.getByRole('button', { name: 'Save Changes' }).click();
+    await remote.page.getByRole('row').filter({ hasText: renamed }).waitFor();
+    await details.getByRole('button', { name: 'Close inventory item' }).click();
+    await viewer.page.getByRole('row').filter({ hasText: renamed }).waitFor();
+    assert.equal(await viewer.page.getByRole('row').filter({ hasText: 'Full groom (bath, haircut, nails)' }).count(), 0);
+    assert.equal(await other.page.getByRole('row').filter({ hasText: renamed }).count(), 0);
+
+    await remote.page.getByRole('row').filter({ hasText: 'MED-ENR50' }).click();
+    await details.getByRole('button', { name: 'Edit Item Details' }).click();
+    await details.getByRole('button', { name: 'Delete Catalog Item' }).click();
+    await details.getByRole('button', { name: 'Yes, Confirm Delete' }).click();
+    await viewer.page.getByRole('row').filter({ hasText: 'MED-ENR50' }).waitFor({ state: 'detached' });
+    assert.deepEqual(remote.errors, []);
+    assert.deepEqual(viewer.errors, []);
+    assert.deepEqual(other.errors, []);
+    const afterRemote = await list('inventory');
+    assert.equal(afterRemote.length, 24); // 24 + partial import - one deletion
+    const updated = afterRemote.find(row => row.name.endsWith('/GRM-FULL'));
+    assert.equal(updated.fields.itemName.stringValue, renamed);
+    assert.equal(updated.fields.revision.integerValue, '2');
+    assert.equal(afterRemote.some(row => row.name.endsWith('/MED-ENR50')), false);
+    assert.equal((await list('auditHeads')).length, 25);
+    assert.equal((await list('auditEvents')).length, 27);
+
+    // Keep this Owner session's in-memory role, but downgrade the canonical
+    // membership behind it. The UI still offers an Owner import; the emulator
+    // rules must reject the transaction independently of the front-end guard.
+    const demote = await fetch(`http://${host}/v1/${documents}:commit`, {
+      method: 'POST', headers: admin,
+      body: JSON.stringify({ writes: [
+        write(`${clinic}/members/${accounts.owner.uid}`, { role: 'viewer' }),
+        write(`${documents}/users/${accounts.owner.uid}/clinics/${clinicId}`, { role: 'viewer' }),
+      ] }),
+    });
+    assert.equal(demote.status, 200, await demote.text());
+    await remote.page.getByRole('navigation', { name: 'Administration' }).getByRole('button', { name: 'Clinic setup' }).click();
+    await remote.page.locator('#inventoryCsvUpload').setInputFiles({
+      name: 'fictional-denied.csv', mimeType: 'text/csv',
+      buffer: Buffer.from('Item Code,Item Name,Category,Stock\nCSV-DENIED,Denied by rules,Supplies,1\n'),
+    });
+    const denied = remote.page.getByRole('status', { name: 'Inventory CSV import result' });
+    await denied.filter({ hasText: /CSV import stopped after 0 saved item/ }).waitFor();
+    const deniedText = await denied.innerText();
+    // The emulator reports a real rules denial (viewer cannot point-read the
+    // audited head inside the transaction), not the client-side role guard.
+    assert.match(deniedText, /permission-denied|insufficient permissions|evaluation error|false for '(get|create|update)'/i, deniedText);
+    assert.doesNotMatch(deniedText, /online owner or editor/i);
+    assert.doesNotMatch(deniedText, /Imported \d+ inventory item/i);
+    assert.equal(await remote.page.evaluate(() => navigator.onLine), true);
+    assert.equal(await offlineBanner(remote.page).count(), 0);
+    assert.equal(await remote.page.getByText(/saved to cloud database/i).count(), 0);
+    assert.deepEqual(remote.errors, []);
+    assert.equal((await list('inventory')).some(row => row.name.endsWith('/CSV-DENIED')), false);
+
+    // The unrelated clinic's owner is still write-capable in the UI. While the
+    // browser context is offline, the signed-in gate must refuse to start a
+    // clinical write, and no document may appear in Firestore on reconnect.
+    await other.page.getByRole('navigation', { name: 'Administration' }).getByRole('button', { name: 'Clinic setup' }).click();
+    await other.context.setOffline(true);
+    await offlineBanner(other.page).waitFor();
+    assert.equal(await other.page.evaluate(() => navigator.onLine), false);
+    await other.page.locator('#inventoryCsvUpload').setInputFiles({
+      name: 'fictional-offline.csv', mimeType: 'text/csv',
+      buffer: Buffer.from('Item Code,Item Name,Category,Stock\nCSV-OFFLINE,Offline attempt,Supplies,1\n'),
+    });
+    const offlineResult = other.page.getByRole('status', { name: 'Inventory CSV import result' });
+    await offlineResult.filter({ hasText: /CSV import stopped after 0 saved item/ }).waitFor();
+    assert.match(await offlineResult.innerText(), /online owner or editor/i);
+    assert.doesNotMatch(await offlineResult.innerText(), /Imported \d+ inventory item/i);
+    assert.equal(await other.page.getByText(/saved to cloud database/i).count(), 0);
+    const offlineRows = await fetch(`http://${host}/v1/${otherClinic}/inventory?pageSize=100`, { headers: admin });
+    assert.deepEqual((await offlineRows.json()).documents ?? [], []);
+    await other.context.setOffline(false);
+    await offlineBanner(other.page).waitFor({ state: 'detached' });
+    const reconnectedRows = await fetch(`http://${host}/v1/${otherClinic}/inventory?pageSize=100`, { headers: admin });
+    assert.deepEqual((await reconnectedRows.json()).documents ?? [], []);
+    assert.deepEqual(other.errors, []);
   } finally {
+    await other?.context.close();
+    await remote?.context.close();
     await viewer?.context.close();
     await app.close();
   }

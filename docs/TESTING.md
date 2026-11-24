@@ -3,7 +3,10 @@
 For the staged functionality pass, isolation preflight, and release criteria,
 see the [full QA plan](FULL-QA-PLAN.md).
 
-Use the pinned Node version in `.node-version` and Java 21 for emulator tests.
+Use the pinned Node version in `.node-version` (24.22.2) and Java 21 for emulator tests.
+The offline/browser slice recorded below was verified with Node 24.21.0 (one patch
+below the pin) and Java 25.0.4.1; the emulators, Chromium and all listed suites
+passed on those installed versions, but the pinned pair was not re-run here.
 No command below needs live credentials or writes to the staging/shared backend.
 
 ```sh
@@ -113,11 +116,25 @@ If Java is unpacked privately, prepend its `bin` directory to `PATH`.
   and actual IndexedDB. The device-settings fixture covers cross-tab sign-out,
   a trusted initialization/wipe race, blocked deletion, status surviving
   sign-out/remount, and retry. A separate test-only bundle renders the main app
-  page and signs in with fictional Viewer and Owner accounts: the same
-  `docs/sample-inventory.csv` leaves the Viewer’s clinic unchanged, saves 24
-  rows and their audit records as Owner, and creates no duplicates after a
-  fresh sign-in and retry. Both bundles connect only to loopback; neither is
-  the hosted staging app.
+  page plus the real `OfflineStatus` shell (service-worker registration off)
+  and signs in with fictional Viewer and Owner accounts in independent browser
+  contexts: the same `docs/sample-inventory.csv` leaves the Viewer’s clinic
+  unchanged, saves exactly 24 rows with 24 audit heads, events and receipts as
+  Owner, and creates no duplicates after a fresh sign-in and retry. A Viewer
+  that opened Inventory before the import sees the owner’s row, a later
+  owner rename and an owner deletion without refreshing; a member of a second
+  fictional clinic with its own context never sees those rows and its
+  inventory stays empty on the server. With a write-capable Owner session held
+  in memory but the canonical emulator membership downgraded to viewer, an
+  import that the UI still offers fails with a real Firestore rules denial:
+  `navigator.onLine` is true, the production status reports the rules error
+  (not a success and not the offline banner), and no `CSV-DENIED` document is
+  committed. A separate Owner context put offline shows the real banner and a
+  front-end read-only refusal, commits no `CSV-OFFLINE` document either before
+  or after reconnect, and the banner clears on reconnect. Both bundles connect
+  only to loopback with fictional accounts; neither is the hosted staging app.
+  These are local emulator results: the shared cloud project’s deployed rules,
+  physically separate devices and real network outages are not verified.
 - `test:offline:banner`: builds the static export, then checks the real app
   shell offline banner at desktop and mobile widths plus the mounted live
   region, reduced motion, service-worker notice independence, and reconnect.
