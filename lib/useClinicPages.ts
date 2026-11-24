@@ -13,7 +13,7 @@ const initial = () => ({
 });
 
 type InventoryListener = { unsubscribe: (() => void) | null; released: boolean };
-type ServerInventoryPage = { records: InventoryItem[]; hasMore: boolean };
+type ServerInventoryPage = { records: InventoryItem[]; hasMore: boolean; cursor?: ClinicCursor };
 
 export function useClinicPages({
   clinicId, uid, authenticated, setPatients, setInventory, setConsultations
@@ -30,6 +30,8 @@ export function useClinicPages({
   const loadedPages = useRef<Partial<Record<ClinicPageKind, number>>>({});
   const listener = useRef<InventoryListener | null>(null);
   const listenerVersion = useRef(0);
+  const listenerSize = useRef(0);
+  const inventoryError = useRef('');
 
   const releaseListener = useCallback((target: InventoryListener) => {
     if (target.released) return;
@@ -48,6 +50,7 @@ export function useClinicPages({
 
   const startInventoryListener = useCallback((clinic: string, size: number) => {
     stopInventoryListener();
+    listenerSize.current = size;
     const version = generation.current;
     const token = listenerVersion.current;
     const target: InventoryListener = { unsubscribe: null, released: false };
@@ -57,17 +60,21 @@ export function useClinicPages({
     const accept = (page: ServerInventoryPage) => {
       if (!isCurrent()) return;
       // Confirmed rows replace the cached first page so remote edits and
-      // deletions render. Rows outside the previous prefix are kept until the
-      // widened listener reports its own first snapshot.
+      // deletions render. Keep the page cursor aligned with that prefix: after
+      // a remote insert/delete the old getDocs tail may no longer be on screen.
+      if (page.cursor !== undefined) cursors.current.inventory = page.cursor;
+      inventoryError.current = '';
       setInventory(page.records);
       setState(previous => ({ ...previous, inventory: { ...previous.inventory,
         busy: false, loaded: true, hasMore: page.hasMore, error: '' } }));
     };
     const fail = (error: Error) => {
       if (!isCurrent()) return;
+      const message = error.message || 'Could not keep inventory in sync.';
+      inventoryError.current = message;
       stopInventoryListener();
       setState(previous => ({ ...previous, inventory: { ...previous.inventory,
-        busy: false, error: error.message || 'Could not keep inventory in sync.' } }));
+        busy: false, error: message } }));
     };
     void subscribeClinicInventory(clinic, size, accept, fail).then(unsubscribe => {
       if (target.released) unsubscribe();
@@ -77,25 +84,48 @@ export function useClinicPages({
 
   const load = useCallback(async (kind: ClinicPageKind, reset = false) => {
     if (!authenticated || !clinicId || clinicId === 'demo-clinic' || inFlight.current.has(kind)) return;
+    // PageControls uses the same onLoad for Retry and Load more; an existing
+    // inventory error means Retry, which must not consume another page.
+    const retry = kind === 'inventory' && inventoryError.current !== '';
+    if (retry) inventoryError.current = '';
     const version = generation.current;
     inFlight.current.add(kind);
     setState(previous => ({ ...previous, [kind]: { ...previous[kind], busy: true, error: '' } }));
     try {
       const page = await loadClinicPage(clinicId, kind, reset ? null : cursors.current[kind] ?? null);
       if (generation.current !== version) return;
-      cursors.current[kind] = page.cursor;
       if (kind.endsWith('Patients')) {
+        cursors.current[kind] = page.cursor;
         setPatients(previous => appendUnique(previous, page.records as PatientRecord[], record => record.id));
       } else if (kind === 'inventory') {
+        // An empty read leaves the last confirmed cursor in place; a stale
+        // boundary must not rewind the next page to the beginning of the list.
+        if (reset || page.records.length > 0) cursors.current[kind] = page.cursor;
         setInventory(previous => appendUnique(previous, page.records as InventoryItem[], record => record.itemCode));
-        loadedPages.current[kind] = (reset ? 0 : loadedPages.current[kind] ?? 0) + 1;
-        startInventoryListener(clinicId, CLINIC_PAGE_SIZE * loadedPages.current[kind]!);
+        const pages = loadedPages.current[kind] ?? 0;
+        if (reset) {
+          loadedPages.current[kind] = 1;
+          startInventoryListener(clinicId, CLINIC_PAGE_SIZE);
+        } else if (retry) {
+          loadedPages.current[kind] = Math.max(pages, 1);
+          startInventoryListener(clinicId, listenerSize.current || CLINIC_PAGE_SIZE * loadedPages.current[kind]!);
+        } else if (page.records.length > 0 || page.hasMore) {
+          // Only an explicit Load more (with rows or a stale boundary) widens
+          // the watched prefix.
+          loadedPages.current[kind] = pages + 1;
+          startInventoryListener(clinicId, CLINIC_PAGE_SIZE * loadedPages.current[kind]!);
+        } else if (!listener.current) {
+          loadedPages.current[kind] = Math.max(pages, 1);
+          startInventoryListener(clinicId, listenerSize.current || CLINIC_PAGE_SIZE * loadedPages.current[kind]!);
+        }
       } else {
+        cursors.current[kind] = page.cursor;
         setConsultations(previous => appendUnique(previous, page.records as Consultation[], record => record.id));
       }
       setState(previous => ({ ...previous, [kind]: { busy: false, loaded: true, hasMore: page.hasMore, error: '' } }));
     } catch {
       if (generation.current !== version) return;
+      if (kind === 'inventory') inventoryError.current = 'Could not load this page. Check your connection and retry.';
       setState(previous => ({ ...previous, [kind]: {
         ...previous[kind], busy: false, error: 'Could not load this page. Check your connection and retry.'
       } }));
@@ -109,6 +139,8 @@ export function useClinicPages({
     cursors.current = {};
     loadedPages.current = {};
     inFlight.current = new Set();
+    listenerSize.current = 0;
+    inventoryError.current = '';
     stopInventoryListener();
     if (!authenticated || !clinicId || clinicId === 'demo-clinic') return;
     let active = true;

@@ -91,7 +91,7 @@ export const loadClinicPage = async (
 export async function subscribeClinicInventory(
   clinicId: string,
   size: number,
-  onServer: (page: { records: InventoryItem[]; hasMore: boolean }) => void,
+  onServer: (page: { records: InventoryItem[]; hasMore: boolean; cursor: ClinicCursor }) => void,
   onError: (error: Error) => void,
 ): Promise<() => void> {
   if (!clinicId || clinicId === 'demo-clinic') throw new Error('Inventory sync requires a real clinic.');
@@ -103,9 +103,11 @@ export async function subscribeClinicInventory(
   );
   return fs.onSnapshot(query, { includeMetadataChanges: true }, snapshot => {
     if (snapshot.metadata?.fromCache || snapshot.metadata?.hasPendingWrites) return;
-    const records = snapshot.docs.slice(0, size).map(document =>
-      inventoryFromDocument(document.id, document.data()));
-    onServer({ records, hasMore: snapshot.size > size });
+    const docs = snapshot.docs.slice(0, size);
+    const records = docs.map(document => inventoryFromDocument(document.id, document.data()));
+    // A confirmed snapshot can shift the prefix after a remote insert/delete.
+    // Page requests must continue after the last row actually on screen.
+    onServer({ records, hasMore: snapshot.size > size, cursor: docs.at(-1) ?? null });
   }, error => onError(error instanceof Error ? error : new Error(String(error))));
 }
 

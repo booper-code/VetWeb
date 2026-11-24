@@ -331,3 +331,87 @@ test('subscribeClinicInventory ignores cached and pending snapshots and maps the
   assert.deepEqual(releases, ['unsubscribed']);
 });
 
+test('repeated listener retries restart the same bounded prefix without consuming pages', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(request.kind === 'inventory'
+        ? snapshotPage([inventoryItem('ITM-1', 'First')], 'cursor-1', true)
+        : snapshotPage([], null, false));
+    });
+    await act(async () => hook.subscriptions[0].resolve(() => hook.unsubscribes.push('first')));
+    await act(async () => hook.subscriptions[0].onError(new Error('Listener stopped')));
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      let loading;
+      await act(async () => { loading = hook.current().pages.load('inventory'); });
+      const retry = hook.loads[2 + attempt];
+      assert.equal(retry.cursor, 'cursor-1');
+      await act(async () => {
+        retry.resolve(snapshotPage([], 'cursor-1', true));
+        await loading;
+      });
+      assert.equal(hook.subscriptions.length, 1 + attempt);
+      assert.equal(hook.subscriptions[attempt].size, 50, `retry ${attempt} must not widen the prefix`);
+      await act(async () => hook.subscriptions[attempt].reject(new Error(`Restart ${attempt} failed`)));
+      assert.equal(hook.current().pages.state.inventory.error, `Restart ${attempt} failed`);
+    }
+    assert.equal(hook.current().inventory[0].itemName, 'First', 'confirmed rows survive repeated retries');
+  } finally { await hook.dom.close(); }
+});
+
+test('a remote insertion at the head re-cursors the next page from the confirmed prefix', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(request.kind === 'inventory'
+        ? snapshotPage([inventoryItem('ITM-1', 'One'), inventoryItem('ITM-2', 'Two')], 'cursor-2', true)
+        : snapshotPage([], null, false));
+    });
+    await act(async () => hook.subscriptions[0].resolve(() => hook.unsubscribes.push('first')));
+    await act(async () => hook.subscriptions[0].onServer(snapshotPage([
+      inventoryItem('ITM-1', 'One'), inventoryItem('ITM-2', 'Two'),
+    ], 'cursor-2', true)));
+    await act(async () => hook.subscriptions[0].onServer(snapshotPage([
+      inventoryItem('ITM-0', 'Zero'), inventoryItem('ITM-1', 'One'),
+    ], 'cursor-1', true)));
+    assert.deepEqual(hook.current().inventory.map(item => item.itemCode), ['ITM-0', 'ITM-1'],
+      'the displaced tail leaves the confirmed prefix');
+
+    let loading;
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads[3].cursor, 'cursor-1', 'the next page starts after the last confirmed row');
+    await act(async () => {
+      hook.loads[3].resolve(snapshotPage([inventoryItem('ITM-2', 'Two')], 'cursor-2', false));
+      await loading;
+    });
+    assert.deepEqual(hook.current().inventory.map(item => item.itemCode), ['ITM-0', 'ITM-1', 'ITM-2'],
+      'the displaced tail is recovered by the next page');
+  } finally { await hook.dom.close(); }
+});
+
+test('an empty terminal read keeps the prefix while an explicit stale-boundary load may widen it', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(snapshotPage([], null, false));
+    });
+    assert.equal(hook.subscriptions[0].size, 50);
+    await act(async () => hook.subscriptions[0].resolve(() => hook.unsubscribes.push('first')));
+
+    let loading;
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads[3].cursor, null);
+    await act(async () => { hook.loads[3].resolve(snapshotPage([], null, false)); await loading; });
+    assert.equal(hook.subscriptions.length, 1, 'an empty terminal read must not open a wider listener');
+
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    await act(async () => { hook.loads[4].resolve(snapshotPage([], null, true)); await loading; });
+    assert.equal(hook.subscriptions.length, 2, 'an explicit stale-boundary load may widen the prefix');
+    assert.equal(hook.subscriptions[1].size, 100);
+  } finally { await hook.dom.close(); }
+});
+
