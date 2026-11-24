@@ -44,8 +44,22 @@ export default function OfflineStatus({ staticShell }: { staticShell: boolean })
   }, [staticShell]);
   if (!offline && !notice) return null;
   return (
-    <div role="status" className="border-b border-warning-stroke bg-warning-wash px-4 py-2 text-center text-sm text-warning-text-max">
-      {offline ? 'Offline — clinical data may be incomplete or stale. Clinical changes require a connection. The fictional demo can run offline.' : notice}
-    </div>
+    <>
+      {offline && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="vc-offline-banner sticky top-0 z-50 border-b border-warning-stroke bg-warning-wash px-4 py-2 text-center text-sm text-warning-text-max"
+        >
+          <p className="font-bold">No internet connection</p>
+          <p>Clinic data is read-only until the connection returns. Clinic changes require a connection. The fictional demo can run offline.</p>
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="border-b border-warning-stroke bg-warning-wash px-4 py-2 text-center text-sm text-warning-text-max">
+          {notice}
+        </div>
+      )}
+    </>
   );
 }

@@ -701,11 +701,26 @@
   }
 }
 
+.vc-offline-banner {
+  animation: vc-offline-enter 180ms ease-out;
+}
+
+@keyframes vc-offline-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-0.75rem);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vc-btn,
   .vc-action-card,
   .vc-assistant-dialog,
   .vc-assistant-dialog::backdrop {
     transition: none;
+  }
+
+  .vc-offline-banner {
+    animation: none;
   }
 }
