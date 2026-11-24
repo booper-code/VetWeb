@@ -150,3 +150,129 @@ The SDK's underlying deletion may complete later after the blocker closes.
 
 The GitHub workflow runs on pushes to `main` and pull requests. Check its
 result separately; passing locally does not verify the GitHub run.
+
+## Cross-device freshness audit: remaining clinical views (Task 4)
+
+This is a read/write-path audit only; it adds no listener, permission, config,
+dependency or app change and does not claim app-wide live sync. It extends the
+Task 3 evidence above: **inventory is the only clinical collection whose
+confirmed remote changes reach an already-open view** (the independent-context
+emulator scenario in `tests/offline-browser.test.mjs:362-477` watches an import,
+a rename and a delete appear for a Viewer without refreshing, while a second
+clinic's open view stays untouched). The other `onSnapshot` users
+(`subscribeClinicAI` and `subscribeClinicImageUploads` in `lib/clinics.ts`,
+`watchAssistantRole` in `lib/workspace-assistant-access.ts`) deliver only
+configuration/access state, not clinical records. "Fetch-on-open" below means
+a one-shot read on mount, workspace/account change or an explicit button.
+
+### Patient lists
+- UI: `components/PatientRecordsView.tsx` (active/discharged directory and
+  dossier), `components/DashboardHome.tsx`, `components/ClinicPatientSearch.tsx`.
+- Read: `patients` state in `app/page.tsx:201` is filled by `useClinicPages`
+  `load('activePatients', true)` and `load('dischargedPatients')`
+  (`lib/useClinicPages.ts:89-156,158-179`) → `loadClinicPage`
+  (`lib/clinic-pages.ts:45-84`), which uses `fs.getDocs` (server-preferring,
+  cache fallback when offline). Discharged rows load only when that filter is
+  first opened (`components/PatientRecordsView.tsx:612`). Directory search is
+  a separate server-only lite `getDocs` scan (`loadClinicScanPage`,
+  `lib/clinic-pages.ts:128-146`), keyed by `clinicScanKey` and gated by
+  `clinicScanIsCurrent` (`app/page.tsx:110-111,295,1134-1143`).
+- Write: `createQuickPatient`, `updatePatientRecord`, `deletePatientRecord`
+  via `mutateClinicalRecord` (`app/page.tsx:315-655`); billing also patches
+  patient rows through `applyBillingRecords` (`app/page.tsx:662-670`).
+- Freshness: no listener. Fetch on open plus "Load more"/"Retry"
+  (`components/PageControls.tsx`); when `hasMore` is false there is **no
+  Refresh control**, so another device's admission/edit/discharge is invisible
+  in an open directory until workspace reload or a new login. Cached rows can
+  be visible: `getDocs` may fall back to cache, and opening an appointment's
+  patient can use `getDocFromCache` while offline (`app/page.tsx:820-837`).
+- Tests: `tests/clinic-pages-hook.test.mjs` pagination/generation (listener
+  assertions are inventory-only), `tests/clinic-pages.rules.test.mjs` cursor
+  bounds/legacy rows/clinic isolation, `tests/patient-search-workflow.test.mjs`
+  and `tests/patient-search.browser.test.mjs` paged search/dossier,
+  `tests/mutation-scope.test.mjs`. No test asserts a remote patient change
+  reaching an already-open directory.
+
+### Consultations
+- UI: `components/PatientRecordsView.tsx` (dossier SOAP list/form) and
+  `components/DashboardHome.tsx` (recent activity).
+- Read: `consultations` state (`app/page.tsx:263`) via `useClinicPages`
+  `load('consultations')` → `loadClinicPage` `fs.getDocs` (cache fallback),
+  with dashboard "Load more"/"Retry" at `app/page.tsx:1098-1101`.
+- Write: `toggleConsultationStatus` and `saveConsultationRecord`
+  (`app/page.tsx:747-818`) → `mutateClinicalRecord` / `saveConsultation`
+  (`lib/consultations.ts:55`), with stock changes patched into local state.
+- Freshness: no listener, no Refresh control once fully loaded. An open
+  dashboard or dossier misses another device's new SOAP or Draft→Completed
+  change until reload; cached rows can be visible via `getDocs`.
+- Tests: `tests/consultation-values.test.mjs`,
+  `tests/clinical-activity.test.mjs`, `tests/clinic-pages.rules.test.mjs`.
+  No cross-device assertion.
+
+### Appointments and follow-ups
+- UI: `components/AppointmentsView.tsx`, `components/FollowUpQueue.tsx`,
+  `components/DashboardHome.tsx` due cards, `components/AppointmentReminders.tsx`.
+- Read: `useAppointments` (`lib/useAppointments.ts`) → `loadAppointmentsPage`
+  (`lib/appointments.ts:20-34`) uses `getDocs` online and `getDocsFromCache`
+  offline, exposing `fromCache`/`refreshedAt` ("Cached results may be
+  incomplete or outdated", `components/AppointmentsView.tsx:199`). It loads on
+  mount, clinic/uid change, window change, "Load more" and "Refresh schedule"
+  (dashboard: `appointments.load(true)`, `app/page.tsx:1091`). Follow-ups are a
+  second, independently loaded path: `loadFollowUpPage` uses `getDocsFromServer`
+  (`lib/follow-up.ts:24-36`), loaded on mount plus "Refresh queue"/"Load more"
+  (`components/FollowUpQueue.tsx:59-68,113-115,147-148`).
+- Write: `saveAppointment` (`lib/appointments.ts:37-75`) and
+  `recordFollowUpContact` (`lib/follow-up.ts:46-71`) are revision-checked
+  audited commits; results are patched into local state
+  (`useAppointments.save`, `applyFollowUpContact`).
+- Freshness: no listener. Cached/partial appointment rows **are** visible
+  (offline cache path and bounded date window); follow-ups are server-only and
+  cannot show cached rows. A remote reschedule/cancel/contact is missed by an
+  open schedule, dashboard due card and follow-up queue until refresh.
+  `AppointmentReminders` only recomputes labels on focus/visibilitychange
+  (`components/AppointmentReminders.tsx:14-15`), not a refetch, as asserted in
+  `tests/appointments-workflow.test.mjs:271`.
+- Tests: `tests/appointment-values.test.mjs`,
+  `tests/appointments-workflow.test.mjs` (stale read-vs-save, window changes,
+  focus recalculation), `tests/appointments.rules.test.mjs`,
+  `tests/appointments.browser.test.mjs`, `tests/follow-up-values.test.mjs`,
+  `tests/follow-up-workflow.test.mjs`, `tests/follow-up.browser.test.mjs`.
+  Single-view races and rules are covered; cross-device propagation is not.
+
+### Billing
+- UI: `components/PatientBilling.tsx` in the dossier tab, state in
+  `lib/useBilling.ts`, gateway in `app/page.tsx:671-745`.
+- Read: `loadBillingHistory` (`lib/billing.ts:190-198`), `loadBillingRecords`
+  (`:177-188`), `checkBillingReconciliation` (`:200-224`) all use
+  `getDoc(s)FromServer`; `loadPaymentReceipt` (`:226-236`) uses a transactional
+  `tx.get`, and the commit receipt read is at `:172`. No cached ledger is
+  displayed. `useBilling` loads once per patient/session
+  (`lib/useBilling.ts:45-49`) and refetches on submit, explicit "Refresh
+  billing", "Load more billing entries" and conflict-driven `refreshRecords`
+  (`components/PatientBilling.tsx:182-192,255,300,323`).
+- Write: `commitBilling` through `mutateClinicalRecord` with audit/receipt;
+  responses patch patient/inventory state (`app/page.tsx:687-712`).
+- Freshness: no listener. An open billing panel can show a stale balance or
+  miss another device's posted entry/reversal until refresh or the next
+  save's conflict path; it never shows a cached ledger.
+- Tests: `tests/billing-values.test.mjs`, `tests/billing-workflow.test.mjs`
+  (stale balance/conflict review), `tests/billing-reconciliation.test.mjs`,
+  `tests/billing.rules.test.mjs`, `tests/billing.browser.test.mjs` (demo).
+  No cross-device assertion.
+
+### Next slice recommendation
+Tackle **consultations** next as the smallest safe extension of the proven
+inventory pattern: one read path (`useClinicPages.load('consultations')`),
+bounded ID-ordered pages with no date sort or status-driven list moves
+(`lib/clinic-pages.ts:56-60,69-78`), consumed by both the dashboard activity
+list and the dossier. A confirmed-prefix listener would close the same
+stale-view gap as inventory without widening to the whole collection, changing
+permissions, or touching appointment/billing conflict machinery; it still
+needs its own reviewed design and tests before implementation. Appointments
+are the higher-value follow-on but require a separate plan: the schedule is
+windowed and paginated with `committed`/generation race guards
+(`lib/useAppointments.ts:19-79`) while the follow-up queue reads the same
+collection through a different server-only path (`lib/follow-up.ts:28`), so a
+single collection-wide listener would be wrong in both places. Independent
+browser contexts are not physically separate devices; the shared cloud
+deployment and real outages remain unverified.
