@@ -12,7 +12,7 @@ const consultation = { id: 'shared-id', status: 'Draft', patient: 'Synthetic A' 
 async function mountApp({ readPatient = async () => ({ exists: () => false }),
   init = async () => ({ auth: {}, db: {}, firestore: { doc: (_, ...path) => path, getDoc: readPatient } }),
   restore, trusted = false, billingCommit, billingRecords, appointmentRows = [], appointmentSave = async () => true,
-  assistantEnabled, inventorySeed } = {}) {
+  assistantEnabled, inventorySeed, consultationSave } = {}) {
   const dom = domHarness();
   const props = {};
   const pending = deferred();
@@ -48,6 +48,8 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
     '@/lib/clinical-mutations': {
       mutateClinicalRecord: input => { calls.push(input); return pending.promise; },
     },
+    '@/lib/consultations': { saveConsultation: consultationSave },
+    ...(consultationSave && { '@/lib/consultation-values': { consultationValidationError: () => null } }),
     '@/lib/billing': {
       commitBilling: input => { calls.push(input); return billingCommit ? billingCommit(input) : pending.promise; },
       loadBillingRecords: billingRecords,
@@ -143,6 +145,23 @@ test('uncertain checkout blocks a replacement and survives a clinic switch', asy
     await act(async () => { await gateway.submit(unresolved.operationId, unresolved.draft, patient.id, unresolved.expectedPatientRevision); });
     assert.equal(sends, 2);
     assert.equal(app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
+  } finally { await app.close(); }
+});
+
+test('a delayed treatment result cannot overwrite newer confirmed stock', async () => {
+  const pending = deferred();
+  const newer = { ...item, revision: 5, stock: 7 };
+  const app = await mountApp({ inventorySeed: [newer], consultationSave: () => pending.promise });
+  try {
+    await app.tab('patients');
+    let saving;
+    await act(async () => { saving = app.props.PatientRecordsView.onSaveConsultation(patient, {}); });
+    await act(async () => {
+      pending.resolve({ consultation, inventory: [{ ...item, revision: 4, stock: 8 }] });
+      assert.equal(await saving, true);
+    });
+    assert.equal(app.props.PatientRecordsView.inventory[0].revision, 5);
+    assert.equal(app.props.PatientRecordsView.inventory[0].stock, 7);
   } finally { await app.close(); }
 });
 

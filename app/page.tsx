@@ -812,8 +812,10 @@ export default function App() {
       const result = await saveConsultation({ clinicId: currentClinicId, draft, inventory });
       if (!mutationScope.isCurrent(captured)) return false;
       setConsultations(previous => [result.consultation, ...previous]);
-      setInventory(previous => previous.map(item =>
-        result.inventory.find(change => change.itemCode === item.itemCode) ?? item));
+      setInventory(previous => previous.map(item => {
+        const change = result.inventory.find(row => row.itemCode === item.itemCode);
+        return change && (change.revision ?? 0) >= (item.revision ?? 0) ? change : item;
+      }));
       setTreatmentLink(null);
       return true;
     } catch (error) {
@@ -1159,6 +1161,11 @@ export default function App() {
           />
         );
       case 'inventory':
+        if (clinicPages.state.inventory?.accessDenied) {
+          return <p role="alert" className="rounded-xl border border-danger-stroke bg-danger-wash p-3 text-sm text-danger-text-deep">
+            {clinicPages.state.inventory.error}
+          </p>;
+        }
         return (
           <><InventoryControlView
             key={currentClinicId}

@@ -45,10 +45,17 @@ export const inventoryFromDocument = (itemCode: string, data: DocumentData): Inv
 export const loadClinicPage = async (
   clinicId: string,
   kind: ClinicPageKind,
-  cursor: ClinicCursor = null
+  cursor: ClinicCursor = null,
+  expectedInventoryUid?: string,
 ): Promise<ClinicPage> => {
   if (!clinicId || clinicId === 'demo-clinic') throw new Error('Cloud pagination requires a real clinic.');
-  const { db, firestore: fs } = await initializeFirebase();
+  const { db, auth, firestore: fs } = await initializeFirebase();
+  const requireInventoryIdentity = () => {
+    if (kind === 'inventory' && expectedInventoryUid !== undefined && auth.currentUser?.uid !== expectedInventoryUid) {
+      throw Object.assign(new Error('Clinic inventory access changed.'), { code: 'unauthenticated' });
+    }
+  };
+  requireInventoryIdentity();
   const collectionName = kind.endsWith('Patients') ? 'patients' : kind;
   const constraints = [];
   if (kind === 'activePatients') constraints.push(fs.where('status', 'in', ACTIVE_PATIENT_STATUSES));
@@ -62,6 +69,7 @@ export const loadClinicPage = async (
   const snapshot = await fs.getDocs(fs.query(
     fs.collection(db, 'clinics', clinicId, collectionName), ...constraints
   ));
+  requireInventoryIdentity();
   const records = snapshot.docs.map(document => {
     const data = document.data();
     if (collectionName === 'patients') return patientFromDocument(document.id, data);
@@ -83,7 +91,7 @@ export const loadClinicPage = async (
   };
 };
 
-const accessDenied = (error: unknown) =>
+export const isClinicInventoryAccessDenied = (error: unknown) =>
   ['permission-denied', 'unauthenticated'].includes((error as { code?: string })?.code ?? '');
 
 /**
@@ -131,7 +139,7 @@ export async function subscribeClinicInventory(
     }, error => {
       if (!isCurrent()) return;
       const normalized = error instanceof Error ? error : new Error(String(error));
-      if (accessDenied(error)) deny(normalized);
+      if (isClinicInventoryAccessDenied(error)) deny(normalized);
       else onError(normalized);
     });
   });

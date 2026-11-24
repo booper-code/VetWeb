@@ -602,9 +602,14 @@ test('a real Firebase identity change clears an open inventory view without an o
     await context.setOffline(false);
     await banner().waitFor({ state: 'detached' });
 
-    // A real Firebase auth change must not leave cached or listener data visible.
+    await row.getByText('Identity cached item', { exact: true }).click();
+    const drawer = page.getByRole('dialog', { name: 'Inventory item details' });
+    await drawer.waitFor();
+    // A real Firebase auth change clears both the table and the open drawer.
     await page.evaluate(() => window.fixture.signOut());
     await row.waitFor({ state: 'detached' });
+    assert.equal(await drawer.count(), 0, 'the drawer must not retain clinical data after access changes');
+    assert.equal(await page.getByRole('button', { name: 'Retry inventory', exact: true }).count(), 0);
     assert.equal(await banner().count(), 0);
     assert.deepEqual(errors, []);
   } finally {

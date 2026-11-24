@@ -77,6 +77,7 @@ function createHookHarness() {
     react: React,
     '@/lib/clinic-pages': {
       CLINIC_PAGE_SIZE: 50,
+      isClinicInventoryAccessDenied: error => ['permission-denied', 'unauthenticated'].includes(error?.code),
       appendUnique: (old, incoming, identity) => [...old, ...incoming.filter(record => !old.some(item => identity(item) === identity(record)))],
       loadClinicPage(clinicId, kind, cursor) {
         const pending = deferred();
@@ -562,10 +563,12 @@ test('an auth identity mismatch clears inventory and rejects stale reads and cal
       await stale;
     });
     assert.deepEqual([...hook.current().inventory], [], 'stale reads and callbacks cannot repopulate a cleared view');
+    await act(async () => { void hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads.length, 4, 'access loss cannot be retried within the old workspace');
   } finally { await hook.dom.close(); }
 });
 
-test('a newer confirmed snapshot wins over an in-flight page read for hasMore', async () => {
+test('a newer confirmed snapshot wins over an in-flight page read for rows, cursor and hasMore', async () => {
   const hook = createHookHarness();
   try {
     await hook.render('clinic-a');
@@ -584,12 +587,83 @@ test('a newer confirmed snapshot wins over an in-flight page read for hasMore', 
     await act(async () => { loading = hook.current().pages.load('inventory'); });
     await act(async () => hook.subscriptions[0].onServer(snapshotPage([
       inventoryItem('ITM-1', 'First'),
-    ], 'cursor-1', false)));
+    ], 'confirmed-cursor', false)));
     await act(async () => {
-      hook.loads[3].resolve(snapshotPage([], 'cursor-1', true));
+      hook.loads[3].resolve(snapshotPage([inventoryItem('REMOVED', 'Older row')], 'stale-cursor', true));
       await loading;
     });
     assert.equal(hook.current().pages.state.inventory.hasMore, false,
       'a stale page read must not override the newer confirmed hasMore');
+    assert.deepEqual(hook.current().inventory.map(row => row.itemCode), ['ITM-1']);
+    await act(async () => { void hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads[4].cursor, 'confirmed-cursor');
   } finally { await hook.dom.close(); }
+});
+
+test('a page read cannot erase a newer inventory listener error', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(snapshotPage([], null, false));
+    });
+    await act(async () => hook.subscriptions[0].resolve(() => {}));
+    let loading;
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    await act(async () => hook.subscriptions[0].onError(new Error('Inventory connection interrupted')));
+    await act(async () => {
+      hook.loads[3].resolve(snapshotPage([inventoryItem('STALE', 'Stale')], 'stale-cursor', true));
+      await loading;
+    });
+    assert.equal(hook.current().pages.state.inventory.error, 'Inventory connection interrupted');
+    assert.equal(hook.current().inventory.length, 0);
+    assert.equal(hook.subscriptions.length, 1);
+  } finally { await hook.dom.close(); }
+});
+
+test('a direct inventory permission denial clears the prefix and blocks retry', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(request.kind === 'inventory'
+        ? snapshotPage([inventoryItem('PRIVATE', 'Previously readable')], 'cursor-1', true)
+        : snapshotPage([], null, false));
+    });
+    let loading;
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    await act(async () => {
+      hook.loads[3].reject(Object.assign(new Error('Firestore rejected this read'), { code: 'permission-denied' }));
+      await loading;
+    });
+    assert.equal(hook.current().inventory.length, 0);
+    assert.match(hook.current().pages.state.inventory.error, /access changed/i);
+    await act(async () => { void hook.current().pages.load('inventory'); });
+    assert.equal(hook.loads.length, 4);
+  } finally { await hook.dom.close(); }
+});
+
+test('an inventory page checks Firebase identity before and after a cache-capable read', async () => {
+  const auth = { currentUser: { uid: 'other-user' } };
+  const pending = deferred(), started = deferred();
+  let queries = 0;
+  const firestore = {
+    collection: () => ({}), limit: () => ({}), query: () => ({}),
+    getDocs() { queries += 1; started.resolve(); return pending.promise; },
+  };
+  const { loadClinicPage } = loadSource('../../lib/clinic-pages.ts', {
+    '@/lib/firebase': { initializeFirebase: async () => ({ db: {}, auth, firestore }) },
+    '@/lib/stock-alert-values': loadSource('../../lib/stock-alert-values.ts'),
+  });
+  const wrongIdentity = loadClinicPage('clinic-a', 'inventory', null, 'user-a').catch(error => error);
+  const denial = await Promise.race([wrongIdentity, started.promise]);
+  assert.equal(queries, 0, 'do not start a cache-capable read under a different identity');
+  assert.equal(denial?.code, 'unauthenticated');
+  auth.currentUser = { uid: 'user-a' };
+  const loading = loadClinicPage('clinic-a', 'inventory', null, 'user-a');
+  await Promise.race([started.promise, loading]);
+  assert.equal(queries, 1);
+  auth.currentUser = null;
+  pending.resolve({ docs: [], size: 0, metadata: { fromCache: true } });
+  await assert.rejects(loading, { code: 'unauthenticated' });
 });
