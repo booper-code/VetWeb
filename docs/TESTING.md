@@ -12,6 +12,7 @@ npm run lint
 npm run test:images
 npm run test:backup
 npm run test:offline
+npm run test:offline:banner
 npm run test:records
 npm run test:workflows
 npm run test:appointments
@@ -117,6 +118,11 @@ If Java is unpacked privately, prepend its `bin` directory to `PATH`.
   rows and their audit records as Owner, and creates no duplicates after a
   fresh sign-in and retry. Both bundles connect only to loopback; neither is
   the hosted staging app.
+- `test:offline:banner`: builds the static export, then checks the real app
+  shell offline banner at desktop and mobile widths plus the mounted live
+  region, reduced motion, service-worker notice independence, and reconnect.
+  Use this script rather than running the browser test file directly so the
+  exported stylesheet is fresh.
 - `test:offline`: public service-worker cache policy and consent defaults.
   Browser/emulator passes do not establish physically separate-device behavior,
   staging deployment, or production readiness.

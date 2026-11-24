@@ -7,10 +7,20 @@ import { build } from 'esbuild';
 import { chromium } from 'playwright';
 import { withStaticDemoBrowser } from './helpers/static-demo-browser.mjs';
 
-const exportedHtml = await readFile(resolve('out/index.html'), 'utf8');
+const exportRoot = resolve('out');
+const buildHint = 'Run "npm run test:offline:banner" (it builds the static export first), or "npm run build:staging" before running this test file directly.';
+const readExport = async (path, label) => {
+  try {
+    return await readFile(resolve(exportRoot, path), 'utf8');
+  } catch (error) {
+    throw new Error(`Static export ${label} is missing at ${resolve(exportRoot, path)}. ${buildHint}`, { cause: error });
+  }
+};
+
+const exportedHtml = await readExport('index.html', 'HTML');
 const exportedCss = exportedHtml.match(/<link\b(?=[^>]*\brel="stylesheet")[^>]*\bhref="([^"]+\.css)"/)?.[1];
-if (!exportedCss) throw new Error('The static export has no stylesheet; run npm run build:staging first.');
-const stylesheet = await readFile(resolve('out', `.${exportedCss}`));
+if (!exportedCss) throw new Error(`Static export at ${exportRoot} has no linked stylesheet. ${buildHint}`);
+const stylesheet = await readExport(`.${exportedCss}`, 'stylesheet');
 
 const { outputFiles } = await build({
   stdin: {

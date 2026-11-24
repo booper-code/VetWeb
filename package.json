@@ -22,6 +22,7 @@
     "test:theme": "node --test tests/theme.browser.test.mjs",
     "test:prototype": "node --test tests/ui-prototype.browser.test.mjs",
     "test:offline": "node --test tests/offline-policy.test.mjs",
+    "test:offline:banner": "npm run build:staging && node --test tests/offline-banner.browser.test.mjs",
     "test:records": "node --test tests/record-validation.test.mjs",
     "test:consultations": "node --test tests/consultation-values.test.mjs tests/clinical-activity.test.mjs",
     "test:workflows": "node --test tests/mutation-scope.test.mjs tests/clinic-pages-hook.test.mjs tests/clinic-team-scope.test.mjs",
