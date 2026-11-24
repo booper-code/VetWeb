@@ -21,7 +21,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className="min-h-full flex flex-col">
+      <body className="flex h-full flex-col">
         <OfflineStatus staticShell={process.env.VETCLOUD_STATIC_EXPORT === '1'} />
         {process.env.VETCLOUD_STATIC_EXPORT === '1' && (
           <div role="note" className="bg-warning-tint px-4 py-2 text-center text-sm font-bold text-warning-text-max">

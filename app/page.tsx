@@ -1394,7 +1394,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-canvas font-sans">
+    <div className="flex min-h-0 flex-1 overflow-hidden bg-canvas font-sans">
       {/* Toast Notification Container */}
       {successToast && (
         <div role="status" className="fixed bottom-5 right-5 z-[60] flex max-w-[min(460px,calc(100vw-40px))] items-center gap-3 rounded-xl bg-[#173b36] px-5 py-3.5 text-white shadow-[0_12px_36px_#10271e50]">
@@ -1425,7 +1425,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      <div className="flex h-screen flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <Header
           toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
           searchQuery={searchQuery}

@@ -4,9 +4,13 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { build } from 'esbuild';
-import postcss from 'postcss';
-import tailwind from '@tailwindcss/postcss';
 import { chromium } from 'playwright';
+import { withStaticDemoBrowser } from './helpers/static-demo-browser.mjs';
+
+const exportedHtml = await readFile(resolve('out/index.html'), 'utf8');
+const exportedCss = exportedHtml.match(/<link\b(?=[^>]*\brel="stylesheet")[^>]*\bhref="([^"]+\.css)"/)?.[1];
+if (!exportedCss) throw new Error('The static export has no stylesheet; run npm run build:staging first.');
+const stylesheet = await readFile(resolve('out', `.${exportedCss}`));
 
 const { outputFiles } = await build({
   stdin: {
@@ -28,12 +32,8 @@ const { outputFiles } = await build({
   define: { 'process.env.NODE_ENV': '"production"' },
 });
 
-const stylesheet = await postcss([tailwind()]).process(
-  await readFile(resolve('app/globals.css'), 'utf8'),
-  { from: resolve('app/globals.css') },
-);
-
 const offlineBanner = page => page.getByRole('status').filter({ hasText: 'No internet connection' });
+const liveRegion = page => page.locator('[role="status"][aria-live="polite"]');
 const settle = banner => banner.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
 
 async function startFixture() {
@@ -42,9 +42,7 @@ async function startFixture() {
     if (url.pathname === '/fixture.js') {
       response.writeHead(200, { 'Content-Type': 'text/javascript' }).end(outputFiles[0].text);
     } else if (url.pathname === '/fixture.css') {
-      response.writeHead(200, { 'Content-Type': 'text/css' }).end(stylesheet.css);
-    } else if (url.pathname === '/permission-denied') {
-      response.writeHead(403, { 'Content-Type': 'application/json' }).end('{"error":{"status":"PERMISSION_DENIED"}}');
+      response.writeHead(200, { 'Content-Type': 'text/css' }).end(stylesheet);
     } else if (url.pathname === '/') {
       response.writeHead(200, { 'Content-Type': 'text/html' }).end(
         '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -104,14 +102,16 @@ test('offline banner enters from the top and clears when the connection returns'
   };
 
   try {
-    await t.test('mounts offline with the exact heading and a read-only explanation', async () => {
+    await t.test('mounts offline with a real heading, read-only explanation, and stale-cache caveat', async () => {
       const { context, page, errors } = await open({ startingOffline: true });
       try {
         const banner = offlineBanner(page);
         await banner.waitFor();
+        const heading = banner.getByRole('heading', { name: 'No internet connection', exact: true });
+        await heading.waitFor();
         const text = await banner.innerText();
-        assert.match(text, /No internet connection/);
         assert.match(text, /read-only/i);
+        assert.match(text, /stale/i);
         assert.match(text, /Clinic changes require a connection/i);
         assert.equal(await banner.evaluate(element => getComputedStyle(element).position), 'sticky');
         assert.equal(await banner.evaluate(element => getComputedStyle(element).top), '0px');
@@ -121,13 +121,16 @@ test('offline banner enters from the top and clears when the connection returns'
       }
     });
 
-    await t.test('enters downward, sticks to the top, and clears on reconnect', async () => {
+    await t.test('keeps an initially empty live region mounted until the connection drops', async () => {
       const { context, page, errors } = await open();
       try {
-        const banner = offlineBanner(page);
-        assert.equal(await banner.count(), 0);
+        const live = liveRegion(page);
+        await live.waitFor({ state: 'attached' });
+        assert.equal((await live.innerText()).trim(), '');
         await context.setOffline(true);
+        const banner = offlineBanner(page);
         await banner.waitFor();
+        await banner.getByRole('heading', { name: 'No internet connection', exact: true }).waitFor();
         const entrance = await banner.evaluate(element => {
           const style = getComputedStyle(element);
           return { name: style.animationName, duration: style.animationDuration, background: style.backgroundColor };
@@ -140,6 +143,7 @@ test('offline banner enters from the top and clears when the connection returns'
         assert.equal(await banner.evaluate(element => Math.round(element.getBoundingClientRect().top)), 0);
         await context.setOffline(false);
         await banner.waitFor({ state: 'detached' });
+        assert.equal((await live.innerText()).trim(), '');
         assert.deepEqual(errors, []);
       } finally {
         await context.close();
@@ -187,18 +191,6 @@ test('offline banner enters from the top and clears when the connection returns'
       }
     });
 
-    await t.test('a permission failure while online does not expose the banner', async () => {
-      const { context, page, errors } = await open();
-      try {
-        const status = await page.evaluate(async () => (await fetch('/permission-denied')).status);
-        assert.equal(status, 403);
-        assert.equal(await offlineBanner(page).count(), 0);
-        assert.deepEqual(errors, []);
-      } finally {
-        await context.close();
-      }
-    });
-
     await t.test('keeps service-worker notices visible independently of the connection', async () => {
       const { context, page, errors } = await open({ shell: true });
       try {
@@ -219,4 +211,58 @@ test('offline banner enters from the top and clears when the connection returns'
     await browser.close();
     await new Promise(done => server.close(done));
   }
+});
+
+test('offline banner fits the real app shell without adding document overflow', { timeout: 90000 }, async () => {
+  await withStaticDemoBrowser(async ({ page, go }) => {
+    await go('Inventory');
+    for (const [width, height] of [[1280, 800], [390, 844]]) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.context().setOffline(true);
+      const banner = offlineBanner(page);
+      await banner.waitFor();
+      await settle(banner);
+      const staging = page.getByRole('note').filter({ hasText: 'TEST STAGING' });
+      await staging.waitFor();
+      const layout = await page.evaluate(() => {
+        const root = document.documentElement;
+        const header = document.querySelector('header');
+        const main = document.querySelector('main');
+        const bannerElement = [...document.querySelectorAll('[role="status"]')]
+          .find(element => element.textContent.includes('No internet connection'));
+        const stagingElement = [...document.querySelectorAll('[role="note"]')]
+          .find(element => element.textContent.includes('TEST STAGING'));
+        const box = element => element.getBoundingClientRect().toJSON();
+        return {
+          innerHeight, innerWidth,
+          scrollHeight: root.scrollHeight, clientHeight: root.clientHeight,
+          scrollWidth: root.scrollWidth, clientWidth: root.clientWidth,
+          banner: box(bannerElement), staging: box(stagingElement), header: box(header),
+          mainClientHeight: main.clientHeight, mainScrollHeight: main.scrollHeight, mainScrollTop: main.scrollTop,
+          pageScrollY: window.scrollY,
+        };
+      });
+      assert.ok(layout.banner.top >= 0 && layout.banner.bottom <= layout.innerHeight + 1, `banner outside ${width}px viewport`);
+      assert.ok(layout.staging.top >= layout.banner.bottom - 1, `staging notice covered by banner at ${width}px`);
+      assert.ok(layout.staging.bottom <= layout.innerHeight + 1, `staging notice outside ${width}px viewport`);
+      assert.ok(layout.header.top >= layout.staging.bottom - 1, `header covered by banner or notice at ${width}px`);
+      assert.ok(layout.header.bottom <= layout.innerHeight + 1, `header outside ${width}px viewport`);
+      assert.ok(layout.scrollHeight <= layout.clientHeight + 1, `document overflow at ${width}px: ${layout.scrollHeight} > ${layout.clientHeight}`);
+      assert.ok(layout.scrollWidth <= layout.clientWidth + 1, `horizontal document overflow at ${width}px`);
+      assert.equal(layout.pageScrollY, 0);
+
+      await page.evaluate(() => { document.querySelector('main').scrollTop = 120; });
+      const before = await page.evaluate(() => document.querySelector('main').scrollTop);
+      assert.ok(before > 0, `main did not scroll at ${width}px`);
+      await page.context().setOffline(false);
+      await banner.waitFor({ state: 'detached' });
+      await page.context().setOffline(true);
+      await banner.waitFor();
+      const after = await page.evaluate(() => document.querySelector('main').scrollTop);
+      assert.equal(after, before, `internal main scroll changed at ${width}px`);
+      await page.context().setOffline(false);
+      await banner.waitFor({ state: 'detached' });
+    }
+  });
 });

@@ -42,19 +42,23 @@ export default function OfflineStatus({ staticShell }: { staticShell: boolean })
       window.removeEventListener('offline', update);
     };
   }, [staticShell]);
-  if (!offline && !notice) return null;
   return (
     <>
-      {offline && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="vc-offline-banner sticky top-0 z-50 border-b border-warning-stroke bg-warning-wash px-4 py-2 text-center text-sm text-warning-text-max"
-        >
-          <p className="font-bold">No internet connection</p>
-          <p>Clinic data is read-only until the connection returns. Clinic changes require a connection. The fictional demo can run offline.</p>
-        </div>
-      )}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={offline
+          ? 'vc-offline-banner sticky top-0 z-50 border-b border-warning-stroke bg-warning-wash px-4 py-2 text-center text-sm text-warning-text-max'
+          : 'sr-only'}
+      >
+        {offline && (
+          <>
+            <h2 className="font-bold">No internet connection</h2>
+            <p>Clinic data is read-only until the connection returns. Cached clinic data may be stale. Clinic changes require a connection. The fictional demo can run offline.</p>
+          </>
+        )}
+      </div>
       {notice && (
         <div role="status" className="border-b border-warning-stroke bg-warning-wash px-4 py-2 text-center text-sm text-warning-text-max">
           {notice}
