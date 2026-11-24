@@ -34,6 +34,7 @@ export function useClinicPages({
   const inventoryError = useRef('');
   const inventoryRetrySource = useRef<'listener' | 'page' | null>(null);
   const inventoryPageRetryAdvance = useRef(false);
+  const confirmationVersion = useRef(0);
 
   const releaseListener = useCallback((target: InventoryListener) => {
     if (target.released) return;
@@ -61,6 +62,7 @@ export function useClinicPages({
       && listener.current === target && !target.released;
     const accept = (page: ServerInventoryPage) => {
       if (!isCurrent()) return;
+      confirmationVersion.current += 1;
       // Confirmed rows replace the cached first page so remote edits and
       // deletions render. Keep the page cursor aligned with that prefix: after
       // a remote insert/delete the old getDocs tail may no longer be on screen.
@@ -80,11 +82,28 @@ export function useClinicPages({
       setState(previous => ({ ...previous, inventory: { ...previous.inventory,
         busy: false, error: message } }));
     };
-    void subscribeClinicInventory(clinic, size, accept, fail).then(unsubscribe => {
+    // A Firebase identity mismatch or rules denial clears the whole inventory
+    // view. Bumping generation also invalidates direct reads started earlier.
+    const deny = () => {
+      if (!isCurrent()) return;
+      generation.current += 1;
+      inventoryError.current = '';
+      inventoryRetrySource.current = null;
+      inventoryPageRetryAdvance.current = false;
+      stopInventoryListener();
+      cursors.current.inventory = null;
+      loadedPages.current.inventory = 0;
+      listenerSize.current = 0;
+      setInventory([]);
+      setState(previous => ({ ...previous, inventory: {
+        ...empty(), hasMore: false, error: 'Inventory access changed. Reload the workspace.'
+      } }));
+    };
+    void subscribeClinicInventory(clinic, size, accept, fail, uid ?? '', deny).then(unsubscribe => {
       if (target.released) unsubscribe();
       else target.unsubscribe = unsubscribe;
     }).catch(fail);
-  }, [stopInventoryListener, setInventory]);
+  }, [stopInventoryListener, setInventory, uid]);
 
   const load = useCallback(async (kind: ClinicPageKind, reset = false) => {
     if (!authenticated || !clinicId || clinicId === 'demo-clinic' || inFlight.current.has(kind)) return;
@@ -97,6 +116,7 @@ export function useClinicPages({
       inventoryRetrySource.current = null;
     }
     const version = generation.current;
+    const confirmedAtStart = confirmationVersion.current;
     inFlight.current.add(kind);
     setState(previous => ({ ...previous, [kind]: { ...previous[kind], busy: true, error: '' } }));
     try {
@@ -134,7 +154,11 @@ export function useClinicPages({
         cursors.current[kind] = page.cursor;
         setConsultations(previous => appendUnique(previous, page.records as Consultation[], record => record.id));
       }
-      setState(previous => ({ ...previous, [kind]: { busy: false, loaded: true, hasMore: page.hasMore, error: '' } }));
+      setState(previous => ({ ...previous, [kind]: { busy: false, loaded: true,
+        // A newer server confirmation owns hasMore; an older page read must not
+        // restore a stale Load more state.
+        hasMore: confirmationVersion.current === confirmedAtStart ? page.hasMore : previous[kind].hasMore,
+        error: '' } }));
     } catch {
       if (generation.current !== version) return;
       if (kind === 'inventory') {
@@ -164,6 +188,7 @@ export function useClinicPages({
     inventoryError.current = '';
     inventoryRetrySource.current = null;
     inventoryPageRetryAdvance.current = false;
+    confirmationVersion.current = 0;
     stopInventoryListener();
     if (!authenticated || !clinicId || clinicId === 'demo-clinic') return;
     let active = true;

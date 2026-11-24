@@ -83,9 +83,9 @@ function createHookHarness() {
         loads.push({ clinicId, kind, cursor, ...pending });
         return pending.promise;
       },
-      subscribeClinicInventory(clinicId, size, onServer, onError) {
+      subscribeClinicInventory(clinicId, size, onServer, onError, uid, onDenied) {
         const pending = deferred();
-        subscriptions.push({ clinicId, size, onServer, onError, ...pending });
+        subscriptions.push({ clinicId, size, onServer, onError, uid, onDenied, ...pending });
         return pending.promise;
       },
     },
@@ -288,13 +288,20 @@ test('subscribeClinicInventory ignores cached and pending snapshots and maps the
       return () => releases.push('unsubscribed');
     },
   };
+  const auth = {
+    currentUser: { uid: 'user-a' },
+    onAuthStateChanged(listener) {
+      listener(this.currentUser);
+      return () => { releases.push('auth'); };
+    },
+  };
   const { subscribeClinicInventory } = loadSource('../../lib/clinic-pages.ts', {
-    '@/lib/firebase': { initializeFirebase: async () => ({ db: {}, firestore }) },
+    '@/lib/firebase': { initializeFirebase: async () => ({ db: {}, auth, firestore }) },
     '@/lib/stock-alert-values': loadSource('../../lib/stock-alert-values.ts'),
   });
-  const pages = [], errors = [];
+  const pages = [], errors = [], denied = [];
   const unsubscribe = await subscribeClinicInventory('clinic-a', 2,
-    snapshot => pages.push(snapshot), error => errors.push(error));
+    snapshot => pages.push(snapshot), error => errors.push(error), 'user-a', error => denied.push(error));
   // The harness runs production code in a VM realm, so copy the options into
   // this realm before comparing their shape and exact value.
   assert.deepEqual({ ...options }, { includeMetadataChanges: true });
@@ -327,8 +334,53 @@ test('subscribeClinicInventory ignores cached and pending snapshots and maps the
 
   snapshots[0].onError('denied');
   assert.equal(errors[0].message, 'denied');
+  assert.equal(denied.length, 0);
   unsubscribe();
-  assert.deepEqual(releases, ['unsubscribed']);
+  assert.deepEqual(releases, ['auth', 'unsubscribed']);
+});
+
+test('subscribeClinicInventory rejects stale-identity snapshots and explicit access denial', async () => {
+  let authObserver;
+  const releases = [];
+  const auth = {
+    currentUser: { uid: 'user-a' },
+    onAuthStateChanged(listener) {
+      authObserver = listener;
+      listener(this.currentUser);
+      return () => { releases.push('auth'); };
+    },
+  };
+  const firestore = {
+    collection: () => ({}), documentId: () => 'documentId',
+    orderBy: () => ({}), limit: () => ({}), query: () => ({}),
+    onSnapshot(_query, _options, onNext, onError) {
+      firestore.onNext = onNext;
+      firestore.onError = onError;
+      return () => { releases.push('listener'); };
+    },
+  };
+  const { subscribeClinicInventory } = loadSource('../../lib/clinic-pages.ts', {
+    '@/lib/firebase': { initializeFirebase: async () => ({ db: {}, auth, firestore }) },
+    '@/lib/stock-alert-values': loadSource('../../lib/stock-alert-values.ts'),
+  });
+  const pages = [], errors = [], denied = [];
+  const unsubscribe = await subscribeClinicInventory('clinic-a', 1,
+    page => pages.push(page), error => errors.push(error), 'user-a', error => denied.push(error));
+  assert.equal(typeof authObserver, 'function', 'inventory sync must observe real Firebase auth');
+  const doc = id => ({ id, data: () => ({ itemName: 'Confirmed' }) });
+  firestore.onNext({ metadata: { fromCache: false, hasPendingWrites: false }, docs: [doc('A')], size: 1 });
+  assert.equal(pages.length, 1);
+
+  firestore.onError(Object.assign(new Error('denied'), { code: 'permission-denied' }));
+  assert.equal(denied.length, 1, 'a rules denial is an access mismatch, not a connection loss');
+  assert.equal(errors.length, 0);
+
+  auth.currentUser = { uid: 'user-b' };
+  authObserver(auth.currentUser);
+  firestore.onNext({ metadata: { fromCache: false, hasPendingWrites: false }, docs: [doc('B')], size: 1 });
+  assert.equal(pages.length, 1, 'snapshots under a different Firebase UID must be ignored');
+  unsubscribe();
+  assert.deepEqual(releases, ['auth', 'listener']);
 });
 
 test('repeated listener retries restart the same bounded prefix without consuming pages', async () => {
@@ -484,3 +536,60 @@ test('a retried first-page read still starts a 50-row listener', async () => {
   } finally { await hook.dom.close(); }
 });
 
+test('an auth identity mismatch clears inventory and rejects stale reads and callbacks', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a', true, 'user-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(request.kind === 'inventory'
+        ? snapshotPage([inventoryItem('ITM-1', 'First')], 'cursor-1', true)
+        : snapshotPage([], null, false));
+    });
+    assert.equal(hook.subscriptions[0].uid, 'user-a');
+    assert.equal(typeof hook.subscriptions[0].onDenied, 'function');
+    await act(async () => hook.subscriptions[0].resolve(() => hook.unsubscribes.push('first')));
+    assert.equal(hook.current().inventory[0].itemName, 'First');
+
+    let stale;
+    await act(async () => { stale = hook.current().pages.load('inventory'); });
+    await act(async () => hook.subscriptions[0].onDenied(new Error('auth changed')));
+    assert.deepEqual([...hook.current().inventory], []);
+    assert.match(hook.current().pages.state.inventory.error, /access|reload/i);
+
+    await act(async () => {
+      hook.subscriptions[0].onServer(snapshotPage([inventoryItem('STALE', 'Stale')], null, false));
+      hook.loads[3].resolve(snapshotPage([inventoryItem('STALE-READ', 'Stale read')], 'cursor-2', false));
+      await stale;
+    });
+    assert.deepEqual([...hook.current().inventory], [], 'stale reads and callbacks cannot repopulate a cleared view');
+  } finally { await hook.dom.close(); }
+});
+
+test('a newer confirmed snapshot wins over an in-flight page read for hasMore', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    await act(async () => {
+      for (const request of hook.loads) request.resolve(request.kind === 'inventory'
+        ? snapshotPage([inventoryItem('ITM-1', 'First')], 'cursor-1', true)
+        : snapshotPage([], null, false));
+    });
+    await act(async () => hook.subscriptions[0].resolve(() => hook.unsubscribes.push('first')));
+    await act(async () => hook.subscriptions[0].onServer(snapshotPage([
+      inventoryItem('ITM-1', 'First'),
+    ], 'cursor-1', false)));
+    assert.equal(hook.current().pages.state.inventory.hasMore, false);
+
+    let loading;
+    await act(async () => { loading = hook.current().pages.load('inventory'); });
+    await act(async () => hook.subscriptions[0].onServer(snapshotPage([
+      inventoryItem('ITM-1', 'First'),
+    ], 'cursor-1', false)));
+    await act(async () => {
+      hook.loads[3].resolve(snapshotPage([], 'cursor-1', true));
+      await loading;
+    });
+    assert.equal(hook.current().pages.state.inventory.hasMore, false,
+      'a stale page read must not override the newer confirmed hasMore');
+  } finally { await hook.dom.close(); }
+});

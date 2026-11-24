@@ -446,10 +446,14 @@ export default function App() {
       });
       console.log('[Inventory] create success', newItem.itemCode);
       if (!mutationScope.isCurrent(captured)) throw new Error('Workspace changed. The prior clinic’s save may have completed.');
-      setInventory(prev => [
-        { ...newItem, revision: saved.revision },
-        ...prev.filter(item => item.itemCode !== newItem.itemCode)
-      ]);
+      // The confirmed prefix owns the list. Only refresh a row already on
+      // screen; a newly saved item outside that prefix arrives via the listener.
+      setInventory(prev => {
+        const current = prev.find(item => item.itemCode === newItem.itemCode);
+        if (!current || (current.revision ?? 0) > (saved.revision ?? 0)) return prev;
+        return prev.map(item => item.itemCode === newItem.itemCode
+          ? { ...newItem, revision: saved.revision } : item);
+      });
 
       triggerToast(`Product ${newItem.itemName} saved to cloud database.`);
     } catch (e) {
@@ -491,6 +495,7 @@ export default function App() {
       });
       if (!mutationScope.isCurrent(captured)) throw new Error('Workspace changed. The prior clinic’s save may have completed.');
       setInventory(previous => previous.map(item => item.itemCode === updatedItem.itemCode
+        && (item.revision ?? 0) <= (saved.revision ?? 0)
         ? { ...updatedItem, revision: saved.revision } : item));
       console.log('[Inventory] update success', updatedItem.itemCode);
       triggerToast(`Product ${updatedItem.itemName} updated in cloud.`);
@@ -528,12 +533,13 @@ export default function App() {
       }
 
       if (!existing) throw new Error('Reload the item before deleting.');
-      await mutateClinicalRecord({
+      const saved = await mutateClinicalRecord({
         clinicId: currentClinicId, collection: 'inventory', id: itemCode,
         expectedRevision: existing.revision ?? 0, action: 'delete'
       });
       if (!mutationScope.isCurrent(captured)) throw new Error('Workspace changed. The prior clinic’s delete may have completed.');
-      setInventory(previous => previous.filter(item => item.itemCode !== itemCode));
+      setInventory(previous => previous.filter(item => item.itemCode !== itemCode
+        || (item.revision ?? 0) > (saved.revision ?? 0)));
       console.log('[Inventory] delete success', itemCode);
       triggerToast(`Product removed from cloud database.`);
     } catch (e) {

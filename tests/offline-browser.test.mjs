@@ -54,10 +54,18 @@ const fixture = `
 const inventoryFixture = `
   import React from 'react';
   import {createRoot} from 'react-dom/client';
+  import {signOut as firebaseSignOut} from 'firebase/auth';
+  import * as firebase from './lib/firebase';
   import App from './app/page';
   import OfflineStatus from './components/OfflineStatus';
   createRoot(document.getElementById('root')).render(<><OfflineStatus staticShell={false} /><App /></>);
-  window.fixture = true;
+  window.fixture = {
+    ready: true,
+    async signOut() {
+      const { auth } = await firebase.initializeFirebase();
+      await firebaseSignOut(auth);
+    },
+  };
 `;
 const gatewayOrigin = 'http://127.0.0.1:8787';
 
@@ -535,6 +543,72 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     await other?.context.close();
     await remote?.context.close();
     await viewer?.context.close();
+    await app.close();
+  }
+});
+
+test('a real Firebase identity change clears an open inventory view without an offline banner', { timeout: 180000 }, async () => {
+  const clinicId = `identity-${Date.now()}`;
+  const clinicName = 'Fictional identity clinic';
+  const password = 'SyntheticIdentityFixture123!';
+  const email = `${clinicId}-viewer@example.com`;
+  const signup = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-key', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, returnSecureToken: true }),
+  });
+  const result = await signup.json();
+  assert.equal(signup.status, 200, result.error?.message);
+  const uid = result.localId;
+  const documents = `projects/${projectId}/databases/(default)/documents`;
+  const clinic = `${documents}/clinics/${clinicId}`;
+  const admin = { Authorization: 'Bearer owner', 'Content-Type': 'application/json' };
+  const write = (name, data) => ({
+    update: { name, fields: Object.fromEntries(Object.entries(data).map(([key, value]) => [
+      key, typeof value === 'boolean' ? { booleanValue: value } : { stringValue: value },
+    ])) },
+  });
+  const seed = await fetch(`http://${host}/v1/${documents}:commit`, {
+    method: 'POST', headers: admin,
+    body: JSON.stringify({ writes: [
+      write(clinic, { name: clinicName, ownerId: uid, aiEnabled: false }),
+      write(`${clinic}/members/${uid}`, { uid, email, role: 'viewer' }),
+      write(`${documents}/users/${uid}/clinics/${clinicId}`, { clinicId, clinicName, role: 'viewer' }),
+      write(`${clinic}/inventory/AUTH-ITEM`, { itemCode: 'AUTH-ITEM', itemName: 'Identity cached item',
+        category: 'Supplies', stock: '3', buyingPrice: '1', sellingPrice: '2', threshold: '0' }),
+    ] }),
+  });
+  assert.equal(seed.status, 200, await seed.text());
+
+  const app = await startFixture(inventoryFixture);
+  let context;
+  try {
+    context = await app.newContext();
+    const errors = [];
+    const page = await app.open(context, errors);
+    await page.getByPlaceholder('you@example.com').fill(email);
+    await page.getByPlaceholder('Enter your password').fill(password);
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(`${clinicName}.*viewer`, 'i') }).click();
+    await page.getByRole('navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
+    const row = page.getByRole('row').filter({ hasText: 'Identity cached item' });
+    const banner = () => page.getByRole('status').filter({ hasText: 'No internet connection' });
+    await row.waitFor();
+    assert.equal(await banner().count(), 0);
+
+    // Ordinary connection loss keeps the trusted-device cache readable.
+    await context.setOffline(true);
+    await banner().waitFor();
+    assert.equal(await row.count(), 1);
+    await context.setOffline(false);
+    await banner().waitFor({ state: 'detached' });
+
+    // A real Firebase auth change must not leave cached or listener data visible.
+    await page.evaluate(() => window.fixture.signOut());
+    await row.waitFor({ state: 'detached' });
+    assert.equal(await banner().count(), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context?.close();
     await app.close();
   }
 });

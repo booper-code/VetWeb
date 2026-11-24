@@ -12,7 +12,7 @@ const consultation = { id: 'shared-id', status: 'Draft', patient: 'Synthetic A' 
 async function mountApp({ readPatient = async () => ({ exists: () => false }),
   init = async () => ({ auth: {}, db: {}, firestore: { doc: (_, ...path) => path, getDoc: readPatient } }),
   restore, trusted = false, billingCommit, billingRecords, appointmentRows = [], appointmentSave = async () => true,
-  assistantEnabled } = {}) {
+  assistantEnabled, inventorySeed } = {}) {
   const dom = domHarness();
   const props = {};
   const pending = deferred();
@@ -61,7 +61,7 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
         if (!clinicId) return;
         const label = clinicId === 'clinic-a' ? 'Synthetic A' : 'Synthetic B';
         setPatients([{ ...patient, name: label }]);
-        setInventory([{ ...item, itemName: label }]);
+        setInventory(inventorySeed ?? [{ ...item, itemName: label }]);
         setConsultations([{ ...consultation, patient: label }]);
       }, [clinicId, setPatients, setInventory, setConsultations]);
       return { state: {}, load() {} };
@@ -408,5 +408,44 @@ test('session restoration cannot supersede an explicit login or its mutation', a
     await act(async () => { app.pending.resolve({ revision: 1 }); await completion; });
     assert.equal(app.props.PatientRecordsView.patients[0].revision, 1);
     assert.equal(app.props.Sidebar.currentClinicName, 'clinic-a');
+  } finally { await app.close(); }
+});
+
+test('an acknowledged cloud create does not add a row outside the confirmed prefix', async () => {
+  const app = await mountApp();
+  try {
+    await app.tab('inventory');
+    let completion;
+    await act(async () => {
+      completion = app.props.InventoryControlView.onAddInventoryItem({ ...item, itemCode: 'OUT-OF-PREFIX' });
+    });
+    await act(async () => { app.pending.resolve({ revision: 1 }); await completion; });
+    const rows = app.props.InventoryControlView.inventory;
+    assert.deepEqual(rows.map(row => row.itemCode), ['shared-id']);
+    assert.match(app.window.document.body.textContent, /saved to cloud database/i);
+  } finally { await app.close(); }
+});
+
+test('a stale acknowledged inventory update cannot downgrade a newer confirmed row', async () => {
+  const app = await mountApp({ inventorySeed: [{ ...item, revision: 5, stock: 4 }] });
+  try {
+    await app.tab('inventory');
+    let completion;
+    await act(async () => { completion = app.props.InventoryControlView.onUpdateInventoryItem({ ...item, revision: 1, stock: 99 }); });
+    await act(async () => { app.pending.resolve({ revision: 1 }); await completion; });
+    const row = app.props.InventoryControlView.inventory.find(entry => entry.itemCode === item.itemCode);
+    assert.equal(row.revision, 5);
+    assert.equal(row.stock, 4);
+  } finally { await app.close(); }
+});
+
+test('a stale acknowledged delete cannot remove a newer confirmed row', async () => {
+  const app = await mountApp({ inventorySeed: [{ ...item, revision: 5 }] });
+  try {
+    await app.tab('inventory');
+    let completion;
+    await act(async () => { completion = app.props.InventoryControlView.onDeleteInventoryItem(item.itemCode); });
+    await act(async () => { app.pending.resolve({ revision: 2 }); await completion; });
+    assert.equal(app.props.InventoryControlView.inventory.length, 1);
   } finally { await app.close(); }
 });

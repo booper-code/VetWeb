@@ -182,7 +182,8 @@ const filteredInventory = inventory.filter(item => {
         
       {/* --- SLIDE-OUT INVENTORY DETAILS & EDIT DRAWER --- */}
       {selectedItem && 
-        <div className="fixed inset-0 z-50 flex justify-end">
+        <div className="fixed inset-x-0 bottom-0 z-40 flex justify-end"
+          style={{ top: 'var(--vc-offline-banner-height, 0px)' }}>
           {/* Backdrop click dismisser */}
           <div 
             className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" 

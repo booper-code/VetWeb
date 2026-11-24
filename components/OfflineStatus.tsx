@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /** Shell registration only: no record caching or automatic update activation. */
 export default function OfflineStatus({ staticShell }: { staticShell: boolean }) {
   const [offline, setOffline] = useState(false);
   const [notice, setNotice] = useState('');
+  const bannerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const update = () => setOffline(!navigator.onLine);
     update();
@@ -42,9 +43,25 @@ export default function OfflineStatus({ staticShell }: { staticShell: boolean })
       window.removeEventListener('offline', update);
     };
   }, [staticShell]);
+
+  // Publish the live banner height so full-screen overlays (e.g. the inventory
+  // drawer) can reserve that space instead of covering the connection notice.
+  useEffect(() => {
+    const banner = bannerRef.current;
+    if (!offline || !banner) return;
+    const property = '--vc-offline-banner-height';
+    const sync = () => document.documentElement.style.setProperty(property,
+      `${Math.ceil(banner.getBoundingClientRect().height)}px`);
+    sync();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync);
+    observer?.observe(banner);
+    return () => { observer?.disconnect(); document.documentElement.style.removeProperty(property); };
+  }, [offline]);
+
   return (
     <>
       <div
+        ref={bannerRef}
         role="status"
         aria-live="polite"
         aria-atomic="true"

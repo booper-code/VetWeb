@@ -276,3 +276,50 @@ test('offline banner fits the real app shell without adding document overflow', 
     }
   });
 });
+
+test('the offline banner stays accessible above an open mobile inventory drawer', { timeout: 90000 }, async () => {
+  await withStaticDemoBrowser(async ({ page, go }) => {
+    await go('Inventory');
+    await page.locator('tbody tr').first().click();
+    const drawer = page.getByRole('dialog', { name: 'Inventory item details' });
+    await drawer.waitFor();
+    const geometry = () => page.evaluate(() => {
+      const banner = [...document.querySelectorAll('[role="status"]')]
+        .find(element => element.textContent.includes('No internet connection'));
+      const dialog = document.querySelector('[role="dialog"][aria-label="Inventory item details"]');
+      const overlay = dialog?.parentElement;
+      const close = dialog?.querySelector('button[aria-label="Close inventory item"]');
+      const box = element => element?.getBoundingClientRect().toJSON() ?? null;
+      const topmost = element => {
+        if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return Boolean(hit && (element === hit || element.contains(hit)));
+      };
+      return {
+        innerHeight, innerWidth,
+        banner: box(banner), overlay: box(overlay), close: box(close),
+        bannerTopmost: topmost(banner), closeTopmost: topmost(close),
+      };
+    });
+
+    await page.context().setOffline(true);
+    const banner = offlineBanner(page);
+    await banner.waitFor();
+    await settle(banner);
+    const offline = await geometry();
+    assert.ok(offline.banner && offline.banner.top >= 0 && offline.banner.bottom <= offline.innerHeight + 1,
+      'banner outside the mobile viewport');
+    assert.ok(offline.overlay.top >= offline.banner.bottom - 1, 'the drawer covers the offline banner');
+    assert.equal(offline.bannerTopmost, true, 'the banner is occluded by the drawer');
+    assert.equal(offline.closeTopmost, true, 'the drawer close control is occluded');
+    assert.ok(offline.close.bottom <= offline.innerHeight + 1, 'drawer controls are pushed off screen');
+
+    await page.context().setOffline(false);
+    await banner.waitFor({ state: 'detached' });
+    const online = await geometry();
+    assert.equal(online.overlay.top, 0, 'the drawer did not return to full height on reconnect');
+    await page.getByRole('button', { name: 'Close inventory item' }).click();
+    await drawer.waitFor({ state: 'detached' });
+  });
+});

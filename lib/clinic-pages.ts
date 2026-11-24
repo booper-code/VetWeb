@@ -83,32 +83,59 @@ export const loadClinicPage = async (
   };
 };
 
+const accessDenied = (error: unknown) =>
+  ['permission-denied', 'unauthenticated'].includes((error as { code?: string })?.code ?? '');
+
 /**
  * Server-confirmed inventory prefix. Metadata changes are included so the first
  * server snapshot arrives even when an identical cached snapshot was already
  * delivered; cache-only and pending-write snapshots are not confirmations.
+ * The listener is rebound to the real Firebase auth user: a different signed-in
+ * identity (or explicit rules denial) must never leave clinic rows on screen.
  */
 export async function subscribeClinicInventory(
   clinicId: string,
   size: number,
   onServer: (page: { records: InventoryItem[]; hasMore: boolean; cursor: ClinicCursor }) => void,
   onError: (error: Error) => void,
+  uid: string,
+  onDenied: (error: Error) => void,
 ): Promise<() => void> {
   if (!clinicId || clinicId === 'demo-clinic') throw new Error('Inventory sync requires a real clinic.');
-  const { db, firestore: fs } = await initializeFirebase();
+  const { db, auth, firestore: fs } = await initializeFirebase();
   const query = fs.query(
     fs.collection(db, 'clinics', clinicId, 'inventory'),
     fs.orderBy(fs.documentId()),
     fs.limit(size + 1),
   );
-  return fs.onSnapshot(query, { includeMetadataChanges: true }, snapshot => {
-    if (snapshot.metadata?.fromCache || snapshot.metadata?.hasPendingWrites) return;
-    const docs = snapshot.docs.slice(0, size);
-    const records = docs.map(document => inventoryFromDocument(document.id, document.data()));
-    // A confirmed snapshot can shift the prefix after a remote insert/delete.
-    // Page requests must continue after the last row actually on screen.
-    onServer({ records, hasMore: snapshot.size > size, cursor: docs.at(-1) ?? null });
-  }, error => onError(error instanceof Error ? error : new Error(String(error))));
+  let active = true;
+  let version = 0;
+  let stopListener: (() => void) | undefined;
+  const deny = (error: Error) => { if (active) onDenied(error); };
+  const stopAuth = auth.onAuthStateChanged(user => {
+    if (!active) return;
+    const captured = ++version;
+    if (user?.uid !== uid || auth.currentUser?.uid !== uid) {
+      deny(new Error('Clinic inventory access changed.'));
+      return;
+    }
+    const isCurrent = () => active && version === captured && auth.currentUser?.uid === uid;
+    stopListener?.();
+    stopListener = fs.onSnapshot(query, { includeMetadataChanges: true }, snapshot => {
+      if (!isCurrent() || snapshot.metadata?.fromCache || snapshot.metadata?.hasPendingWrites) return;
+      const docs = snapshot.docs.slice(0, size);
+      const records = docs.map(document => inventoryFromDocument(document.id, document.data()));
+      // A confirmed snapshot can shift the prefix after a remote insert/delete.
+      // Page requests must continue after the last row actually on screen.
+      onServer({ records, hasMore: snapshot.size > size, cursor: docs.at(-1) ?? null });
+    }, error => {
+      if (!isCurrent()) return;
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      if (accessDenied(error)) deny(normalized);
+      else onError(normalized);
+    });
+  });
+  return () => { active = false; stopAuth(); stopListener?.(); };
 }
 
 /** Server aggregation returns only the catalog size, not inventory documents or cached page counts. */
