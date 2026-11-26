@@ -9,10 +9,11 @@
 // value is ever placed in a provider request.
 
 import { billingLocalTime } from '@/lib/billing-values';
+import { normalizeClinicRole } from '@/lib/clinic-role';
 import { isExpiryDate, isReorderDue, isStockedCategory } from '@/lib/stock-alert-values';
 
 export type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'enum';
-export type RequiredRole = 'member' | 'editor' | 'owner';
+export type RequiredRole = 'member';
 export type FieldId = string;
 export type Scalar = string | number | boolean;
 
@@ -89,21 +90,21 @@ export const CLINIC_TABLES: Record<TableId, ClinicTable> = {
     enums: { kind: ['veterinarian', 'employee'] },
   },
   billingEntries: {
-    label: 'billing entries', role: 'editor',
+    label: 'billing entries', role: 'member',
     fields: {
       id: 'string', kind: 'string', patientId: 'string', amountMinor: 'number',
       balanceBeforeMinor: 'number', balanceAfterMinor: 'number', recordedAt: 'date', reversed: 'boolean',
     },
   },
   auditEvents: {
-    label: 'audit events', role: 'owner',
+    label: 'audit events', role: 'member',
     fields: {
       eventId: 'string', action: 'string', entityType: 'string', entityId: 'string',
       actorUid: 'string', seq: 'number', time: 'date',
     },
   },
   payrollLedger: {
-    label: 'payroll ledger entries', role: 'owner',
+    label: 'payroll ledger entries', role: 'member',
     fields: {
       id: 'string', seq: 'number', type: 'enum', direction: 'enum', staffId: 'string', staffName: 'string',
       amount: 'number', periodId: 'string', createdAt: 'date',
@@ -111,7 +112,7 @@ export const CLINIC_TABLES: Record<TableId, ClinicTable> = {
     enums: { type: ['advance', 'repayment', 'payout', 'adjustment'], direction: ['in', 'out'] },
   },
   payrollPeriods: {
-    label: 'payroll periods', role: 'owner',
+    label: 'payroll periods', role: 'member',
     fields: {
       id: 'string', startDate: 'string', endDate: 'string', status: 'enum',
       createdAt: 'date', closedAt: 'date',
@@ -119,7 +120,7 @@ export const CLINIC_TABLES: Record<TableId, ClinicTable> = {
     enums: { status: ['open', 'closed'] },
   },
   payProfiles: {
-    label: 'staff pay profiles', role: 'owner',
+    label: 'staff pay profiles', role: 'member',
     fields: { staffId: 'string', payBasis: 'enum', rate: 'number' },
     enums: { payBasis: ['daily', 'monthly'] },
   },
@@ -601,9 +602,6 @@ export async function executeClinicQueries(
   }));
 }
 
-export function roleAllowed(role: 'owner' | 'editor' | 'viewer' | null, need: RequiredRole): boolean {
-  if (!role) return false;
-  if (need === 'member') return role === 'owner' || role === 'editor' || role === 'viewer';
-  if (need === 'editor') return role === 'owner' || role === 'editor';
-  return role === 'owner';
+export function roleAllowed(role: unknown, need: RequiredRole): boolean {
+  return need === 'member' && normalizeClinicRole(role) !== null;
 }

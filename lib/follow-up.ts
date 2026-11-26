@@ -3,10 +3,15 @@ import type { Appointment } from '@/types';
 import { appointmentFromDocument } from '@/lib/appointments';
 import { ClinicalConflictError, mutateClinicalRecord } from '@/lib/clinical-mutations';
 import { initializeFirebase } from '@/lib/firebase';
+import { subscribeConfirmedClinicQuery } from '@/lib/clinic-pages';
 import { FOLLOW_UP_PAGE_SIZE, currentFollowUpContact, isDueFollowUp } from '@/lib/follow-up-values';
 
 export type FollowUpCursor = QueryDocumentSnapshot<DocumentData> | number | null;
 export type FollowUpPage = { rows: Appointment[]; next: FollowUpCursor };
+export type FollowUpSubscription = (
+  size: number, endMs: number, onPage: (page: FollowUpPage) => void,
+  onError: (error: Error) => void, onDenied: (error: Error) => void,
+) => Promise<() => void>;
 type Identity = { clinicId: string; uid: string };
 
 const validId = (value: string) => !!value && value !== '.' && value !== '..' && !value.includes('/');
@@ -21,18 +26,36 @@ async function connection({ clinicId, uid }: Identity) {
   return { db, fs, checkAccount };
 }
 
+const followUpConstraints = (fs: typeof import('firebase/firestore'), endMs: number) => [
+  fs.where('status', '==', 'scheduled'), fs.where('type', '==', 'Follow-up'), fs.where('dueAt', '<', fs.Timestamp.fromMillis(endMs)),
+  fs.orderBy('dueAt'), fs.orderBy(fs.documentId()),
+];
+
 export async function loadFollowUpPage(input: Identity & { endMs: number; after?: FollowUpCursor }): Promise<FollowUpPage> {
   const { clinicId, endMs, after } = input;
   if (typeof after === 'number' || !Number.isSafeInteger(endMs)) throw new Error('Invalid follow-up page.');
   const { db, fs, checkAccount } = await connection(input);
   const snapshot = await fs.getDocsFromServer(fs.query(fs.collection(db, 'clinics', clinicId, 'appointments'),
-    fs.where('status', '==', 'scheduled'), fs.where('type', '==', 'Follow-up'), fs.where('dueAt', '<', fs.Timestamp.fromMillis(endMs)),
-    fs.orderBy('dueAt'), fs.orderBy(fs.documentId()), ...(after ? [fs.startAfter(after)] : []), fs.limit(FOLLOW_UP_PAGE_SIZE)));
+    ...followUpConstraints(fs, endMs), ...(after ? [fs.startAfter(after)] : []), fs.limit(FOLLOW_UP_PAGE_SIZE)));
   checkAccount();
   return {
     rows: snapshot.docs.map(doc => appointmentFromDocument(doc.id, doc.data())),
     next: snapshot.size === FOLLOW_UP_PAGE_SIZE ? snapshot.docs.at(-1)! : null,
   };
+}
+
+export function subscribeFollowUps(
+  { clinicId, uid }: Identity, ...[size, endMs, onPage, onError, onDenied]: Parameters<FollowUpSubscription>
+) {
+  if (!validId(clinicId) || clinicId === 'demo-clinic' || !uid || !Number.isSafeInteger(endMs)) {
+    return Promise.reject(new Error('Choose a clinic workspace and a valid follow-up date.'));
+  }
+  return subscribeConfirmedClinicQuery(uid, (db, fs) => fs.query(fs.collection(db, 'clinics', clinicId, 'appointments'),
+    ...followUpConstraints(fs, endMs), fs.limit(size + 1)),
+  snapshot => onPage({
+    rows: snapshot.docs.slice(0, size).map(doc => appointmentFromDocument(doc.id, doc.data())),
+    next: snapshot.size > size ? snapshot.docs[size - 1] : null
+  }), onError, onDenied);
 }
 
 export function loadDemoFollowUpPage(rows: Appointment[], endMs: number, after: FollowUpCursor): FollowUpPage {

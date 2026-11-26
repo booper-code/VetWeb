@@ -34,7 +34,7 @@ export const AccountSettingsView = ({
   const [nameError, setNameError] = useState('');
 
   const draftName = nameDraft ?? clinicName;
-  const isOwner = !isDemo && role === 'owner' && Boolean(clinicId);
+  const canManageClinic = !isDemo && role !== null && Boolean(clinicId);
   const hasNameChange = draftName.trim() !== clinicName && draftName.trim().length > 0;
 
   const handleSaveName = async () => {
@@ -109,9 +109,9 @@ export const AccountSettingsView = ({
               <h3 className="text-lg font-bold text-content-heading">Clinic Profile</h3>
             </div>
             <p className="text-sm text-content-secondary leading-relaxed">
-              {isOwner
+              {canManageClinic
                 ? 'The clinic name appears on the sidebar, invitations, and exported records.'
-                : 'Only the clinic owner can rename this clinic.'}
+                : 'Clinic access is required to rename this clinic.'}
             </p>
 
             <div className="space-y-2">
@@ -123,7 +123,7 @@ export const AccountSettingsView = ({
                 type="text"
                 maxLength={100}
                 value={draftName}
-                disabled={!isOwner || isSavingName}
+                disabled={!canManageClinic || isSavingName}
                 onChange={event => setNameDraft(event.target.value)}
                 placeholder="e.g. Biñan Animal Clinic"
                 className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs font-bold text-content-title outline-none focus:ring-2 focus:ring-teal-500 disabled:text-content-hint disabled:cursor-not-allowed"
@@ -148,7 +148,7 @@ export const AccountSettingsView = ({
             </div>
           </div>
 
-          {isOwner ? (
+          {canManageClinic ? (
             <button
               type="button"
               onClick={handleSaveName}
@@ -160,7 +160,7 @@ export const AccountSettingsView = ({
             </button>
           ) : (
             <p className="text-[11px] text-content-faint font-medium text-center">
-              {isDemo ? 'Demo workspace — changes are not saved.' : 'Ask the clinic owner to rename this clinic.'}
+              {isDemo ? 'Demo workspace — changes are not saved.' : 'Clinic access is required to rename this clinic.'}
             </p>
           )}
         </div>
@@ -211,7 +211,7 @@ export const AccountSettingsView = ({
       </div>
 
       {/* CLINIC BACKUP */}
-      {isOwner && (
+      {canManageClinic && (
         <div className="bg-panel p-6 rounded-2xl border border-outline-soft shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
             <Database className="w-5 h-5 text-brand-text shrink-0 mt-0.5" />
@@ -243,7 +243,7 @@ export const AccountSettingsView = ({
           <div>
             <h3 className="text-lg font-bold text-content-heading">Account deletion</h3>
             <p className="text-sm text-content-secondary leading-relaxed mt-1">
-              Disabled for now. Deleting a login before clinic ownership can be transferred could lock everyone out of that clinic.
+              Disabled for now. Deleting the clinic owner’s login could leave the clinic without anyone able to manage its members.
             </p>
           </div>
         </div>

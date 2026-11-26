@@ -34,7 +34,6 @@ import {
   listPayrollEntries,
   listPayrollPeriods,
   listStaff,
-  savePayProfile,
   saveStaffMember,
   verifyPayrollChain,
   type ChainVerification,
@@ -93,6 +92,8 @@ const DEMO_STAFF: StaffMember[] = [
 
 type StaffDraft = {
   id?: string;
+  revision?: number;
+  payRevision?: number;
   name: string;
   kind: StaffKind;
   position: string;
@@ -124,6 +125,7 @@ export const StaffPayrollView = ({
   user,
   role,
   isDemo,
+  isCurrent,
   triggerToast
 }: {
   clinicId: string | null;
@@ -131,10 +133,12 @@ export const StaffPayrollView = ({
   user: ClinicSessionUser | null;
   role: ClinicRole | null;
   isDemo: boolean;
+  isCurrent: () => boolean;
   triggerToast: (msg: string) => void;
 }) => {
-  const isOwner = role === 'owner' && !isDemo;
-  const canEditRoster = isDemo || role === 'owner' || role === 'editor';
+  const canManagePayroll = role !== null && !isDemo;
+  const canEditRoster = isDemo || canManagePayroll;
+  const payrollActor = { uid: user?.uid ?? '', isCurrent };
 
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [profiles, setProfiles] = useState<Record<string, StaffPayProfile>>({});
@@ -185,7 +189,7 @@ export const StaffPayrollView = ({
         const members = await listStaff(clinicId);
         if (active) setStaff(members);
 
-        if (isOwner) {
+        if (canManagePayroll) {
           const [loadedProfiles, loadedPeriods, loadedEntries, loadedHead] = await Promise.all([
             listPayProfiles(clinicId),
             listPayrollPeriods(clinicId),
@@ -210,7 +214,7 @@ export const StaffPayrollView = ({
 
     load();
     return () => { active = false; };
-  }, [clinicId, isDemo, isOwner]);
+  }, [clinicId, isDemo, canManagePayroll]);
 
   const activeStaff = useMemo(() => staff.filter(member => member.active), [staff]);
   const selectedPeriod = periods.find(period => period.id === selectedPeriodId) ?? null;
@@ -227,6 +231,8 @@ export const StaffPayrollView = ({
       member
         ? {
             id: member.id,
+            revision: member.revision ?? 0,
+            payRevision: profile?.revision,
             name: member.name,
             kind: member.kind,
             position: member.position,
@@ -245,6 +251,7 @@ export const StaffPayrollView = ({
 
   const handleSaveStaff = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!isCurrent()) return;
     if (!staffDraft.name.trim()) {
       setError('Enter the staff member’s name.');
       return;
@@ -256,7 +263,7 @@ export const StaffPayrollView = ({
     try {
       if (isDemo) {
         const localMember: StaffMember = {
-          id: staffDraft.id ?? `demo-staff-${Date.now()}`,
+          id: staffDraft.id ?? `demo-staff-${crypto.randomUUID()}`,
           name: staffDraft.name.trim(),
           kind: staffDraft.kind,
           position: staffDraft.position.trim(),
@@ -270,8 +277,15 @@ export const StaffPayrollView = ({
           staffDraft.id ? previous.map(member => (member.id === staffDraft.id ? localMember : member)) : [...previous, localMember]
         );
       } else if (clinicId) {
+        const rate = Number(staffDraft.rate);
+        const previous = staffDraft.id ? profiles[staffDraft.id] : undefined;
+        const payProfile = canManagePayroll && staffDraft.rate.trim()
+          && (previous?.rate !== rate || previous?.payBasis !== staffDraft.payBasis)
+          ? { payBasis: staffDraft.payBasis, rate, revision: staffDraft.payRevision }
+          : undefined;
         const saved = await saveStaffMember(clinicId, {
           id: staffDraft.id,
+          revision: staffDraft.revision,
           name: staffDraft.name,
           kind: staffDraft.kind,
           position: staffDraft.position,
@@ -280,19 +294,16 @@ export const StaffPayrollView = ({
           active: staffDraft.active,
           hiredAt: staffDraft.hiredAt,
           notes: staffDraft.notes
-        });
+        }, payProfile, payrollActor);
+        if (!isCurrent()) return;
 
         setStaff(previous =>
           staffDraft.id ? previous.map(member => (member.id === saved.id ? saved : member)) : [...previous, saved]
         );
 
-        if (isOwner) {
-          const rate = Number(staffDraft.rate);
-          if (staffDraft.rate.trim() && Number.isFinite(rate) && rate >= 0) {
-            await savePayProfile(clinicId, saved.id, { payBasis: staffDraft.payBasis, rate });
-            setProfiles(previous => ({ ...previous, [saved.id]: { payBasis: staffDraft.payBasis, rate } }));
-          }
-        }
+        if (payProfile) setProfiles(current => ({
+          ...current, [saved.id]: { ...payProfile, revision: (payProfile.revision ?? 0) + 1 }
+        }));
       }
 
       triggerToast(staffDraft.id ? 'Staff record updated.' : 'Staff member added.');
@@ -308,12 +319,13 @@ export const StaffPayrollView = ({
 
   const handleCreatePeriod = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!clinicId) return;
+    if (!clinicId || !isCurrent()) return;
 
     setIsWorking(true);
     setError('');
     try {
-      const period = await createPayrollPeriod(clinicId, periodStart, periodEnd);
+      const period = await createPayrollPeriod(clinicId, periodStart, periodEnd, payrollActor);
+      if (!isCurrent()) return;
       setPeriods(previous => [period, ...previous]);
       setSelectedPeriodId(period.id);
       setShowPeriodForm(false);
@@ -327,16 +339,18 @@ export const StaffPayrollView = ({
   };
 
   const handleClosePeriod = async () => {
-    if (!clinicId || !selectedPeriod) return;
+    if (!clinicId || !selectedPeriod || !isCurrent()) return;
     if (!window.confirm(`Close payroll for ${selectedPeriod.startDate} to ${selectedPeriod.endDate}? New entries can still be recorded, but the period is marked closed.`)) {
       return;
     }
 
     setIsWorking(true);
     try {
-      await closePayrollPeriod(clinicId, selectedPeriod.id);
+      await closePayrollPeriod(clinicId, selectedPeriod.id, selectedPeriod.revision ?? 0, payrollActor);
+      if (!isCurrent()) return;
       setPeriods(previous =>
-        previous.map(period => (period.id === selectedPeriod.id ? { ...period, status: 'closed' } : period))
+        previous.map(period => period.id === selectedPeriod.id
+          ? { ...period, status: 'closed', revision: (period.revision ?? 0) + 1 } : period)
       );
       triggerToast('Payroll period closed.');
     } catch (closeError) {
@@ -542,7 +556,7 @@ export const StaffPayrollView = ({
               />
             </label>
 
-            {isOwner && (
+            {canManagePayroll && (
               <>
                 <label className="text-xs font-bold text-content-secondary">
                   Pay basis
@@ -616,7 +630,7 @@ export const StaffPayrollView = ({
                   <th className="px-6 py-3 text-left">Type</th>
                   <th className="px-6 py-3 text-left">Position</th>
                   <th className="px-6 py-3 text-left">Contact</th>
-                  {isOwner && <th className="px-6 py-3 text-left">Pay</th>}
+                  {canManagePayroll && <th className="px-6 py-3 text-left">Pay</th>}
                   <th className="px-6 py-3 text-left">Status</th>
                   {canEditRoster && <th className="px-6 py-3 text-right">Actions</th>}
                 </tr>
@@ -634,7 +648,7 @@ export const StaffPayrollView = ({
                         {member.phone && <div>{member.phone}</div>}
                         {!member.email && !member.phone && '-'}
                       </td>
-                      {isOwner && (
+                      {canManagePayroll && (
                         <td className="px-6 py-3 text-content-secondary">
                           {profile ? `${currency(profile.rate)} / ${profile.payBasis === 'monthly' ? 'month' : 'day'}` : '-'}
                         </td>
@@ -666,7 +680,7 @@ export const StaffPayrollView = ({
         )}
       </div>
 
-      {isOwner ? (
+      {canManagePayroll ? (
         <div className="space-y-6">
           <div className="bg-panel rounded-2xl border border-outline-soft shadow-sm">
             <div className="px-6 py-4 border-b border-hairline flex flex-wrap items-center justify-between gap-3">
@@ -936,7 +950,7 @@ export const StaffPayrollView = ({
       ) : (
         <div className="rounded-2xl border border-outline-soft bg-panel px-6 py-5 text-sm text-content-hint flex items-center gap-2">
           <BadgeCheck className="w-4 h-4 text-content-faint" />
-          Payroll is visible to the clinic owner only.
+          Payroll requires a connected clinic.
         </div>
       )}
     </div>

@@ -237,9 +237,10 @@ test('the static export applies the saved or system theme before hydration', { t
           assert.ok(box && box.x >= cardBounds.x && box.x + box.width <= cardBounds.x + cardBounds.width,
             `${control} must not be clipped by the clinic card`);
         }
-        await page.getByRole('button', { name: /Viewer clinic/ }).click();
-        await assertDarkSurface(page.getByRole('status').filter({ hasText: 'Viewer workspace' }));
-        assert.equal(await navigation.getByRole('button', { name: 'Clinical audit', exact: true }).count(), 0);
+         await page.getByRole('button', { name: /Member clinic/ }).click();
+         await assertDarkSurface(page.getByRole('status').filter({ hasText: 'Member workspace' }));
+         assert.equal(await navigation.getByRole('button', { name: 'Clinical audit', exact: true }).count(), 1);
+         assert.equal(await navigation.getByRole('button', { name: 'Team & invitations', exact: true }).count(), 0);
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
     });

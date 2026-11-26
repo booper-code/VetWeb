@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, stat, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { referencedKeys, backupReferencedImages, verifyImageBackup } from '../scripts/backup-referenced-images.mjs';
 
 const key = 'clinics/test-clinic/patients/test-patient/12345678-1234-1234-1234-123456789abc.jpg';
@@ -55,19 +55,26 @@ test('collects unique keys and rejects cross-clinic keys', () => {
     ...backup, collections: { patients: [{ profilePicture: key.replace('test-clinic', 'foreign') }] }
   }), /cross-clinic/);
 });
-test('private backup round-trips offline and detects tampering', async () => {
+test('backup round-trips offline and detects tampering', async () => {
   const directory = await newDirectory();
   assert.deepEqual(await backupReferencedImages({
     backup, directory, workerUrl, token: 'synthetic-token', fetchImpl: mockFetch
   }), { imageCount: 1, byteCount: bytes.length });
   assert.deepEqual(await verifyImageBackup(directory), { imageCount: 1 });
-  assert.equal((await stat(directory)).mode & 0o777, 0o700);
-  assert.equal((await stat(join(directory, '000000.bin'))).mode & 0o777, 0o600);
   const manifest = await readFile(join(directory, 'manifest.json'), 'utf8');
   assert.ok(!manifest.includes('synthetic-token') && !manifest.includes('sig='));
   await assert.rejects(readFile(join(directory, 'INCOMPLETE')), { code: 'ENOENT' });
   await writeFile(join(directory, '000000.bin'), Buffer.alloc(bytes.length));
   await assert.rejects(verifyImageBackup(directory), /integrity/);
+});
+test('backup uses private POSIX directory and file modes', {
+  skip: process.platform === 'win32' && 'Windows uses ACLs instead of POSIX owner/group modes',
+}, async (t) => {
+  const directory = await newDirectory();
+  t.after(() => rm(dirname(directory), { recursive: true, force: true }));
+  await backupReferencedImages({ backup, directory, workerUrl, token: 'synthetic-token', fetchImpl: mockFetch });
+  assert.equal((await stat(directory)).mode & 0o777, 0o700);
+  assert.equal((await stat(join(directory, '000000.bin'))).mode & 0o777, 0o600);
 });
 test('never overwrites a backup directory', async () => {
   const directory = await newDirectory();
@@ -83,14 +90,29 @@ test('rejects foreign signed URLs and leaves an incomplete marker', async () => 
   await assert.rejects(readFile(join(directory, 'manifest.json')), { code: 'ENOENT' });
   assert.ok(await readFile(join(directory, 'INCOMPLETE'), 'utf8'));
 });
-test('rejects symlink image entries during offline verification', async () => {
+test('rejects symlink image entries during offline verification', async (t) => {
   const directory = await newDirectory();
+  t.after(() => rm(dirname(directory), { recursive: true, force: true }));
   await backupReferencedImages({ backup, directory, workerUrl, token: 'synthetic-token', fetchImpl: mockFetch });
   const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
   manifest.images[0].filename = '000001.bin';
-  await symlink(join(directory, '000000.bin'), join(directory, '000001.bin'));
+  try {
+    await symlink(join(directory, '000000.bin'), join(directory, '000001.bin'), 'file');
+  } catch (error) {
+    if (process.platform !== 'win32' || error.code !== 'EPERM') throw error;
+    t.skip('Windows denied permission to create a file symlink');
+    return;
+  }
   await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest));
   await assert.rejects(verifyImageBackup(directory), /Invalid image file/);
+});
+test('rejects a linked backup directory during offline verification', async (t) => {
+  const directory = await newDirectory();
+  t.after(() => rm(dirname(directory), { recursive: true, force: true }));
+  await backupReferencedImages({ backup, directory, workerUrl, token: 'synthetic-token', fetchImpl: mockFetch });
+  const linkedDirectory = join(dirname(directory), 'linked-backup');
+  await symlink(directory, linkedDirectory, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(verifyImageBackup(linkedDirectory), /Backup directory must not be a symlink/);
 });
 test('backs up multiple referenced objects in one verified set', async () => {
   const imageKeys = [imageKey(1), imageKey(2), imageKey(3)];

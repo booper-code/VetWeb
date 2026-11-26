@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Activity, Loader2, PlusCircle, Stethoscope, X } from 'lucide-react';
 import type { Consultation, ConsultationDraft, InventoryItem, PatientRecord, TreatmentLine } from '@/types';
 import {
   CONSULTATION_TYPES,
   MAX_STOCK_LINES,
+  compareConsultationHistory,
   consultationMatchesPatient,
   consultationTime,
   consultationValidationError,
@@ -18,6 +19,7 @@ const newLineId = () => `TRT-${crypto.randomUUID()}`;
 export const ClinicalActivity = ({
   patient,
   consultations,
+  chronological = false,
   inventory,
   canEdit,
   staffUid,
@@ -29,6 +31,7 @@ export const ClinicalActivity = ({
 }: {
   patient: PatientRecord;
   consultations: Consultation[];
+  chronological?: boolean;
   inventory: InventoryItem[];
   canEdit: boolean;
   staffUid: string;
@@ -52,9 +55,11 @@ export const ClinicalActivity = ({
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const patientConsultations = useMemo(() => consultations
-    .filter(entry => consultationMatchesPatient(entry, patient))
-    .sort((a, b) => consultationTime(b) - consultationTime(a)), [consultations, patient]);
+  const patientConsultations = useMemo(() => {
+    const matching = consultations.filter(entry => consultationMatchesPatient(entry, patient));
+    return chronological ? matching : matching.sort(compareConsultationHistory);
+  }, [chronological, consultations, patient]);
+  const firstUnknown = patientConsultations.findIndex(entry => consultationTime(entry) === null);
 
   const selectedItem = inventory.find(entry => entry.itemCode === itemCode) ?? null;
   const stockLineCount = lines.filter(isStockTreatment).length;
@@ -177,7 +182,7 @@ export const ClinicalActivity = ({
 
       {!canEdit && (
         <p className="text-xs font-semibold text-content-hint">
-          View-only: an online owner or editor can record treatments.
+           View-only: an online clinic session is required to record treatments.
         </p>
       )}
 
@@ -330,8 +335,10 @@ export const ClinicalActivity = ({
             <Stethoscope className="h-6 w-6 text-slate-300 mx-auto mb-2" aria-hidden="true" />
             No clinical activity recorded for this patient yet.
           </div>
-        ) : patientConsultations.map(entry => (
-          <article key={entry.id} className="rounded-xl border border-outline-soft p-4">
+        ) : patientConsultations.map((entry, index) => (
+          <Fragment key={entry.id}>
+          {index === firstUnknown && <h3 className="text-xs font-bold text-content-heading">Unknown date</h3>}
+          <article className="rounded-xl border border-outline-soft p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="text-sm font-bold text-content-title">{entry.type}</p>
@@ -368,6 +375,7 @@ export const ClinicalActivity = ({
                 : 'Entry time is available in the audit trail.'}
             </p>
           </article>
+          </Fragment>
         ))}
       </div>
     </div>

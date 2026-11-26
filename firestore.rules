@@ -44,9 +44,7 @@ service cloud.firestore {
     }
 
     function isClinicMember(clinicId) {
-      return clinicRoleIs(clinicId, 'owner')
-        || clinicRoleIs(clinicId, 'editor')
-        || clinicRoleIs(clinicId, 'viewer');
+      return canEditClinic(clinicId);
     }
 
     function canEditClinic(clinicId) {
@@ -54,11 +52,10 @@ service cloud.firestore {
     }
 
     function canEditRole(member) {
-      return member != null && member.data.role in ['owner', 'editor'];
+      return member != null && member.data.role in ['owner', 'member', 'editor', 'viewer'];
     }
 
     function isClinicOwner(clinicId) {
-      // Check the pre-write owner so a complete transfer remains authorized.
       return clinicRoleIs(clinicId, 'owner')
         && get(clinicPath(clinicId)).data.ownerId == request.auth.uid;
     }
@@ -110,7 +107,7 @@ service cloud.firestore {
 
     // The invite must already exist and be pending, and the same transaction
     // must mark it accepted while creating the two corresponding memberships.
-    function validInviteClaim(clinicId, uid, inviteId, role) {
+    function validInviteClaim(clinicId, uid, inviteId) {
       let path = invitationPath(clinicId, inviteId);
       return verifiedEmail()
         && uid == request.auth.uid
@@ -118,7 +115,7 @@ service cloud.firestore {
         && get(path).data.clinicId == clinicId
         && get(path).data.status == 'pending'
         && get(path).data.email == request.auth.token.email
-        && get(path).data.role == role
+        && get(path).data.role in ['member', 'editor']
         && get(path).data.expiresAt > request.time
         && getAfter(path).data.status == 'accepted'
         && getAfter(path).data.acceptedBy == uid
@@ -131,6 +128,7 @@ service cloud.firestore {
       return verifiedEmail()
         && resource.data.clinicId == clinicId
         && resource.data.status == 'pending'
+        && resource.data.role in ['member', 'editor']
         && resource.data.email == request.auth.token.email
         && request.time < resource.data.expiresAt
         && request.resource.data.status == 'accepted'
@@ -138,10 +136,10 @@ service cloud.firestore {
         && request.resource.data.acceptedAt == request.time
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['status', 'acceptedBy', 'acceptedAt'])
-        && memberAfter.data.role == resource.data.role
+        && memberAfter.data.role == 'member'
         && memberAfter.data.email == request.auth.token.email
         && memberAfter.data.invitationId == inviteId
-        && indexAfter.data.role == resource.data.role
+        && indexAfter.data.role == 'member'
         && indexAfter.data.clinicName == resource.data.clinicName
         && indexAfter.data.invitationId == inviteId;
     }
@@ -153,9 +151,8 @@ service cloud.firestore {
       allow list: if false;
       allow create: if validNewClinic(clinicId);
 
-      // Owners may rename their clinic or hand ownership to an existing member.
-      // Nothing else on the document is mutable.
-      allow update: if isClinicOwner(clinicId)
+      // Members can change clinic settings. The recorded owner is permanent.
+      allow update: if isClinicMember(clinicId)
         && (
           (
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
@@ -168,16 +165,6 @@ service cloud.firestore {
           ) || (
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['imageUploadsEnabled'])
             && request.resource.data.imageUploadsEnabled is bool
-          ) || (
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerId'])
-            && resource.data.ownerId == request.auth.uid
-            && request.resource.data.ownerId is string
-            && request.resource.data.ownerId != resource.data.ownerId
-            && get(memberPath(clinicId, request.resource.data.ownerId)).data.role in ['editor', 'viewer']
-            && getAfter(memberPath(clinicId, request.resource.data.ownerId)).data.role == 'owner'
-            && getAfter(memberPath(clinicId, resource.data.ownerId)).data.role == 'editor'
-            && getAfter(userClinicPath(request.resource.data.ownerId, clinicId)).data.role == 'owner'
-            && getAfter(userClinicPath(resource.data.ownerId, clinicId)).data.role == 'editor'
           )
         );
       allow delete: if false;
@@ -200,31 +187,12 @@ service cloud.firestore {
           && request.resource.data.uid == memberUid
           && request.resource.data.email == request.auth.token.email
           && request.resource.data.displayName is string
-          && request.resource.data.role in ['editor', 'viewer']
+          && request.resource.data.role == 'member'
           && request.resource.data.joinedAt == request.time
-          && validInviteClaim(
-            clinicId,
-            memberUid,
-            request.resource.data.invitationId,
-            request.resource.data.role
-          )
+          && validInviteClaim(clinicId, memberUid, request.resource.data.invitationId)
         );
 
-        // Role changes and removal are owner-only. Promoting someone requires the
-        // same transaction to hand them clinic ownership, and demoting the owner
-        // requires the same transaction to move ownerId elsewhere.
-        allow update: if isClinicOwner(clinicId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
-          && request.resource.data.role in ['owner', 'editor', 'viewer']
-          && getAfter(userClinicPath(memberUid, clinicId)).data.role == request.resource.data.role
-          && (
-            request.resource.data.role != 'owner'
-            || getAfter(clinicPath(clinicId)).data.ownerId == memberUid
-          )
-          && (
-            resource.data.role != 'owner'
-            || getAfter(clinicPath(clinicId)).data.ownerId != memberUid
-          );
+        allow update: if false;
 
         allow delete: if isClinicOwner(clinicId)
           && memberUid != request.auth.uid
@@ -233,12 +201,11 @@ service cloud.firestore {
       }
 
       match /invitations/{inviteId} {
-        allow get: if isClinicOwner(clinicId)
-          || (verifiedEmail()
-            && resource.data.email == request.auth.token.email
-            && resource.data.status == 'pending'
-            && request.time < resource.data.expiresAt);
-        allow list: if isClinicOwner(clinicId);
+        allow get, list: if isClinicMember(clinicId);
+        allow get: if verifiedEmail()
+          && resource.data.email == request.auth.token.email
+          && resource.data.status == 'pending'
+          && request.time < resource.data.expiresAt;
 
         allow create: if isClinicOwner(clinicId)
           && request.resource.data.keys().hasAll([
@@ -255,7 +222,7 @@ service cloud.firestore {
           ).data.name
           && request.resource.data.email is string
           && request.resource.data.email.size() > 0
-          && request.resource.data.role in ['editor', 'viewer']
+          && request.resource.data.role == 'member'
           && request.resource.data.status == 'pending'
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.createdByEmail == request.auth.token.email
@@ -284,7 +251,7 @@ service cloud.firestore {
         let event = /databases/$(database)/documents/clinics/$(clinicId)/auditEvents/$(next.eventId);
         let oldRevision = exists(entity) ? get(entity).data.get('revision', 0) : 0;
         return canEditClinic(clinicId)
-          && entityType in ['patients', 'inventory', 'consultations', 'appointments']
+          && entityType in ['patients', 'inventory', 'consultations', 'appointments', 'staff', 'payProfiles', 'payrollPeriods']
           && next.keys().hasOnly(['actorUid', 'action', 'entityType', 'entityId', 'time', 'seq', 'eventId'])
           && next.actorUid == request.auth.uid
           && next.entityType == entityType && next.entityId == entityId
@@ -303,16 +270,14 @@ service cloud.firestore {
       }
 
       match /auditHeads/{headId} {
-        // Editors need point reads for transactions; only owners may enumerate.
-        allow get: if canEditClinic(clinicId);
-        allow list: if isClinicOwner(clinicId);
+        allow read: if isClinicMember(clinicId);
         allow create, update: if headId == request.resource.data.entityType + '_' + request.resource.data.entityId
           && auditedMutation(request.resource.data.entityType, request.resource.data.entityId);
         allow delete: if false;
       }
 
       match /auditEvents/{eventId} {
-        allow read: if isClinicOwner(clinicId);
+        allow read: if isClinicMember(clinicId);
         allow create: if request.resource.data.eventId == eventId
           && request.resource.data == getAfter(
             /databases/$(database)/documents/clinics/$(clinicId)/auditHeads/$(request.resource.data.entityType + '_' + request.resource.data.entityId)
@@ -554,7 +519,7 @@ service cloud.firestore {
       }
 
       match /inventoryImportReceipts/{itemId} {
-        allow read: if isClinicOwner(clinicId) && get(clinicPath(clinicId)).data.get('aiEnabled', false) == true;
+        allow read: if isClinicMember(clinicId) && get(clinicPath(clinicId)).data.get('aiEnabled', false) == true;
         allow create: if validInventoryImportReceipt(itemId);
         allow update, delete: if false;
       }
@@ -617,7 +582,7 @@ service cloud.firestore {
           && data.keys().hasOnly([
             'id', 'revision', 'date', 'client', 'patient', 'type', 'status', 'notes',
             'patientId', 'appointmentId', 'occurredAt', 'recordedAt', 'staffUid',
-            'staffName', 'treatments', 'stockMoves'
+            'staffName', 'treatments', 'stockMoves', 'historySortAt'
           ])
           && data.date is string && data.date.size() <= 40
           && data.client is string && data.client.size() <= 200
@@ -638,14 +603,57 @@ service cloud.firestore {
           );
       }
 
+      function consultationHistoryState() {
+        let marker = /databases/$(database)/documents/clinics/$(clinicId)/workspaceConfig/consultationHistory;
+        return exists(marker) ? get(marker).data.state : '';
+      }
+
+      function hasConsultationHistorySort(data) {
+        return data.keys().hasAny(['historySortAt']);
+      }
+
+      function validConsultationHistorySort(data) {
+        return data.keys().hasAny(['patientId'])
+          ? data.historySortAt == data.occurredAt
+          : data.historySortAt == null || data.historySortAt is timestamp;
+      }
+
+      function acceptsNewConsultationSort(data) {
+        return (data.keys().hasAny(['patientId']) && hasConsultationHistorySort(data) && validConsultationHistorySort(data))
+          || (!(consultationHistoryState() in ['preparing', 'ready'])
+            && (!hasConsultationHistorySort(data) || validConsultationHistorySort(data)));
+      }
+
+      function preservesConsultationHistory(before, after) {
+        return hasConsultationHistorySort(before)
+          ? (hasConsultationHistorySort(after) && after.historySortAt == before.historySortAt
+            && !after.diff(before).affectedKeys().hasAny(['date', 'occurredAt', 'patientId']))
+          : (!hasConsultationHistorySort(after) && consultationHistoryState() != 'ready');
+      }
+
+      match /workspaceConfig/consultationHistory {
+        allow get: if isClinicMember(clinicId);
+        // Only a brand-new empty clinic can enable chronological history as
+        // part of its atomic Owner bootstrap. Existing clinics need migration.
+        allow create: if signedIn()
+          && !exists(clinicPath(clinicId))
+          && getAfter(clinicPath(clinicId)).data.ownerId == request.auth.uid
+          && getAfter(clinicPath(clinicId)).data.createdAt == request.time
+          && request.resource.data.keys().hasOnly(['state'])
+          && request.resource.data.state == 'ready';
+      }
+
       match /consultations/{consultationId} {
         allow read: if isClinicMember(clinicId);
         allow create: if validConsultation(request.resource.data, consultationId)
+          && acceptsNewConsultationSort(request.resource.data)
           && (!request.resource.data.keys().hasAny(['patientId'])
             || (request.resource.data.recordedAt == request.time
               && stockMovesApplied(request.resource.data)))
           && auditedMutation('consultations', consultationId);
         allow update: if validConsultation(request.resource.data, consultationId)
+          && preservesConsultationHistory(resource.data, request.resource.data)
+          && (!hasConsultationHistorySort(request.resource.data) || validConsultationHistorySort(request.resource.data))
           && (!request.resource.data.keys().hasAny(['treatments'])
             || request.resource.data.treatments == resource.data.treatments)
           && (!request.resource.data.keys().hasAny(['stockMoves'])
@@ -738,50 +746,58 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // Roster is visible to every clinic member, but only owners and editors
-      // may maintain it. Pay rates live in /payProfiles (owner-only) because
-      // Firestore rules cannot hide individual fields.
+      // Pay rates are stored separately from the roster.
       match /staff/{staffId} {
         allow read: if isClinicMember(clinicId);
         allow create, update: if canEditClinic(clinicId)
           && request.resource.data.keys().hasAll(['name', 'kind', 'position', 'email', 'phone', 'active', 'hiredAt', 'notes'])
-          && request.resource.data.keys().hasOnly(['name', 'kind', 'position', 'email', 'phone', 'active', 'hiredAt', 'notes'])
+          && request.resource.data.keys().hasOnly(['name', 'kind', 'position', 'email', 'phone', 'active', 'hiredAt', 'notes', 'revision'])
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
           && request.resource.data.name.size() <= 100
           && request.resource.data.kind in ['veterinarian', 'employee']
           && request.resource.data.position is string
-          && request.resource.data.active is bool;
-        allow delete: if isClinicOwner(clinicId);
+          && request.resource.data.active is bool
+          && auditedMutation('staff', staffId);
+        allow delete: if auditedMutation('staff', staffId);
       }
 
       match /payProfiles/{staffId} {
-        allow read, write: if isClinicOwner(clinicId);
+        allow read: if isClinicMember(clinicId);
+        allow create, update: if isClinicMember(clinicId)
+          && request.resource.data.keys().hasOnly(['payBasis', 'rate', 'updatedAt', 'revision'])
+          && request.resource.data.payBasis in ['daily', 'monthly']
+          && request.resource.data.rate is number && request.resource.data.rate >= 0
+          && request.resource.data.updatedAt == request.time
+          && auditedMutation('payProfiles', staffId);
+        allow delete: if auditedMutation('payProfiles', staffId);
       }
 
       match /payrollPeriods/{periodId} {
-        allow read: if isClinicOwner(clinicId);
-        allow create: if isClinicOwner(clinicId)
+        allow read: if isClinicMember(clinicId);
+        allow create: if isClinicMember(clinicId)
           && request.resource.data.keys().hasAll(['startDate', 'endDate', 'status', 'createdAt'])
-          && request.resource.data.keys().hasOnly(['startDate', 'endDate', 'status', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['startDate', 'endDate', 'status', 'createdAt', 'revision'])
           && request.resource.data.startDate is string
           && request.resource.data.endDate is string
           && request.resource.data.endDate >= request.resource.data.startDate
           && request.resource.data.status == 'open'
-          && request.resource.data.createdAt == request.time;
-        allow update: if isClinicOwner(clinicId)
+          && request.resource.data.createdAt == request.time
+          && auditedMutation('payrollPeriods', periodId);
+        allow update: if isClinicMember(clinicId)
           && resource.data.status == 'open'
           && request.resource.data.status == 'closed'
           && request.resource.data.closedAt == request.time
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'closedAt']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'closedAt', 'revision'])
+          && auditedMutation('payrollPeriods', periodId);
         allow delete: if false;
       }
 
       // Head of the ledger hash chain. Mutable metadata, but the entries
       // themselves stay immutable, so tampering with it breaks verification.
       match /payrollMeta/{metaId} {
-        allow read: if isClinicOwner(clinicId);
-        allow create, update: if isClinicOwner(clinicId)
+        allow read: if isClinicMember(clinicId);
+        allow create, update: if isClinicMember(clinicId)
           && request.resource.data.keys().hasAll(['seq', 'hash'])
           && request.resource.data.keys().hasOnly(['seq', 'hash', 'updatedAt'])
           && request.resource.data.seq is int
@@ -793,8 +809,8 @@ service cloud.firestore {
       // Append-only payroll ledger. Updates and deletes are always denied; the
       // app additionally verifies a SHA-256 hash chain across all entries.
       match /payrollLedger/{entryId} {
-        allow read: if isClinicOwner(clinicId);
-        allow create: if isClinicOwner(clinicId)
+        allow read: if isClinicMember(clinicId);
+        allow create: if isClinicMember(clinicId)
           && request.resource.data.keys().hasAll([
             'seq', 'type', 'direction', 'staffId', 'staffName', 'amount',
             'periodId', 'note', 'createdBy', 'prevHash', 'hash', 'createdAt'
@@ -845,25 +861,14 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['clinicId', 'clinicName', 'role', 'joinedAt', 'invitationId'])
           && request.resource.data.clinicId == clinicId
           && request.resource.data.clinicName is string
-          && request.resource.data.role in ['editor', 'viewer']
+          && request.resource.data.role == 'member'
           && request.resource.data.joinedAt == request.time
-          && validInviteClaim(
-            clinicId,
-            uid,
-            request.resource.data.invitationId,
-            request.resource.data.role
-          )
+          && validInviteClaim(clinicId, uid, request.resource.data.invitationId)
           && get(invitationPath(clinicId, request.resource.data.invitationId)).data.clinicName
             == request.resource.data.clinicName
         );
 
-        // Owners keep other members' clinic indexes in sync with the canonical
-        // member document; users cannot edit their own index directly.
-        allow update: if signedIn()
-          && isClinicOwner(clinicId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
-          && request.resource.data.role in ['owner', 'editor', 'viewer']
-          && getAfter(memberPath(clinicId, uid)).data.role == request.resource.data.role;
+        allow update: if false;
 
         allow delete: if isClinicOwner(clinicId)
           && uid != request.auth.uid

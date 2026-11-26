@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PawPrint, TestTube, Activity, User, Sparkles, FileSpreadsheet, PlusCircle, X, ZoomIn, Stethoscope, Trash2, Download, Loader2 } from 'lucide-react';
 import type { InventoryItem, PatientRecord, Consultation, ConsultationDraft } from '@/types';
 import { compressImageFileToBlob, PROFILE_IMAGE_OPTIONS, DOCUMENT_IMAGE_OPTIONS } from '@/lib/images';
 import { imageStorageConfigured, openStoredImage, uploadPatientImage } from '@/lib/imageStore';
 import { StoredImage } from '@/components/StoredImage';
 import { exportPatientsPdf } from '@/lib/pdf';
+import { isClinicInventoryAccessDenied, subscribeClinicPatient } from '@/lib/clinic-pages';
 import { PageControls } from '@/components/PageControls';
 import { ClinicalActivity } from '@/components/ClinicalActivity';
 import { WorkspacePatientBilling } from '@/components/PatientBilling';
@@ -18,6 +19,7 @@ type PendingImage = { blob: Blob; previewUrl: string };
 
 export const PatientRecordsView = ({
   initialPatientId,
+  initialPatient,
   initialTreatmentLink,
   patients, 
   consultations,
@@ -33,12 +35,14 @@ export const PatientRecordsView = ({
   onDeletePatient,
   triggerToast,
   paging,
+  consultationPaging,
   patientSearch,
   canEdit = true,
   staffUid = '',
   staffName = ''
 }: {
   initialPatientId?: string;
+  initialPatient?: PatientRecord;
   initialTreatmentLink?: { patientId: string; appointmentId: string; occurredAt: string } | null;
   patients: PatientRecord[]; 
   consultations: Consultation[];
@@ -51,10 +55,11 @@ export const PatientRecordsView = ({
   searchQuery: string;
   billingGateway: BillingGateway;
   onSaveConsultation: (patient: PatientRecord, draft: ConsultationDraft) => Promise<boolean>;
-  onDeletePatient: (id: string) => Promise<boolean>;
+  onDeletePatient: (id: string, selected?: PatientRecord) => Promise<boolean>;
   onToggleStatus: (id: string) => void;
   triggerToast: (msg: string) => void;
   paging?: { active: PageStatus; discharged: PageStatus; load: (kind: 'Active' | 'Discharged') => void };
+  consultationPaging?: { status: PageStatus; load: () => void };
   patientSearch?: Omit<ClinicPatientSearchProps, 'onOpenPatient'> & {
     scopeKey: string;
     loadPatient: (id: string, stillOpen: () => boolean) => Promise<PatientRecord | null>;
@@ -97,22 +102,37 @@ export const PatientRecordsView = ({
   
   const [newPatientImage, setNewPatientImage] = useState<PendingImage | null>(null);
   const [showFullReport, setShowFullReport] = useState(() =>
-    patients.some(patient => patient.id === initialPatientId));
+    Boolean(initialPatient) || patients.some(patient => patient.id === initialPatientId));
 
   // FIXED: Declared missing constant
   const admissionOptions = ['Grooming', 'Medical Checkup', 'Surgery', 'Confinement'];
 
   // Drawer & Verification State
   const [selectedPatientSnapshot, setSelectedPatient] = useState<PatientRecord | null>(() =>
-    patients.find(patient => patient.id === initialPatientId) ?? null);
+    initialPatient ?? patients.find(patient => patient.id === initialPatientId) ?? null);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<PatientRecord | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [patientDirectoryFilter, setPatientDirectoryFilter] = useState<'Active' | 'Discharged'>(() =>
-    patients.find(patient => patient.id === initialPatientId)?.status === 'Discharged' ? 'Discharged' : 'Active');
-  const selectedPatient = selectedPatientSnapshot && !isEditing
-    ? patients.find(patient => patient.id === selectedPatientSnapshot.id) ?? selectedPatientSnapshot
-    : selectedPatientSnapshot;
+    (initialPatient ?? patients.find(patient => patient.id === initialPatientId))?.status === 'Discharged' ? 'Discharged' : 'Active');
+  const selectedId = showFullReport ? selectedPatientSnapshot?.id : undefined;
+  const selection = JSON.stringify([clinicId, staffUid, selectedId]);
+  const [confirmedPatient, setConfirmedPatient] = useState<{ selection: string; row: PatientRecord | null } | null>(null);
+  useEffect(() => {
+    if (!clinicId || clinicId === 'demo-clinic' || !staffUid || !selectedId) return;
+    let active = true;
+    let release: (() => void) | undefined;
+    const accept = (row: PatientRecord | null) => { if (active) setConfirmedPatient({ selection, row }); };
+    void subscribeClinicPatient(clinicId, staffUid, selectedId, accept, () => accept(null)).then(unsubscribe => {
+      if (active) release = unsubscribe;
+      else unsubscribe();
+    }).catch(error => { if (isClinicInventoryAccessDenied(error)) accept(null); });
+    return () => { active = false; release?.(); };
+  }, [clinicId, staffUid, selectedId, selection]);
+  const confirmed = confirmedPatient?.selection === selection ? confirmedPatient.row : undefined;
+  const listed = patients.find(patient => patient.id === selectedId);
+  const latest = confirmed && (confirmed.revision ?? 0) >= (listed?.revision ?? 0) ? confirmed : listed;
+  const selectedPatient = confirmed === null ? null : isEditing ? selectedPatientSnapshot : latest ?? selectedPatientSnapshot;
   const sanitizePhoneNumber = (value: string) => {
     return value.replace(/\D/g, '').slice(0, 15);
   };
@@ -330,7 +350,7 @@ const visiblePatients =
   return (
     <div className="space-y-6 relative">
       {!canEdit && <p role="status" className="rounded-xl border border-warning-stroke bg-warning-wash p-3 text-sm text-warning-text-deep">
-        Read-only workspace. Changes require an online owner or editor.
+         Read-only workspace. Changes require an online clinic session.
       </p>}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -725,6 +745,9 @@ const visiblePatients =
       </div>            
       {/* --- PURGED: SLIDE OUT DETAILED PROFILE DRAWER HAS BEEN REMOVED TO PREVENT UI LEAKAGE --- */}
       {/* --- CLINICAL DOSSIER FULL REPORT MODAL --- */}
+      {showFullReport && confirmed === null && <p role="status" className="vc-note">
+        This patient is no longer available in the clinic.
+      </p>}
       {showFullReport && selectedPatient && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-md flex justify-center p-4 md:p-10">
           <div className="relative w-full max-w-5xl bg-panel rounded-3xl shadow-2xl border border-outline-soft overflow-hidden flex flex-col my-auto max-h-[90vh]">
@@ -1290,6 +1313,7 @@ const visiblePatients =
                 <ClinicalActivity
                   patient={selectedPatient}
                   consultations={consultations}
+                  chronological={consultationPaging?.status.chronological}
                   inventory={inventory}
                   canEdit={canEdit}
                   staffUid={staffUid}
@@ -1301,6 +1325,8 @@ const visiblePatients =
                   onSave={draft => onSaveConsultation(selectedPatient, draft)}
                   triggerToast={triggerToast}
                 />
+                {consultationPaging && (consultationPaging.status.hasMore || consultationPaging.status.error)
+                  && <PageControls label="consultations" status={consultationPaging.status} onLoad={consultationPaging.load} />}
 
                 <WorkspacePatientBilling key={selectedPatient.id} patient={selectedPatient}
                   inventory={inventory} canEdit={canEdit} gateway={billingGateway} />
@@ -1416,7 +1442,7 @@ const visiblePatients =
             if (!selectedPatient || !canEdit) return;
             setIsSavingPatient(true);
             let removed = false;
-            try { removed = await onDeletePatient(selectedPatient.id); }
+             try { removed = await onDeletePatient(selectedPatient.id, selectedPatient); }
             finally { setIsSavingPatient(false); }
             if (!removed) return;
             setShowFullReport(false);

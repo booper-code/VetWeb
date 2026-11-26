@@ -12,7 +12,7 @@ const consultation = { id: 'shared-id', status: 'Draft', patient: 'Synthetic A' 
 async function mountApp({ readPatient = async () => ({ exists: () => false }),
   init = async () => ({ auth: {}, db: {}, firestore: { doc: (_, ...path) => path, getDoc: readPatient } }),
   restore, trusted = false, billingCommit, billingRecords, appointmentRows = [], appointmentSave = async () => true,
-  assistantEnabled, inventorySeed, consultationSave } = {}) {
+  assistantEnabled, inventorySeed, consultationSave, publishPatients } = {}) {
   const dom = domHarness();
   const props = {};
   const pending = deferred();
@@ -63,10 +63,11 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
         if (!clinicId) return;
         const label = clinicId === 'clinic-a' ? 'Synthetic A' : 'Synthetic B';
         setPatients([{ ...patient, name: label }]);
+        publishPatients?.(setPatients);
         setInventory(inventorySeed ?? [{ ...item, itemName: label }]);
         setConsultations([{ ...consultation, patient: label }]);
       }, [clinicId, setPatients, setInventory, setConsultations]);
-      return { state: {}, load() {} };
+      return { state: { consultations: {} }, load() {} };
     } },
     '@/lib/patients': { nextPatientId: () => 'demo-id' },
     '@/lib/images': { MAX_PATIENT_DOC_BYTES: 900000, firestoreDocBytes: () => 100, formatBytes: String },
@@ -78,7 +79,7 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
       },
       renameClinic: () => pending.promise,
     },
-    ...Object.fromEntries(['PageControls', 'OfflineDeviceSettings', 'AuditLogView', 'ImageStorageControls',
+    ...Object.fromEntries(['PageControls', 'ConsultationHistory', 'OfflineDeviceSettings', 'AuditLogView', 'ImageStorageControls',
       'LoginScreen', 'Sidebar', 'Header', 'DashboardHome', 'PatientRecordsView', 'InventoryControlView',
       'AILaboratoryView', 'SystemSettingsView', 'AccountSettingsView', 'StaffPayrollView',
       'ClinicWorkspaceScreen', 'ClinicTeamView', 'AppointmentsView', 'AppointmentReminders'].map(name => [
@@ -165,7 +166,7 @@ test('a delayed treatment result cannot overwrite newer confirmed stock', async 
   } finally { await app.close(); }
 });
 
-test('assistant handoff is not a save and cannot be replayed in a different clinic or as viewer', async () => {
+test('assistant handoff is not a save and cannot be replayed after a role or clinic change', async () => {
   const row = {
     id: 'shared-appointment', revision: 3, patientName: 'Synthetic A', type: 'Checkup', status: 'scheduled',
     dueAt: '2026-11-24T02:30:00.000Z', ownerContact: 'DO-NOT-PROJECT',
@@ -184,26 +185,25 @@ test('assistant handoff is not a save and cannot be replayed in a different clin
     stillOpen = false;
     assert.match(await cancelled, /cannot review/i);
     assert.equal(app.props.Sidebar.activeTab, 'dashboard');
-    await app.changeMembership('viewer', false);
+    await app.changeMembership('member', false);
     assert.match(String(await owner.onReview(proposal, () => true)), /access changed/i);
     await app.changeMembership('owner');
     await act(async () => assert.equal(await owner.onReview(proposal, () => true), null));
     assert.equal(app.props.AppointmentsView.assistantReview, proposal);
     assert.equal(saves, 0);
-    await app.changeMembership('viewer', false);
+    await app.changeMembership('member', false);
     await assert.rejects(app.props.AppointmentsView.onSave(proposal.appointmentId, proposal.expectedRevision, {}, proposal), /access changed/i);
-    await app.changeMembership('viewer');
-    assert.equal(app.props.Header.assistantAction.props.canEdit, false);
+    await app.changeMembership('member');
+    assert.equal(app.props.Header.assistantAction.props.canEdit, true);
     assert.equal(app.props.AppointmentsView.assistantReview, undefined);
 
     await act(() => app.props.Sidebar.onSwitchClinic());
-    await app.select('clinic-b', 'viewer');
-    const viewer = app.props.Header.assistantAction.props;
-    assert.equal(viewer.canEdit, false);
-    assert.match(await viewer.onReview(proposal, () => true), /cannot review/i);
+    await app.select('clinic-b', 'member');
+    const member = app.props.Header.assistantAction.props;
+    assert.equal(member.canEdit, true);
     assert.match(await owner.onReview(proposal, () => true), /cannot review/i);
     await app.tab('appointments');
-    assert.equal(app.props.AppointmentsView.canEdit, false);
+    assert.equal(app.props.AppointmentsView.canEdit, true);
     assert.equal(app.props.AppointmentsView.assistantReview, undefined);
     assert.equal(saves, 0);
   } finally { await app.close(); }
@@ -335,20 +335,18 @@ for (const [name, [tab, invoke]] of Object.entries(operations)) {
   });
 }
 
-test('late rename and ownership/toast callbacks cannot change another clinic', async () => {
+test('late rename and toast callbacks cannot change another clinic', async () => {
   const app = await mountApp();
   try {
     await app.tab('account');
     let completion;
     await act(async () => { completion = app.props.AccountSettingsView.onRenameClinic('Renamed A'); });
     const oldToast = app.props.AccountSettingsView.triggerToast;
-    await app.tab('team');
-    const oldTransfer = app.props.ClinicTeamView.onOwnershipTransferred;
     await act(() => app.props.Sidebar.onSwitchClinic());
     await app.select('clinic-b');
     await act(async () => {
       app.pending.resolve('Renamed A'); await completion;
-      oldTransfer('editor'); oldToast('Stale clinic toast');
+      oldToast('Stale clinic toast');
     });
     assert.equal(app.props.Sidebar.currentClinicName, 'clinic-b');
     assert.equal(app.props.Sidebar.currentClinicRole, 'owner');
@@ -356,15 +354,14 @@ test('late rename and ownership/toast callbacks cannot change another clinic', a
   } finally { await app.close(); }
 });
 
-test('same-clinic ownership completion updates role without interrupting another view', async () => {
+test('Members can change clinic settings and open the audit log', async () => {
   const app = await mountApp();
   try {
-    await app.tab('team');
-    const transfer = app.props.ClinicTeamView.onOwnershipTransferred;
-    await app.tab('patients');
-    await act(() => transfer('editor'));
-    assert.equal(app.props.Sidebar.currentClinicRole, 'editor');
-    assert.equal(app.props.Sidebar.activeTab, 'patients');
+    await app.select('clinic-b', 'member');
+    await app.tab('settings');
+    assert.equal(app.props.SystemSettingsView.canManageAI, true);
+    await app.tab('audit');
+    assert.equal(app.props.AuditLogView.clinicId, 'clinic-b');
   } finally { await app.close(); }
 });
 
@@ -377,7 +374,36 @@ test('appointment links open a patient by document ID even when not on a loaded 
     await act(async () => { await app.props.AppointmentsView.onOpenPatient('archived-patient'); });
     assert.equal(app.props.Sidebar.activeTab, 'patients');
     assert.equal(app.props.PatientRecordsView.initialPatientId, 'archived-patient');
-    assert.equal(app.props.PatientRecordsView.patients.find(row => row.id === 'archived-patient').name, 'Archived');
+    assert.equal(app.props.PatientRecordsView.initialPatient.name, 'Archived');
+    assert.equal(app.props.PatientRecordsView.patients.some(row => row.id === 'archived-patient'), false);
+  } finally { await app.close(); }
+});
+
+test('a local admission acknowledgement does not duplicate the newly confirmed patient', async () => {
+  let publish;
+  const app = await mountApp({ publishPatients: callback => { publish = callback; } });
+  try {
+    await app.tab('patients');
+    let completion;
+    await act(async () => { completion = operations.createQuickPatient[1](app.props); });
+    const created = { ...app.calls[0].data, revision: 1 };
+    await act(async () => publish(rows => [...rows, created]));
+    await act(async () => { app.pending.resolve({ id: created.id, revision: 1 }); await completion; });
+    assert.equal(app.props.PatientRecordsView.patients.filter(row => row.id === created.id).length, 1);
+  } finally { await app.close(); }
+});
+
+test('a delayed profile save does not replace newer confirmed patient and billing values', async () => {
+  let publish;
+  const app = await mountApp({ publishPatients: callback => { publish = callback; } });
+  try {
+    await app.tab('patients');
+    let completion;
+    await act(async () => { completion = operations.updatePatientRecord[1](app.props); });
+    await act(async () => publish([{ ...patient, name: 'Confirmed latest', revision: 2, balance: 42 }]));
+    await act(async () => { app.pending.resolve({ id: patient.id, revision: 1 }); await completion; });
+    assert.equal(app.props.PatientRecordsView.patients[0].name, 'Confirmed latest');
+    assert.equal(app.props.PatientRecordsView.patients[0].balance, 42);
   } finally { await app.close(); }
 });
 test('a late appointment patient lookup cannot navigate or add data to another clinic', async () => {

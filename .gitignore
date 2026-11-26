@@ -35,6 +35,7 @@ firestore-debug.log
 # agent scratch state
 /.opencode/HANDOFF.md
 /.opencode/HANDOFF-END-OF-DAY-CLOSE.md
+/.opencode/HANDOFF-FRESHNESS-AUDIT.md
 
 # env files (can opt-in for committing if needed)
 .env*

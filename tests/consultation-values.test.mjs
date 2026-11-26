@@ -4,6 +4,15 @@ import { loadSource } from './helpers/tsx-harness.mjs';
 
 const values = loadSource('../../lib/consultation-values.ts');
 
+test('legacy visit dates sort only when the calendar day can be determined', () => {
+  for (const input of ['2024-02-29', '2/29/2024', '29/2/2024']) {
+    assert.equal(values.legacyConsultationSortDate(input)?.toISOString(), '2024-02-29T00:00:00.000Z');
+  }
+  for (const input of ['2/3/2024', '2023-02-29', '4/31/2024', '']) {
+    assert.equal(values.legacyConsultationSortDate(input), null);
+  }
+});
+
 const inventory = [
   { itemCode: 'MED-1', itemName: 'Amoxicillin', category: 'Medicine', stock: 5, buyingPrice: 10, sellingPrice: 25, threshold: 2 },
   { itemCode: 'SUP-1', itemName: 'Bandage', category: 'Supplies', stock: 3, buyingPrice: 5, sellingPrice: 12, threshold: 1 },

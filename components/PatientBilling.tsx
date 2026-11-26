@@ -59,7 +59,7 @@ function BillingReconciliationControl({ check, disabled }: { check: BillingSessi
 export function WorkspacePatientBilling({ patient, inventory, canEdit, gateway }: {
   patient: PatientRecord; inventory: InventoryItem[]; canEdit: boolean; gateway: BillingGateway;
 }) {
-  const billing = useBilling(patient.id, gateway, canEdit);
+  const billing = useBilling(patient.id, gateway, canEdit, patient.billing?.seq, patient);
   return <PatientBilling patient={patient} inventory={inventory} canEdit={canEdit} billing={billing} />;
 }
 

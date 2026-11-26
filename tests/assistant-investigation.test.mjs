@@ -97,7 +97,7 @@ test('gateway projects only names, caps results, and never forwards unknown fiel
 });
 
 test('gateway fails closed before reading evidence if roles, clinic, origin, or schema do not allow it', async () => {
-  for (const [role, enabled, expected] of [['viewer', true, 403], ['owner', false, 403], ['outsider', true, 403]]) {
+  for (const [role, enabled, expected] of [['invalid-role', true, 403], ['member', false, 403], ['outsider', true, 403]]) {
     let queries = 0;
     const response = await handleAssistantTools(request('inventory_import_history', range), env, async (url, init) => {
       if (init.body) queries += 1;

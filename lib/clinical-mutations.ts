@@ -1,7 +1,11 @@
 import type { DocumentData, Firestore, Transaction } from 'firebase/firestore';
 import { initializeFirebase } from '@/lib/firebase';
 
-export type ClinicalCollection = 'patients' | 'inventory' | 'consultations' | 'appointments';
+const payrollCollections = ['staff', 'payProfiles', 'payrollPeriods'] as const;
+type PayrollCollection = typeof payrollCollections[number];
+export type ClinicalCollection = 'patients' | 'inventory' | 'consultations' | 'appointments' | PayrollCollection;
+const clinicalCollections: ClinicalCollection[] = ['patients', 'inventory', 'consultations', 'appointments', ...payrollCollections];
+const isPayrollCollection = (collection: ClinicalCollection) => payrollCollections.some(value => collection === value);
 export class ClinicalConflictError extends Error {
   constructor() {
     super('This record changed or was deleted. Reload it before saving again.');
@@ -23,6 +27,7 @@ export type ClinicalMutation = {
   data?: DocumentData;
   action: 'save' | 'delete';
   preservePatientBilling?: boolean;
+  consultationStatusOnly?: boolean;
   billingStockEntryId?: string;
   inventoryImportBatchId?: string;
 };
@@ -60,12 +65,14 @@ export async function prepareClinicalWrites(db: Firestore, fs: typeof import('fi
   if (!inputs.length || inputs.length > 3 || inputs.some(input => input.clinicId !== inputs[0].clinicId)) {
     throw new Error('Save one clinic and at most three related records per operation.');
   }
-  for (const input of inputs) if (!['patients', 'inventory', 'consultations', 'appointments'].includes(input.collection)
+  for (const input of inputs) if (!clinicalCollections.includes(input.collection)
     || !['save', 'delete'].includes(input.action)
     || typeof input.clinicId !== 'string' || !input.clinicId
     || (input.expectedRevision !== null && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0))
     || (input.action === 'delete' && input.expectedRevision === null)
     || (input.expectedRevision !== null && !input.id)
+    || (input.consultationStatusOnly && (input.collection !== 'consultations' || input.expectedRevision === null
+      || input.action !== 'save' || !['Draft', 'Completed'].includes(input.data?.status)))
     || (input.inventoryImportBatchId !== undefined &&
       (input.collection !== 'inventory' || input.expectedRevision !== null || input.action !== 'save'))
     || (input.action === 'save' && !input.data)) throw new Error('Invalid clinical mutation.');
@@ -86,8 +93,14 @@ export async function prepareClinicalWrites(db: Firestore, fs: typeof import('fi
     if (revision !== entry.input.expectedRevision
       || (revision === null && previous.exists())
       || (revision !== null && (previous.data()?.seq ?? 0) !== revision)) throw new ClinicalConflictError();
-    const data = { ...entry.input.data };
     const stored = current.data();
+    const data = { ...entry.input.data };
+    if (entry.input.consultationStatusOnly) {
+      Object.assign(data, stored, { status: data.status });
+    }
+    if (entry.input.collection === 'payrollPeriods' && stored) {
+      for (const field of ['startDate', 'endDate', 'createdAt']) data[field] = stored[field];
+    }
     if (entry.input.preservePatientBilling && entry.input.collection === 'patients') {
       delete data.legacyBillingBalance;
       for (const field of ['balance', 'billableItems', 'billing']) {
@@ -113,7 +126,7 @@ export async function prepareClinicalWrites(db: Firestore, fs: typeof import('fi
       eventId: event.id
     };
     if (input.action === 'delete') tx.delete(entity);
-    else tx.set(entity, { ...data, id: entity.id, revision: seq });
+    else tx.set(entity, { ...data, ...(isPayrollCollection(input.collection) ? {} : { id: entity.id }), revision: seq });
     tx.set(event, metadata);
     tx.set(head, metadata);
     if (input.inventoryImportBatchId !== undefined) {

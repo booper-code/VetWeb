@@ -54,13 +54,17 @@ const fixture = `
 const inventoryFixture = `
   import React from 'react';
   import {createRoot} from 'react-dom/client';
-  import {signOut as firebaseSignOut} from 'firebase/auth';
+  import {applyActionCode, signOut as firebaseSignOut} from 'firebase/auth';
   import * as firebase from './lib/firebase';
   import App from './app/page';
   import OfflineStatus from './components/OfflineStatus';
   createRoot(document.getElementById('root')).render(<><OfflineStatus staticShell={false} /><App /></>);
   window.fixture = {
     ready: true,
+    async verifyEmail(code) {
+      const { auth } = await firebase.initializeFirebase();
+      await applyActionCode(auth, code);
+    },
     async signOut() {
       const { auth } = await firebase.initializeFirebase();
       await firebaseSignOut(auth);
@@ -156,11 +160,11 @@ async function startFixture(contents = fixture, handleTools) {
     });
     return context;
   };
-  const open = async (context, errors = []) => {
+  const open = async (context, errors = [], url = origin) => {
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.setDefaultTimeout(20000);
-    await page.goto(origin);
+    await page.goto(url);
     try {
       await page.waitForFunction(() => Boolean(window.fixture));
     } catch (error) {
@@ -253,7 +257,7 @@ test('real browser device cleanup uses only emulators', { timeout: 120000 }, asy
   } finally { await fixture.close(); }
 });
 
-test('signed-in CSV upload saves audited inventory for an owner but not a viewer', { timeout: 180000 }, async () => {
+test('clinic work is audited, scoped, and fresh across open Owner and Member views', { timeout: 180000 }, async () => {
   const clinicId = `csv-release-${Date.now()}`;
   const clinicName = 'Fictional CSV release clinic';
   const password = 'SyntheticCsvFixture123!';
@@ -338,7 +342,7 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     await page.getByPlaceholder('you@example.com').fill(email);
     await page.getByPlaceholder('Enter your password').fill(password);
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-    await page.getByRole('button', { name: new RegExp(`${targetClinicName}.*${role}`, 'i') }).click();
+    await page.getByRole('button', { name: new RegExp(`${targetClinicName}.*${role === 'viewer' ? 'member' : role}`, 'i') }).click();
     return { context, page, errors };
   };
   const inSettings = async (role, run) => {
@@ -364,12 +368,13 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
   };
   let viewer, other, remote;
   try {
-    await inSettings('viewer', page => upload(page, /stopped after 0 saved item.*online owner or editor/));
     for (const collection of ['inventory', 'auditHeads', 'auditEvents', 'inventoryImportReceipts']) assert.deepEqual(await list(collection), []);
 
     // An authorized viewer that already has Inventory open must see the owner's
     // confirmed rows without refreshing. This is the stale-view regression.
     viewer = await signIn('viewer');
+    assert.equal(await viewer.page.getByRole('button', { name: 'Team & invitations' }).count(), 0);
+    assert.equal(await viewer.page.getByRole('button', { name: 'Clinical audit' }).count(), 1);
     await viewer.page.getByRole('navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
     await viewer.page.getByText('All available records loaded.').waitFor();
     assert.deepEqual(viewer.errors, []);
@@ -429,7 +434,7 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
 
     await inSettings('viewer', async page => {
       const popup = await ask(page, 'Ilang items ang na-import?');
-      await popup.getByText(/does not allow this lookup/).waitFor();
+      await popup.getByText(/24 catalog items were imported/).waitFor();
       await ask(page, 'Hanapin si Alex Reyes');
       const link = popup.getByRole('link', { name: /Alex Reyes.*Fictional Milo/ });
       await link.waitFor();
@@ -439,7 +444,7 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
       await page.getByText('Synthetic private address', { exact: true }).waitFor();
     });
 
-    await inSettings('owner', async page => {
+    await inSettings('viewer', async page => {
       await page.locator('#inventoryCsvUpload').setInputFiles({
         name: 'fictional-partial.csv', mimeType: 'text/csv',
         buffer: Buffer.from(`Item Code,Item Name,Category,Stock\nCSV-PARTIAL,Tracked supply,Supplies,9\nCSV-REJECT,${'X'.repeat(201)},Supplies,1\nCSV-NEVER,Never committed,Supplies,3`),
@@ -486,17 +491,177 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     assert.equal((await list('auditHeads')).length, 25);
     assert.equal((await list('auditEvents')).length, 27);
 
-    // Keep this Owner session's in-memory role, but downgrade the canonical
-    // membership behind it. The UI still offers an Owner import; the emulator
+    const inviteeEmail = `${clinicId}-invitee@example.com`;
+    const invitee = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-key', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: inviteeEmail, password, returnSecureToken: true }),
+    });
+    assert.equal(invitee.status, 200);
+    const { localId: inviteeUid } = await invitee.json();
+    let inviteUrl;
+    await inSettings('owner', async page => {
+      await page.getByRole('button', { name: 'Team & invitations' }).click();
+      await page.getByPlaceholder('person@example.com').fill(inviteeEmail);
+      await page.getByRole('button', { name: 'Create invite' }).click();
+      inviteUrl = await page.getByRole('textbox', { name: 'New invitation link' }).inputValue();
+    });
+    const inviteeContext = await app.newContext();
+    try {
+      const errors = [];
+      const page = await app.open(inviteeContext, errors, inviteUrl);
+      await page.getByPlaceholder('you@example.com').fill(inviteeEmail);
+      await page.getByPlaceholder('Enter your password').fill(password);
+      await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+      await page.getByRole('button', { name: 'Send / resend email' }).click();
+      await page.getByRole('status').filter({ hasText: /verification email sent/i }).waitFor();
+      const codes = await fetch(`http://127.0.0.1:9099/emulator/v1/projects/${projectId}/oobCodes`);
+      assert.equal(codes.ok, true);
+      const { oobCodes } = await codes.json();
+      const code = oobCodes.filter(item => item.email === inviteeEmail && item.requestType === 'VERIFY_EMAIL').at(-1);
+      assert.ok(code);
+      await page.evaluate(value => window.fixture.verifyEmail(value), code.oobCode);
+      await page.getByRole('button', { name: /verified/i }).click();
+      await page.getByText(/Invited as a Member/i).waitFor();
+      await page.getByRole('button', { name: 'Accept invitation' }).click();
+      await page.getByRole('button', { name: 'Clinical audit' }).waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Team & invitations' }).count(), 0);
+      const member = (await list('members')).find(item => item.name.endsWith(`/${inviteeUid}`));
+      assert.equal(member?.fields.role.stringValue, 'member');
+      assert.deepEqual(errors, []);
+    } finally {
+      await inviteeContext.close();
+    }
+
+    const consultationHistory = async page => {
+      await page.getByRole('navigation').getByRole('button', { name: 'Overview', exact: true }).click();
+      const panel = page.locator('details').filter({ has: page.getByText('Consultation history', { exact: true }) });
+      await panel.getByText('Consultation history', { exact: true }).click();
+      return panel;
+    };
+    const watchingHistory = await consultationHistory(viewer.page);
+    const unrelatedHistory = await consultationHistory(other.page);
+    await watchingHistory.getByText('No consultations recorded.').waitFor();
+    const visitId = index => `history-visit-${String(index).padStart(2, '0')}`;
+    const historyWrites = Array.from({ length: 52 }, (_, index) => write(`${clinic}/consultations/${visitId(index)}`, {
+      id: visitId(index), patient: 'Fictional Milo', client: '', type: 'Consultation',
+      notes: '', status: 'Draft', date: '2024-02-29'
+    }));
+    historyWrites.push(write(`${clinic}/consultations/history-unknown`, {
+      id: 'history-unknown', patient: 'Fictional Milo', client: '', type: 'Consultation',
+      notes: '', status: 'Draft', date: '2/3/2024'
+    }));
+    const commitFixtures = async writes => {
+      const reply = await fetch(`http://${host}/v1/${documents}:commit`, {
+        method: 'POST', headers: admin, body: JSON.stringify({ writes })
+      });
+      assert.equal(reply.status, 200, await reply.text());
+    };
+    await commitFixtures(historyWrites);
+    await watchingHistory.getByText(visitId(0), { exact: false }).waitFor();
+    const { backfillConsultationHistory } = await import('../scripts/backfill-consultation-history.mjs');
+    await backfillConsultationHistory({ host, projectId, clinicId, apply: true });
+    await watchingHistory.getByText(visitId(51), { exact: false }).waitFor();
+    assert.equal(await watchingHistory.getByRole('listitem').count(), 50);
+    assert.match(await watchingHistory.getByRole('listitem').first().innerText(), /history-visit-51/);
+    assert.match(await watchingHistory.getByRole('listitem').last().innerText(), /history-visit-02/);
+    await watchingHistory.getByRole('button', { name: 'Load more consultations' }).click();
+    await watchingHistory.getByRole('heading', { name: 'Unknown date' }).waitFor();
+    assert.equal(await watchingHistory.getByRole('listitem').count(), 53);
+    assert.match(await watchingHistory.getByRole('listitem').last().innerText(), /2\/3\/2024.*history-unknown/);
+    const editingHistory = await consultationHistory(remote.page);
+    const topVisit = panel => panel.getByRole('listitem').filter({ hasText: visitId(51) });
+    await topVisit(editingHistory).getByRole('button', { name: 'Change state' }).click();
+    await topVisit(watchingHistory).getByText('Completed', { exact: true }).waitFor();
+    await commitFixtures([{ delete: `${clinic}/consultations/${visitId(50)}` }]);
+    await watchingHistory.getByText(visitId(50), { exact: false }).waitFor({ state: 'detached' });
+    assert.equal(await watchingHistory.getByRole('listitem').count(), 52);
+    assert.equal(await unrelatedHistory.getByRole('listitem').count(), 0);
+
+    await viewer.page.getByRole('navigation').getByRole('button', { name: 'Patients', exact: true }).click();
+    const patientRow = viewer.page.getByRole('row').filter({ hasText: 'Fictional Milo' });
+    await commitFixtures([{
+      update: { name: `${clinic}/patients/synthetic-milo`, fields: { balance: { integerValue: '1500' } } },
+      updateMask: { fieldPaths: ['balance'] }
+    }]);
+    await patientRow.click();
+    const dossier = viewer.page.getByRole('heading', { name: 'Patient Clinical Dossier' });
+    await dossier.waitFor();
+    const watchingBilling = viewer.page.getByRole('region', { name: 'Patient billing' });
+    await watchingBilling.getByText('PHP 1,500.00', { exact: true }).waitFor();
+    await remote.page.getByRole('navigation').getByRole('button', { name: 'Patients', exact: true }).click();
+    await remote.page.getByRole('row').filter({ hasText: 'Fictional Milo' }).click();
+    await remote.page.getByRole('button', { name: 'Verify opening balance' }).click();
+    const opening = remote.page.getByRole('dialog', { name: 'Verify opening balance' });
+    await opening.getByRole('button', { name: 'No, it differs' }).click();
+    await opening.getByLabel('Verified amount').fill('1200');
+    await opening.getByLabel('Checked against').selectOption('Paper ledger');
+    await opening.getByLabel('Balance as of (Asia/Manila)').fill('2026-11-18T18:00');
+    await opening.getByLabel('Reason for correction').fill('Synthetic balance verified in another session');
+    await opening.getByRole('button', { name: 'Review update' }).click();
+    await opening.getByRole('button', { name: 'Confirm PHP 1,200.00' }).click();
+    await opening.waitFor({ state: 'hidden' });
+    await watchingBilling.getByText('PHP 1,200.00', { exact: true }).first().waitFor();
+    await watchingBilling.getByText('Synthetic balance verified in another session').waitFor();
+    await remote.page.getByRole('button', { name: 'Record treatment', exact: true }).click();
+    await remote.page.getByLabel('Actual visit time').fill('2025-05-03T09:30');
+    await remote.page.getByLabel('Clinical notes').fill('Synthetic treatment saved in another session');
+    await remote.page.getByRole('button', { name: 'Save treatment', exact: true }).click();
+    await viewer.page.getByText('Synthetic treatment saved in another session', { exact: true }).waitFor();
+    await remote.page.getByRole('button', { name: 'Close dossier', exact: true }).click();
+    await commitFixtures([{
+      ...write(`${clinic}/patients/synthetic-milo`, { name: 'Fictional Milo updated', status: 'Discharged' }),
+      updateMask: { fieldPaths: ['name', 'status'] }
+    }]);
+    await viewer.page.getByRole('heading', { name: 'Fictional Milo updated' }).waitFor();
+    await patientRow.waitFor({ state: 'detached' });
+    await commitFixtures([{ delete: `${clinic}/patients/synthetic-milo` }]);
+    await dossier.waitFor({ state: 'detached' });
+    await viewer.page.getByText('This patient is no longer available in the clinic.').waitFor();
+
+    await viewer.page.getByRole('navigation').getByRole('button', { name: 'Appointments', exact: true }).click();
+    await remote.page.getByRole('navigation').getByRole('button', { name: 'Overview', exact: true }).click();
+    await remote.page.getByRole('button', { name: 'Follow-up queue', exact: true }).click();
+    await remote.page.getByText('No scheduled follow-ups are due.').waitFor();
+    const followUpId = 'live-follow-up';
+    const dueAt = new Date().toISOString();
+    const followUpFixture = write(`${clinic}/appointments/${followUpId}`, {
+      id: followUpId, patientId: 'live-schedule-patient', patientName: 'Fictional live follow-up',
+      ownerName: 'Synthetic owner', ownerContact: '', ownerEmail: '',
+      type: 'Follow-up', status: 'scheduled', notes: '', createdBy: accounts.owner.uid, updatedBy: accounts.owner.uid
+    });
+    Object.assign(followUpFixture.update.fields, {
+      dueAt: { timestampValue: dueAt }, createdAt: { timestampValue: dueAt }, updatedAt: { timestampValue: dueAt },
+      occurredAt: { nullValue: null }, revision: { integerValue: '0' }, durationMinutes: { integerValue: '30' }
+    });
+    await commitFixtures([write(`${clinic}/patients/live-schedule-patient`, {
+      name: 'Fictional live follow-up', status: 'Waiting'
+    }), followUpFixture]);
+    await viewer.page.getByRole('heading', { name: 'Fictional live follow-up · Follow-up' }).waitFor();
+    await remote.page.getByRole('heading', { name: 'Fictional live follow-up' }).waitFor();
+    await remote.page.getByRole('button', { name: 'Mark contacted' }).click();
+    await remote.page.getByText(/Contact recorded/).waitFor();
+    await viewer.page.getByRole('navigation').getByRole('button', { name: 'Overview', exact: true }).click();
+    await viewer.page.getByRole('button', { name: 'Follow-up queue', exact: true }).click();
+    await viewer.page.getByText(/Contact recorded/).waitFor();
+    await remote.page.getByRole('button', { name: 'Undo contact' }).click();
+    await viewer.page.getByText('Needs contact', { exact: true }).waitFor();
+    await commitFixtures([{
+      update: { name: `${clinic}/appointments/${followUpId}`, fields: { status: { stringValue: 'cancelled' } } },
+      updateMask: { fieldPaths: ['status'] }
+    }]);
+    await viewer.page.getByText('No scheduled follow-ups are due.').waitFor();
+
+    // Keep this session's in-memory role, but remove the canonical membership
+    // behind it. The UI still offers an import; the emulator
     // rules must reject the transaction independently of the front-end guard.
-    const demote = await fetch(`http://${host}/v1/${documents}:commit`, {
+    const revokeAccess = await fetch(`http://${host}/v1/${documents}:commit`, {
       method: 'POST', headers: admin,
       body: JSON.stringify({ writes: [
-        write(`${clinic}/members/${accounts.owner.uid}`, { role: 'viewer' }),
-        write(`${documents}/users/${accounts.owner.uid}/clinics/${clinicId}`, { role: 'viewer' }),
+        { delete: `${clinic}/members/${accounts.owner.uid}` },
+        { delete: `${documents}/users/${accounts.owner.uid}/clinics/${clinicId}` },
       ] }),
     });
-    assert.equal(demote.status, 200, await demote.text());
+    assert.equal(revokeAccess.status, 200, await revokeAccess.text());
     await remote.page.getByRole('navigation', { name: 'Administration' }).getByRole('button', { name: 'Clinic setup' }).click();
     await remote.page.locator('#inventoryCsvUpload').setInputFiles({
       name: 'fictional-denied.csv', mimeType: 'text/csv',
@@ -505,10 +670,10 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     const denied = remote.page.getByRole('status', { name: 'Inventory CSV import result' });
     await denied.filter({ hasText: /CSV import stopped after 0 saved item/ }).waitFor();
     const deniedText = await denied.innerText();
-    // The emulator reports a real rules denial (viewer cannot point-read the
+    // The emulator reports a real rules denial (non-members cannot point-read the
     // audited head inside the transaction), not the client-side role guard.
     assert.match(deniedText, /permission-denied|insufficient permissions|evaluation error|false for '(get|create|update)'/i, deniedText);
-    assert.doesNotMatch(deniedText, /online owner or editor/i);
+    assert.doesNotMatch(deniedText, /online clinic session/i);
     assert.doesNotMatch(deniedText, /Imported \d+ inventory item/i);
     assert.equal(await remote.page.evaluate(() => navigator.onLine), true);
     assert.equal(await offlineBanner(remote.page).count(), 0);
@@ -529,7 +694,7 @@ test('signed-in CSV upload saves audited inventory for an owner but not a viewer
     });
     const offlineResult = other.page.getByRole('status', { name: 'Inventory CSV import result' });
     await offlineResult.filter({ hasText: /CSV import stopped after 0 saved item/ }).waitFor();
-    assert.match(await offlineResult.innerText(), /online owner or editor/i);
+    assert.match(await offlineResult.innerText(), /online clinic session/i);
     assert.doesNotMatch(await offlineResult.innerText(), /Imported \d+ inventory item/i);
     assert.equal(await other.page.getByText(/saved to cloud database/i).count(), 0);
     const offlineRows = await fetch(`http://${host}/v1/${otherClinic}/inventory?pageSize=100`, { headers: admin });
@@ -588,7 +753,7 @@ test('a real Firebase identity change clears an open inventory view without an o
     await page.getByPlaceholder('you@example.com').fill(email);
     await page.getByPlaceholder('Enter your password').fill(password);
     await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-    await page.getByRole('button', { name: new RegExp(`${clinicName}.*viewer`, 'i') }).click();
+    await page.getByRole('button', { name: new RegExp(`${clinicName}.*member`, 'i') }).click();
     await page.getByRole('navigation').getByRole('button', { name: 'Inventory', exact: true }).click();
     const row = page.getByRole('row').filter({ hasText: 'Identity cached item' });
     const banner = () => page.getByRole('status').filter({ hasText: 'No internet connection' });

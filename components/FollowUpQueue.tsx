@@ -4,11 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Appointment } from '@/types';
 import { reminderMailto, reminderWhatsApp } from '@/lib/appointment-values';
 import { BILLING_DAY_MS, billingLocalTime } from '@/lib/billing-values';
-import { currentFollowUpContact, followUpDayEndMs, isDueFollowUp } from '@/lib/follow-up-values';
-import type { FollowUpCursor, FollowUpPage } from '@/lib/follow-up';
+import { currentFollowUpContact, followUpDayEndMs, FOLLOW_UP_PAGE_SIZE, isDueFollowUp } from '@/lib/follow-up-values';
+import type { FollowUpCursor, FollowUpPage, FollowUpSubscription } from '@/lib/follow-up';
 
 type Props = {
   load: (after: FollowUpCursor, endMs: number) => Promise<FollowUpPage>;
+  subscribe?: FollowUpSubscription;
   onContact: (row: Appointment, contacted: boolean) => Promise<Appointment>;
   onOpenPatient: (id: string, stillOpen: () => boolean) => Promise<void>;
   onBack: () => void;
@@ -19,11 +20,13 @@ type Props = {
 const initialPage = () => ({ rows: [] as Appointment[], next: null as FollowUpCursor, endMs: 0, loaded: false, loading: true });
 const clinicTime = (ms: number) => `${billingLocalTime(ms).replace('T', ' ')} Manila`;
 
-export function FollowUpQueue({ load, onContact, onOpenPatient, onBack, isCurrent, canEdit, online }: Props) {
+export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBack, isCurrent, canEdit, online }: Props) {
   const [page, setPage] = useState(initialPage);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState('');
   const [opening, setOpening] = useState(false);
+  const [watch, setWatch] = useState(() => ({ size: FOLLOW_UP_PAGE_SIZE, endMs: followUpDayEndMs(Date.now()) }));
+  const [accessDenied, setAccessDenied] = useState(false);
   const generation = useRef(0);
   const loading = useRef(false);
   const contactBusy = useRef(false);
@@ -57,6 +60,7 @@ export function FollowUpQueue({ load, onContact, onOpenPatient, onBack, isCurren
   }, [isCurrent, load, online]);
 
   useEffect(() => {
+    if (subscribe) return;
     let active = true;
     void Promise.resolve().then(() => { if (active) void loadPage(null, followUpDayEndMs(Date.now())); });
     return () => {
@@ -65,7 +69,62 @@ export function FollowUpQueue({ load, onContact, onOpenPatient, onBack, isCurren
       openVersion.current += 1;
       loading.current = false;
     };
-  }, [loadPage]);
+  }, [loadPage, subscribe]);
+
+  useEffect(() => {
+    if (!subscribe || !online) return;
+    let active = true;
+    let release: (() => void) | undefined;
+    let failed = false;
+    const current = () => active && isCurrent();
+    const fail = () => {
+      if (!current()) return;
+      failed = true;
+      loading.current = false;
+      setError('Could not keep the follow-up queue in sync. Refresh to retry.');
+      setPage(previous => ({ ...previous, loading: false }));
+    };
+    const deny = () => {
+      if (!current()) return;
+      failed = true;
+      generation.current += 1;
+      openVersion.current += 1;
+      loading.current = false;
+      setSaving('');
+      setAccessDenied(true);
+      setError('Follow-up access changed. Reload the workspace.');
+      setPage({ ...initialPage(), loading: false });
+    };
+    void subscribe(watch.size, watch.endMs, result => {
+      if (!current() || failed) return;
+      loading.current = false;
+      setPage({ ...result, endMs: watch.endMs, loaded: true, loading: false });
+    }, fail, deny).then(unsubscribe => {
+      if (current()) release = unsubscribe;
+      else unsubscribe();
+    }).catch(fail);
+    return () => {
+      active = false;
+      generation.current += 1;
+      openVersion.current += 1;
+      release?.();
+    };
+  }, [isCurrent, online, subscribe, watch]);
+
+  const requestPage = (more: boolean) => {
+    if (!subscribe) {
+      void loadPage(more ? page.next : null, more ? page.endMs : followUpDayEndMs(Date.now()));
+      return;
+    }
+    if (accessDenied || loading.current || contactBusy.current) return;
+    loading.current = true;
+    setError('');
+    setPage(previous => ({ ...previous, loading: true }));
+    setWatch(previous => ({
+      size: more ? previous.size + FOLLOW_UP_PAGE_SIZE : previous.size,
+      endMs: more ? previous.endMs : followUpDayEndMs(Date.now())
+    }));
+  };
 
   const contact = async (row: Appointment, contacted: boolean) => {
     if (!canEdit || !online || !isCurrent() || loading.current || contactBusy.current) return;
@@ -77,7 +136,8 @@ export function FollowUpQueue({ load, onContact, onOpenPatient, onBack, isCurren
       const updated = await onContact(row, contacted);
       if (generation.current !== version || !isCurrent()) return;
       setPage(previous => ({ ...previous, rows: previous.rows.flatMap(existing => existing.id !== updated.id ? [existing]
-        : isDueFollowUp(updated, previous.endMs - 1) ? [updated] : []) }));
+        : existing.revision > updated.revision ? [existing]
+          : isDueFollowUp(updated, previous.endMs - 1) ? [updated] : []) }));
     } catch (reason) {
       if (generation.current === version && isCurrent()) {
         const message = reason instanceof Error ? reason.message : 'Could not confirm contact.';
@@ -110,9 +170,10 @@ export function FollowUpQueue({ load, onContact, onOpenPatient, onBack, isCurren
     </div>
     {!online ? <p role="status" className="vc-note">Offline. Reconnect to see the current follow-up queue.</p> : <>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className="vc-btn" disabled={page.loading || !!saving}
-          onClick={() => void loadPage(null, followUpDayEndMs(Date.now()))}>Refresh queue</button>
-        {page.endMs > 0 && <p className="vc-note">As of {billingLocalTime(page.endMs - 1).slice(0, 10)} Manila · Refresh for the latest clinic records.</p>}
+        <button type="button" className="vc-btn" disabled={page.loading || !!saving || accessDenied}
+          onClick={() => requestPage(false)}>Refresh queue</button>
+        {page.endMs > 0 && <p className="vc-note">Through {billingLocalTime(page.endMs - 1).slice(0, 10)} Manila
+          {subscribe ? ' · Confirmed changes update automatically.' : ' · Refresh for the latest clinic records.'}</p>}
       </div>
       <p className="vc-note">Contact owners manually and verify the recipient before using a draft. Nothing is sent automatically.</p>
       {error && <p role="alert" className="text-sm text-danger-text">{error}</p>}
@@ -145,7 +206,7 @@ export function FollowUpQueue({ load, onContact, onOpenPatient, onBack, isCurren
       {page.next !== null && <div className="space-y-2">
         <p role="status" className="vc-note">More follow-ups are available. The list is not complete yet.</p>
         <button type="button" className="vc-btn" disabled={page.loading || !!saving}
-          onClick={() => void loadPage(page.next, page.endMs)}>Load more follow-ups</button>
+           onClick={() => requestPage(true)}>Load more follow-ups</button>
       </div>}
     </>}
   </div>;

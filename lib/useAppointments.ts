@@ -1,15 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { Appointment, AppointmentDraft, PatientRecord } from '@/types';
-import { loadAppointmentsPage, saveAppointment } from '@/lib/appointments';
+import { loadAppointmentsPage, saveAppointment, subscribeAppointments } from '@/lib/appointments';
 import type { AppointmentCursor } from '@/lib/appointments';
-import { appointmentValidationError, defaultAppointmentWindow, inAppointmentWindow } from '@/lib/appointment-values';
+import { APPOINTMENT_PAGE_SIZE, appointmentValidationError, defaultAppointmentWindow, inAppointmentWindow } from '@/lib/appointment-values';
 import type { AppointmentWindow } from '@/lib/appointment-values';
+import { isClinicInventoryAccessDenied } from '@/lib/clinic-pages';
 import { currentFollowUpContact, isDueFollowUp } from '@/lib/follow-up-values';
 import type { createMutationScope } from '@/lib/mutation-scope';
 
 const emptyPage = () => ({ rows: [] as Appointment[], hasMore: true, busy: false, loaded: false, error: '', fromCache: false, refreshedAt: '' });
+const initialWatch = (key: string) => ({ key, confirmed: false, denied: false, failed: false, hasMore: true });
 export function useAppointments({
   clinicId, uid, online, canEdit, patients, scope, workspaceGeneration,
 }: {
@@ -18,6 +20,12 @@ export function useAppointments({
 }) {
   const key = `${clinicId}:${uid}`;
   const [window, setWindow] = useState(defaultAppointmentWindow);
+  const watchKey = JSON.stringify([clinicId, uid, window.from, window.through, workspaceGeneration]);
+  const [watch, setWatch] = useState(() => ({ key: watchKey, size: APPOINTMENT_PAGE_SIZE, retry: 0 }));
+  const watchSize = watch.key === watchKey ? watch.size : APPOINTMENT_PAGE_SIZE;
+  const watchRetry = watch.key === watchKey ? watch.retry : 0;
+  const live = useRef(initialWatch(watchKey));
+  const snapshotVersion = useRef(0);
   const rollingWindow = useRef(true);
   const [page, setPage] = useState(() => ({ ...emptyPage(), key }));
   const generation = useRef(0);
@@ -28,6 +36,8 @@ export function useAppointments({
   const demo = useRef<Appointment[]>([]);
   const load = useCallback(async (reset = false) => {
     if (!clinicId || !uid || !scope.isCurrent(workspaceGeneration) || (locked.current && !reset)) return;
+    const current = live.current;
+    if (current.key === watchKey && current.denied) return;
     const todayWindow = defaultAppointmentWindow();
     if (reset && rollingWindow.current &&
         (window.from !== todayWindow.from || window.through !== todayWindow.through)) {
@@ -35,15 +45,30 @@ export function useAppointments({
       setPage({ ...emptyPage(), key }); setWindow(todayWindow);
       return;
     }
+    if (clinicId !== 'demo-clinic' && current.key === watchKey && (current.confirmed || current.failed)) {
+      if (!online) {
+        setPage(previous => ({ ...previous, busy: false, error: 'Reconnect before requesting more appointments.' }));
+        return;
+      }
+      if (!reset && !current.failed && !current.hasMore) return;
+      locked.current = true;
+      setPage(previous => ({ ...previous, busy: true, error: '' }));
+      setWatch({ key: watchKey,
+        size: current.failed ? watchSize : reset ? APPOINTMENT_PAGE_SIZE : watchSize + APPOINTMENT_PAGE_SIZE,
+        retry: watchRetry + 1 });
+      return;
+    }
     if (reset) { generation.current += 1; cursor.current = null; committed.current.clear(); }
     const version = generation.current;
+    const liveVersion = snapshotVersion.current;
     locked.current = true;
     setPage(previous => ({ ...(reset ? emptyPage() : previous), key, busy: true, error: '' }));
     try {
       const result = clinicId === 'demo-clinic'
         ? { records: demo.current.filter(row => inAppointmentWindow(row, window)), hasMore: false, cursor: null, fromCache: false }
-        : await loadAppointmentsPage(clinicId, window, cursor.current);
+        : await loadAppointmentsPage(clinicId, window, cursor.current, uid);
       if (generation.current !== version || !scope.isCurrent(workspaceGeneration)) return;
+      if (snapshotVersion.current !== liveVersion) return;
       cursor.current = result.cursor;
       setPage(previous => {
         const rows = reset ? [] : previous.rows;
@@ -56,27 +81,75 @@ export function useAppointments({
         return { key, rows: [...merged.values()].filter(row => inAppointmentWindow(row, window))
           .sort((a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id)),
           hasMore: result.hasMore, fromCache: result.fromCache || (!reset && previous.fromCache),
-          busy: false, loaded: true, error: '', refreshedAt: new Date().toISOString() };
+          busy: false, loaded: true, error: current.failed ? previous.error : '', refreshedAt: new Date().toISOString() };
       });
-    } catch {
-      if (generation.current === version && scope.isCurrent(workspaceGeneration)) {
-        setPage(previous => ({ ...previous, busy: false, error: 'Could not load appointments. Check your connection, clinic access and matching published rules, then retry.' }));
+      if (!reset && clinicId !== 'demo-clinic' && result.records.length) {
+        setWatch(previous => ({ key: watchKey, retry: 0,
+          size: (previous.key === watchKey ? previous.size : APPOINTMENT_PAGE_SIZE) + APPOINTMENT_PAGE_SIZE }));
+      }
+    } catch (error) {
+      if (generation.current === version && scope.isCurrent(workspaceGeneration) && snapshotVersion.current === liveVersion) {
+        if (isClinicInventoryAccessDenied(error)) {
+          current.denied = true;
+          setPage({ ...emptyPage(), key, hasMore: false, error: 'Appointment access changed. Reload the workspace.' });
+        } else {
+          setPage(previous => ({ ...previous, busy: false, error: 'Could not load appointments. Check your connection and clinic access, then retry.' }));
+        }
       }
     } finally {
       if (generation.current === version) locked.current = false;
     }
-  }, [clinicId, uid, key, window, scope, workspaceGeneration]);
+  }, [clinicId, uid, key, window, scope, workspaceGeneration, watchKey, watchRetry, watchSize, online]);
 
+  const loadFirstPage = useEffectEvent(() => { void load(true); });
   useEffect(() => {
     let active = true;
     const completedInScope = committed.current;
     void Promise.resolve().then(() => {
       if (!active) return;
       if (!clinicId) { demo.current = []; setPage({ ...emptyPage(), key }); }
-      else void load(true);
+      else loadFirstPage();
     });
     return () => { active = false; generation.current += 1; locked.current = false; completedInScope.clear(); };
-  }, [clinicId, key, load]);
+  }, [clinicId, key, window, workspaceGeneration]);
+
+  useEffect(() => {
+    if (!clinicId || clinicId === 'demo-clinic' || !uid) return;
+    let active = true;
+    let release: (() => void) | undefined;
+    if (live.current.key !== watchKey) live.current = initialWatch(watchKey);
+    const current = live.current;
+    current.failed = false;
+    const isCurrent = () => active && live.current === current && !current.denied && scope.isCurrent(workspaceGeneration);
+    const deny = () => {
+      if (!isCurrent()) return;
+      current.denied = true;
+      snapshotVersion.current += 1;
+      locked.current = false;
+      committed.current.clear();
+      setPage({ ...emptyPage(), key, hasMore: false, error: 'Appointment access changed. Reload the workspace.' });
+    };
+    const fail = (error: Error) => {
+      if (!isCurrent()) return;
+      if (isClinicInventoryAccessDenied(error)) { deny(); return; }
+      current.failed = true;
+      locked.current = false;
+      setPage(previous => ({ ...previous, busy: false, error: 'Could not keep appointments in sync. Refresh the schedule to retry.' }));
+    };
+    void subscribeAppointments(clinicId, uid, window, watchSize, page => {
+      if (!isCurrent() || current.failed) return;
+      current.confirmed = true;
+      current.hasMore = page.hasMore;
+      snapshotVersion.current += 1;
+      locked.current = false;
+      setPage({ key, rows: page.records, hasMore: page.hasMore, fromCache: false,
+        busy: false, loaded: true, error: '', refreshedAt: new Date().toISOString() });
+    }, fail, deny).then(unsubscribe => {
+      if (isCurrent()) release = unsubscribe;
+      else unsubscribe();
+    }).catch(fail);
+    return () => { active = false; release?.(); };
+  }, [clinicId, uid, key, window, watchKey, watchSize, watchRetry, scope, workspaceGeneration]);
 
   const changeWindow = (value: AppointmentWindow) => {
     const todayWindow = defaultAppointmentWindow();
@@ -87,7 +160,8 @@ export function useAppointments({
   };
   const save = async (id: string, expectedRevision: number | null, draft: AppointmentDraft): Promise<boolean> => {
     if (!clinicId || !uid || !scope.isCurrent(workspaceGeneration)) return false;
-    if (!canEdit || (clinicId !== 'demo-clinic' && !online)) throw new Error('An online owner or editor session is required. No change was submitted.');
+    if (clinicId !== 'demo-clinic' && live.current.key === watchKey && live.current.denied) return false;
+     if (!canEdit || (clinicId !== 'demo-clinic' && !online)) throw new Error('An online clinic session is required. No change was submitted.');
     const invalid = appointmentValidationError(draft);
     if (invalid) throw new Error(invalid);
     const savingKey = `${key}:${id}`;
@@ -110,12 +184,17 @@ export function useAppointments({
            ...(previous?.followUpContact ? { followUpContact: previous.followUpContact } : {}) };
         demo.current = [...demo.current.filter(row => row.id !== id), saved];
       } else saved = await saveAppointment({ clinicId, id, expectedRevision, draft, expectedUid: uid });
-      if (!scope.isCurrent(workspaceGeneration) || generation.current !== version) return false;
+      if (!scope.isCurrent(workspaceGeneration) || generation.current !== version
+        || (clinicId !== 'demo-clinic' && live.current.denied)) return false;
       committed.current.set(saved.id, saved);
-      setPage(previous => ({
-        ...previous, rows: [...previous.rows.filter(row => row.id !== id), ...(inAppointmentWindow(saved, window) ? [saved] : [])]
-          .sort((a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id)),
-      }));
+      const prefixConfirmed = clinicId !== 'demo-clinic' && live.current.confirmed;
+      setPage(previous => {
+        const existing = previous.rows.find(row => row.id === id);
+        if ((existing && existing.revision > saved.revision)
+          || (!existing && prefixConfirmed)) return previous;
+        return { ...previous, rows: [...previous.rows.filter(row => row.id !== id), ...(inAppointmentWindow(saved, window) ? [saved] : [])]
+          .sort((a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id)) };
+      });
       return true;
     } catch (error) {
       if (!scope.isCurrent(workspaceGeneration) || generation.current !== version) return false;

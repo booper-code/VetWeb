@@ -18,8 +18,12 @@ const compile = async (file, replacements = {}) => {
 const handles = url('export const initializeFirebase = async () => globalThis.__appointmentHandles;');
 const mutationUrl = await compile('clinical-mutations.ts', { '@/lib/firebase': handles });
 const valuesUrl = await compile('appointment-values.ts');
+const clinicPagesUrl = await compile('clinic-pages.ts', {
+  '@/lib/firebase': handles, '@/lib/stock-alert-values': await compile('stock-alert-values.ts'),
+});
 const appointmentUrl = await compile('appointments.ts', {
   '@/lib/firebase': handles, '@/lib/clinical-mutations': mutationUrl, '@/lib/appointment-values': valuesUrl,
+  '@/lib/clinic-pages': clinicPagesUrl,
 });
 const { saveAppointment, loadAppointmentsPage } = await import(appointmentUrl);
 const { mutateClinicalRecord } = await import(mutationUrl);
@@ -76,11 +80,11 @@ test('appointments are bounded, clinic-scoped, audited and role-protected', asyn
       await denied(() => fs.getDoc(ref(clients.outsider, 'appointments', 'visit')));
       await denied(() => fs.getDoc(ref(owner, 'appointments', 'visit', `${clinicId}-foreign`)));
     });
-    await t.test('viewer cannot save even a complete audited appointment', async () => {
-      select('viewer'); await denied(() => save('viewer-denied')); select('owner');
+    await t.test('outsiders cannot save an appointment', async () => {
+      select('outsider'); await denied(() => save('outsider-denied')); select('owner');
     });
-    await t.test('editor reschedules and stale edits are rejected', async () => {
-      select('editor');
+    await t.test('legacy viewer reschedules as a Member; stale edits are rejected', async () => {
+      select('viewer');
       const saved = await save('visit', 1, { type: 'Follow-up' });
       assert.equal(saved.revision, 2);
       await assert.rejects(save('visit', 1), error => error.name === 'ClinicalConflictError');
@@ -115,7 +119,7 @@ test('appointments are bounded, clinic-scoped, audited and role-protected', asyn
     await t.test('clinic-wide follow-up pages and audited contact leave the visit scheduled', async () => {
       const billingValues = await compile('billing-values.ts');
       const followValues = await compile('follow-up-values.ts', { '@/lib/billing-values': billingValues });
-      const followUrl = await compile('follow-up.ts', { '@/lib/firebase': handles, '@/lib/appointments': appointmentUrl,
+      const followUrl = await compile('follow-up.ts', { '@/lib/firebase': handles, '@/lib/appointments': appointmentUrl, '@/lib/clinic-pages': clinicPagesUrl,
         '@/lib/clinical-mutations': mutationUrl, '@/lib/follow-up-values': followValues });
       const { loadFollowUpPage, recordFollowUpContact } = await import(followUrl);
       const { followUpDayEndMs, currentFollowUpContact } = await import(followValues);
@@ -155,9 +159,9 @@ test('appointments are bounded, clinic-scoped, audited and role-protected', asyn
       await assert.rejects(() => recordFollowUpContact({ ...input, row: future }), /due follow-up/i);
       const viewer = select('viewer');
       assert.equal((await loadFollowUpPage({ ...input, uid: viewer.auth.currentUser.uid })).rows.length, 25);
-      await denied(() => recordFollowUpContact({ ...input, uid: viewer.auth.currentUser.uid, row: eligible }));
       const outsider = select('outsider');
       await denied(() => loadFollowUpPage({ ...input, uid: outsider.auth.currentUser.uid }));
+      await denied(() => recordFollowUpContact({ ...input, uid: outsider.auth.currentUser.uid, row: eligible }));
       const editor = select('editor');
       const editorUid = editor.auth.currentUser.uid;
       const contacted = await recordFollowUpContact({ ...input, uid: editorUid, row: eligible });
@@ -174,9 +178,8 @@ test('appointments are bounded, clinic-scoped, audited and role-protected', asyn
       const recordedAgain = await recordFollowUpContact({ ...input, row: moved });
       assert.equal(currentFollowUpContact(recordedAgain).dueAt, moved.dueAt);
       select('viewer');
-      await denied(() => recordFollowUpContact({ ...input, uid: viewer.auth.currentUser.uid, row: recordedAgain, contacted: false }));
+      const cleared = await recordFollowUpContact({ ...input, uid: viewer.auth.currentUser.uid, row: recordedAgain, contacted: false });
       select('owner');
-      const cleared = await recordFollowUpContact({ ...input, row: recordedAgain, contacted: false });
       assert.equal(currentFollowUpContact(cleared), null);
       assert.equal(cleared.status, 'scheduled');
       assert.equal(cleared.dueAt, moved.dueAt);

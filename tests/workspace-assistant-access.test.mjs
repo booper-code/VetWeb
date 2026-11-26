@@ -36,7 +36,7 @@ test('only live canonical membership can unlock the assistant; auth changes inva
   authChanged(auth.currentUser);
   memberChanged(snapshot({ role: 'owner' }));
   stop();
-  assert.deepEqual(seen, [null, null, null, 'editor', 'viewer', null, null]);
+  assert.deepEqual(seen, [null, null, null, 'member', 'member', null, null]);
   assert.equal(stopped, 2);
 });
 
@@ -55,9 +55,9 @@ test('fresh assistant access reads membership and the owner switch, then checks 
   const { readAssistantRole } = loadSource('../../lib/workspace-assistant-access.ts', {
     '@/lib/firebase': { initializeFirebase: async () => ({ auth, firestore, db: {} }) },
   });
-  assert.equal(await readAssistantRole('fixture-clinic', 'fixture-staff'), 'editor');
+  assert.equal(await readAssistantRole('fixture-clinic', 'fixture-staff'), 'member');
   role = 'viewer';
-  assert.equal(await readAssistantRole('fixture-clinic', 'fixture-staff'), 'viewer');
+  assert.equal(await readAssistantRole('fixture-clinic', 'fixture-staff'), 'member');
   enabled = false;
   assert.equal(await readAssistantRole('fixture-clinic', 'fixture-staff'), null);
   enabled = true;

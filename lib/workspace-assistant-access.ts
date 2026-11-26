@@ -1,13 +1,13 @@
 import type { DocumentSnapshot } from 'firebase/firestore';
 import type { ClinicRole } from '@/types';
 import { initializeFirebase } from '@/lib/firebase';
+import { normalizeClinicRole } from '@/lib/clinic-role';
 
 const fresh = (snapshot: DocumentSnapshot) =>
   snapshot.exists() && !snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites;
 
 function verifiedRole(snapshot: DocumentSnapshot): ClinicRole | null {
-  const role = fresh(snapshot) ? snapshot.data()?.role : null;
-  return role === 'owner' || role === 'editor' || role === 'viewer' ? role : null;
+  return fresh(snapshot) ? normalizeClinicRole(snapshot.data()?.role) : null;
 }
 
 export async function watchAssistantRole(clinicId: string, uid: string, onRole: (role: ClinicRole | null) => void) {

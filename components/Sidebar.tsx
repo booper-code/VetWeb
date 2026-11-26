@@ -58,7 +58,7 @@ export const Sidebar = ({
     { id: 'settings', label: 'Clinic setup', icon: Settings },
     { id: 'account', label: 'My account', icon: UserCog },
     ...(currentClinicRole === 'owner' ? [{ id: 'team', label: 'Team & invitations', icon: Users }] : []),
-    ...(currentClinicRole === 'owner' ? [{ id: 'audit', label: 'Clinical audit', icon: Activity }] : []),
+    ...(currentClinicRole ? [{ id: 'audit', label: 'Clinical audit', icon: Activity }] : []),
   ];
 
   const go = (tab: string) => {

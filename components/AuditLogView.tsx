@@ -5,6 +5,8 @@ import type { QueryDocumentSnapshot, DocumentData, QueryConstraint } from 'fireb
 import { initializeFirebase } from '@/lib/firebase';
 
 type Event = { id: string; actorUid: string; action: string; entityType: string; entityId: string; seq: number; time?: { toDate: () => Date } };
+const payrollLabels: Record<string, string> = { staff: 'Staff profile', payProfiles: 'Pay rate', payrollPeriods: 'Payroll period' };
+const eventAction = (event: Event) => event.entityType === 'payrollPeriods' && event.action === 'update' ? 'close' : event.action;
 export function AuditLogView({ clinicId, searchQuery }: { clinicId: string; searchQuery: string }) {
   const [events, setEvents] = useState<Event[]>([]);
   const [busy, setBusy] = useState(false);
@@ -31,7 +33,7 @@ export function AuditLogView({ clinicId, searchQuery }: { clinicId: string; sear
       cursor.current = page.docs.at(-1) ?? cursor.current;
       setMore(page.size === 25);
     } catch {
-      if (version === scope.current) setError('Could not load audit events. Check your connection and owner access.');
+      if (version === scope.current) setError('Could not load audit events. Check your connection and clinic access.');
     } finally {
       if (version === scope.current) { locked.current = false; setBusy(false); }
     }
@@ -48,10 +50,10 @@ export function AuditLogView({ clinicId, searchQuery }: { clinicId: string; sear
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clinicId]);
   const q = searchQuery.trim().toLowerCase();
-  const visible = events.filter(event => `${event.action} ${event.entityType} ${event.entityId} ${event.actorUid}`.toLowerCase().includes(q));
+  const visible = events.filter(event => `${eventAction(event)} ${payrollLabels[event.entityType] ?? ''} ${event.entityType} ${event.entityId} ${event.actorUid}`.toLowerCase().includes(q));
   return <section className="space-y-4">
     <h2 className="text-2xl font-bold text-content-title">Clinical audit trail</h2>
-    <p className="text-sm text-content-secondary">Owner-only mutation metadata for patients, inventory, consultations and appointments. Events cannot be edited or deleted through application rules. This is not a regulatory compliance certification.</p>
+    <p className="text-sm text-content-secondary">Change history for patients, inventory, consultations, appointments, staff profiles, pay rates and payroll periods. Events cannot be edited or deleted through application rules. Posted payroll transactions have a separate Ledger history.</p>
     <p className="text-xs text-content-hint">Search covers the {events.length} loaded events. Newest events first.</p>
     {error && <p role="alert" className="text-danger-text">{error}</p>}
     <div className="overflow-x-auto rounded-xl border border-outline-soft bg-panel">
@@ -59,7 +61,7 @@ export function AuditLogView({ clinicId, searchQuery }: { clinicId: string; sear
         <thead><tr>{['Time', 'Action', 'Record', 'Revision', 'Actor UID'].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead>
         <tbody>{visible.map(event => <tr key={event.id} className="border-t border-hairline">
           <td className="p-3">{event.time?.toDate?.().toLocaleString() ?? 'Pending'}</td>
-          <td className="p-3">{event.action}</td><td className="max-w-xs break-all p-3">{event.entityType}/{event.entityId}</td>
+          <td className="p-3">{eventAction(event)}</td><td className="max-w-xs break-all p-3">{payrollLabels[event.entityType] ?? event.entityType}/{event.entityId}</td>
           <td className="p-3">{event.seq}</td><td className="max-w-xs break-all p-3 font-mono text-xs">{event.actorUid}</td>
         </tr>)}</tbody>
       </table>

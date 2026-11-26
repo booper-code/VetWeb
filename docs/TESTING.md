@@ -53,15 +53,17 @@ If Java is unpacked privately, prepend its `bin` directory to `PATH`.
   eight clinical actions, successful and failed late completions after clinic
   switching/logout/wipe, identical document IDs across clinics, entry rejection
   of obsolete child callbacks, legitimate current-workspace completions,
-  rename/ownership callbacks, and session restoration. Separate hook tests
+  rename callbacks, and session restoration. Separate hook tests
   exercise pagination invalidation and first-load recovery. The actual Team
-  component is tested for transfer completion before/after unmount; parent
-  tests separately verify clinic scope and preserving same-clinic navigation.
+  component is tested for Owner-only invite and removal controls; parent tests
+  verify Member access to clinic settings and audit.
   This is not a full end-to-end test of each form.
 - `test:rules`: emulator-only authorization, real cursor queries, and audited
   transactions. Direct adversarial batches bypass the helper to test forged
   actor/timestamp/sequence, mismatched and cross-clinic metadata, reused events,
-  deleted-ID reuse, extra keys, and consistent/inconsistent editor writes.
+  deleted-ID reuse, extra keys, and consistent/inconsistent Member writes.
+  Invitation rules cover verified-email acceptance, legacy invitations,
+  atomic membership creation and removal, and immutable clinic ownership.
   The appointment suite additionally checks schema/patient binding, occurrence
   versus entry times, concurrent edits, cancellation after patient deletion,
   equal-timestamp paging and offline cached reads without queued writes.
@@ -117,21 +119,22 @@ If Java is unpacked privately, prepend its `bin` directory to `PATH`.
   a trusted initialization/wipe race, blocked deletion, status surviving
   sign-out/remount, and retry. A separate test-only bundle renders the main app
   page plus the real `OfflineStatus` shell (service-worker registration off)
-  and signs in with fictional Viewer and Owner accounts in independent browser
-  contexts: the same `docs/sample-inventory.csv` leaves the Viewer’s clinic
-  unchanged, saves exactly 24 rows with 24 audit heads, events and receipts as
-  Owner, and creates no duplicates after a fresh sign-in and retry. A Viewer
-  that opened Inventory before the import sees the owner’s row, a later
-  owner rename and an owner deletion without refreshing; a member of a second
+  and signs in with fictional Member and Owner accounts in independent browser
+  contexts. The Owner's import of `docs/sample-inventory.csv` saves 24 rows
+  with 24 audit heads, events and receipts, and creates no duplicates after
+  a fresh sign-in and retry. A Member can import inventory and see the Owner’s
+  import, rename and deletion without refreshing; a member of a second
   fictional clinic with its own context never sees those rows and its
   inventory stays empty on the server. With a write-capable Owner session held
-  in memory but the canonical emulator membership downgraded to viewer, an
+  in memory but its canonical emulator membership removed, an
   import that the UI still offers fails with a real Firestore rules denial:
   `navigator.onLine` is true, the production status reports the rules error
   (not a success and not the offline banner), and no `CSV-DENIED` document is
   committed. A separate Owner context put offline shows the real banner and a
   front-end read-only refusal, commits no `CSV-OFFLINE` document either before
-  or after reconnect, and the banner clears on reconnect. Both bundles connect
+  or after reconnect, and the banner clears on reconnect. The Owner also
+  creates a real Member invite, which a separate account verifies and accepts
+  through the emulator-backed UI. Both bundles connect
   only to loopback with fictional accounts; neither is the hosted staging app.
   These are local emulator results: the shared cloud project’s deployed rules,
   physically separate devices and real network outages are not verified.
@@ -151,11 +154,71 @@ The SDK's underlying deletion may complete later after the blocker closes.
 The GitHub workflow runs on pushes to `main` and pull requests. Check its
 result separately; passing locally does not verify the GitHub run.
 
-## Cross-device freshness audit: remaining clinical views (Task 4)
+## Cross-device freshness and audit evidence
 
-This is a read/write-path audit only; it adds no listener, permission, config,
+Inventory, the loaded patient directory, open dossiers, consultation history,
+the selected appointment range and the open follow-up queue update from
+server-confirmed data. The open patient billing panel reloads its posted history
+when the confirmed billing sequence changes, retaining the requested page depth.
+Clinic-wide patient search and exports still run as separate bounded scans.
+If a follow-up queue stays open past midnight Manila time, Refresh queue advances
+the date cutoff shown in the view.
+
+Run `npm run test:rules` and then `npm run test:offline:browser`; the two
+commands use the same emulator ports. The latter exercises separate fictional
+browser sessions for history, live record changes and isolation.
+
+### Consultation history backfill (emulator)
+
+With the Firestore emulator running under a `demo-` project and
+`FIRESTORE_EMULATOR_HOST` set to its loopback address, preview a fictional clinic:
+
+```text
+node scripts/backfill-consultation-history.mjs --project demo-vetcloud-rules --clinic <fixture-id>
+```
+
+Append `--apply` to populate the sort keys. If a competing write interrupts
+the operation, the clinic remains in document-ID order. Rerun the same command on
+that fixture to resume, verify all sort keys, and enable chronological history.
+
+New empty clinics start in chronological mode. Existing clinics retain all rows
+in document-ID order until their backfill is verified. No hosted migration is
+part of this rehearsal.
+
+### Audit checkpoints (emulator)
+
+Staff profiles, pay rates, and payroll period changes now append metadata to
+Clinical audit in the same transaction as the change. Posted billing and
+payroll transactions keep their separate ledgers.
+
+For a fictional clinic, set `FIRESTORE_EMULATOR_HOST` to the loopback address.
+With an externally held Ed25519 key pair and fresh private output paths:
+
+```text
+node scripts/audit-checkpoint.mjs capture --project demo-vetcloud-rules --clinic <fixture-id> --snapshot before.json
+node scripts/audit-checkpoint.mjs create --snapshot before.json --checkpoint checkpoint.json --key private.pem
+node scripts/audit-checkpoint.mjs capture --project demo-vetcloud-rules --clinic <fixture-id> --snapshot after.json
+node scripts/audit-checkpoint.mjs verify --snapshot after.json --checkpoint checkpoint.json --key public.pem
+```
+
+Capture reads Clinical audit, billing entries and the payroll ledger from one
+read-only snapshot. The checkpoint contains digests and a signature. The
+verification command exits nonzero for missing or changed recorded entries,
+scope mismatch, a reused or older snapshot timestamp, or an invalid signature; additional records are counted
+separately. Keep input snapshots private. The signing key, trusted public key
+and retained checkpoints need separate operational control from Firebase.
+Acquire the comparison independently from the live database. The offline
+verifier takes the comparison file as input and cannot establish its origin
+or detect someone relabeling an old file.
+This detects later changes to records covered by a trusted checkpoint; events
+removed before the first trusted capture cannot be recovered or proven by it.
+External collection, retention and scheduling still require approval.
+
+## Historical cross-device freshness audit (Task 4 baseline)
+
+Before the listeners above, this was a read/write-path audit only; it added no listener, permission, config,
 dependency or app change and does not claim app-wide live sync. It extends the
-Task 3 evidence above: **inventory is the only clinical collection whose
+Task 3 evidence above: **inventory was the only clinical collection whose
 confirmed remote changes reach an already-open view** (the independent-context
 emulator scenario in `tests/offline-browser.test.mjs:362-477` watches an import,
 a rename and a delete appear for a Viewer without refreshing, while a second

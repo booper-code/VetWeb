@@ -64,13 +64,12 @@ test('schema covers all clinic domains with role levels and no data', () => {
   ]);
   const schema = buildClinicQuerySchema();
   assert.match(schema, /patients \[member\]/);
-  assert.match(schema, /billingEntries \[editor\]/);
-  assert.match(schema, /auditEvents \[owner\]/);
+  assert.match(schema, /billingEntries \[member\]/);
+  assert.match(schema, /auditEvents \[member\]/);
   assert.doesNotMatch(schema, /QA Mango|PAT-|Private Owner|fictional/i);
   assert.equal(roleAllowed('viewer', 'member'), true);
-  assert.equal(roleAllowed('viewer', 'editor'), false);
-  assert.equal(roleAllowed('editor', 'editor'), true);
-  assert.equal(roleAllowed('editor', 'owner'), false);
+  assert.equal(roleAllowed('editor', 'member'), true);
+  assert.equal(roleAllowed('member', 'member'), true);
   assert.equal(roleAllowed(null, 'member'), false);
 });
 

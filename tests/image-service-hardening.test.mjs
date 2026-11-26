@@ -29,7 +29,7 @@ test('JSON responses are not cacheable', async t => {
   const signer = await createSigner('test-key');
   harness.state.jwks = [signer.jwk];
   const owner = await signer.token('owner');
-  const viewer = await signer.token('viewer');
+  const outsider = await signer.token('outsider');
 
   const uploaded = await uploadAs(harness.request, owner);
   assert.equal(uploaded.status, 200);
@@ -46,7 +46,7 @@ test('JSON responses are not cacheable', async t => {
   assert.ok((await signed.json()).urls[key]);
 
   // Error bodies are JSON as well, so they must not be cached either.
-  const denied = await uploadAs(harness.request, viewer);
+  const denied = await uploadAs(harness.request, outsider);
   assert.equal(denied.status, 403);
   assert.equal(denied.headers.get('cache-control'), 'no-store');
 

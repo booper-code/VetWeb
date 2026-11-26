@@ -13,11 +13,17 @@ const draft = { patientId: patient.id, dueAt: now, type: 'Vaccination', status: 
 
 async function hookHarness({ demo = false, canEdit = true, defaultWindow = values.defaultAppointmentWindow } = {}) {
   const dom = domHarness(), scope = createMutationScope();
-  const reads = [], writes = [];
+  const reads = [], writes = [], subscriptions = [];
   const { useAppointments } = loadSource('../../lib/useAppointments.ts', {
     react: React, '@/lib/appointment-values': { ...values, defaultAppointmentWindow: defaultWindow },
+    '@/lib/firebase': {},
     '@/lib/appointments': {
       loadAppointmentsPage(...args) { const pending = deferred(); reads.push({ args, ...pending }); return pending.promise; },
+      subscribeAppointments(clinicId, uid, window, size, accept, fail, deny) {
+        const subscription = { clinicId, uid, window, size, accept, fail, deny, released: false };
+        subscriptions.push(subscription);
+        return Promise.resolve(() => { subscription.released = true; });
+      },
       saveAppointment(input) { const pending = deferred(); writes.push({ input, ...pending }); return pending.promise; },
     },
   });
@@ -29,12 +35,30 @@ async function hookHarness({ demo = false, canEdit = true, defaultWindow = value
   const render = async (clinicId = demo ? 'demo-clinic' : 'clinic-a', uid = 'owner', online = true, editable = canEdit) =>
     act(async () => { dom.root.render(React.createElement(Screen, { clinicId, uid, online, canEdit: editable })); });
   await render();
-  return { ...dom, reads, writes, render, scope, get result() { return result; },
+  return { ...dom, reads, writes, subscriptions, render, scope, get result() { return result; },
     async resolveRead(index, records, hasMore = false, fromCache = false) {
       await act(async () => { reads[index].resolve({ records, hasMore, fromCache, cursor: `cursor-${index}` }); });
     },
   };
 }
+
+test('confirmed appointment updates win over delayed reads and clear on revoked access', async () => {
+  const app = await hookHarness();
+  try {
+    const subscription = app.subscriptions[0];
+    assert.equal(subscription?.size, values.APPOINTMENT_PAGE_SIZE);
+    await act(async () => subscription.accept({ records: [{ ...row, revision: 2, notes: 'Remote edit' }], hasMore: false }));
+    await app.resolveRead(0, [row]);
+    assert.equal(app.result.rows[0].notes, 'Remote edit');
+    assert.equal(app.result.fromCache, false);
+    await act(async () => subscription.accept({ records: [], hasMore: false }));
+    assert.equal(app.result.rows.length, 0);
+    await act(async () => subscription.deny(new Error('Revoked')));
+    await act(async () => subscription.accept({ records: [row], hasMore: false }));
+    assert.equal(app.result.rows.length, 0);
+    assert.match(app.result.error, /access changed/i);
+  } finally { await app.close(); }
+});
 test('a server page does not make earlier cached appointments fresh', async () => {
   const app = await hookHarness();
   try {
@@ -126,13 +150,13 @@ test('schedule refresh rejects stale read completions and retries without duplic
     assert.equal(app.reads[3].args[2], 'cursor-1');
   } finally { await app.close(); }
 });
-test('viewer/offline edits are refused before any cloud call', async () => {
+test('read-only and offline edits are refused before any cloud call', async () => {
   const app = await hookHarness({ canEdit: false });
   try {
     await app.resolveRead(0, [row]);
-    await assert.rejects(app.result.save(row.id, 1, draft), /owner or editor/);
+    await assert.rejects(app.result.save(row.id, 1, draft), /online clinic session/);
     await app.render('clinic-a', 'owner', false, true);
-    await assert.rejects(app.result.save(row.id, 1, draft), /owner or editor/);
+    await assert.rejects(app.result.save(row.id, 1, draft), /online clinic session/);
     assert.equal(app.writes.length, 0);
   } finally { await app.close(); }
 });

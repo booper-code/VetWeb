@@ -2,6 +2,7 @@
 
 import { CalendarDays, Package, PawPrint, Plus } from 'lucide-react';
 import type { Appointment, Consultation, InventoryItem, PatientRecord } from '@/types';
+import { compareConsultationHistory } from '@/lib/consultation-values';
 
 type WorkspaceView = 'quick' | 'advanced';
 
@@ -36,6 +37,7 @@ export const DashboardHome = ({
   patients,
   inventory,
   consultations,
+  chronologicalConsultations = false,
   appointments = [],
   onToggleStatus,
   partialData = false,
@@ -59,6 +61,7 @@ export const DashboardHome = ({
   patients: PatientRecord[];
   inventory: InventoryItem[];
   consultations: Consultation[];
+  chronologicalConsultations?: boolean;
   appointments?: Appointment[];
   onToggleStatus: (id: string) => void;
   partialData?: boolean;
@@ -114,7 +117,7 @@ export const DashboardHome = ({
     appointment => new Date(appointment.dueAt).getTime() < today
   ).length;
 
-  const recentConsultations = consultations.slice(-5).reverse();
+  const recentConsultations = (chronologicalConsultations ? consultations : [...consultations].sort(compareConsultationHistory)).slice(0, 5);
   const recentLegacyConsultations = recentConsultations.filter(item => !item.patientId);
 
   const recentBillables = patients
@@ -349,7 +352,7 @@ export const DashboardHome = ({
         )}
 
         <p className="vc-note">
-          Loaded records only. Balances are not payments received; no background synchronization or messaging occurs.
+          Loaded records only. Balances are not payments received. No messages are sent automatically.
         </p>
       </div>
     );

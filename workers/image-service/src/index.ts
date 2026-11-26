@@ -44,7 +44,7 @@ type Env = {
 
 type FirebaseToken = { uid: string };
 type Jwk = { kid?: string; kty?: string; n?: string; e?: string; alg?: string; use?: string };
-type MemberRole = 'owner' | 'editor' | 'viewer';
+type MemberRole = 'owner' | 'member';
 
 const JWKS_URL =
   'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
@@ -278,7 +278,8 @@ const readMembership = async (
   };
   const role = data.fields?.role?.stringValue;
 
-  return role === 'owner' || role === 'editor' || role === 'viewer' ? role : null;
+  if (role === 'owner') return 'owner';
+  return role === 'member' || role === 'editor' || role === 'viewer' ? 'member' : null;
 };
 
 const authenticate = async (
@@ -302,7 +303,7 @@ const requireUploadsEnabled = async (projectId: string, clinicId: string, token:
   if (!response.ok) throw new HttpError(response.status === 403 ? 403 : 502, 'Could not verify clinic upload settings.');
   const data = (await response.json()) as { fields?: { imageUploadsEnabled?: { booleanValue?: boolean } } };
   if (data.fields?.imageUploadsEnabled?.booleanValue === false) {
-    throw new HttpError(403, 'New image uploads are paused by the clinic owner. Existing images remain available.');
+     throw new HttpError(403, 'New image uploads are paused for this clinic. Existing images remain available.');
   }
 };
 
@@ -477,8 +478,8 @@ const handleUpload = async (request: Request, env: Env, cors: Record<string, str
   if (!contentType) throw new HttpError(415, 'Only JPEG, PNG, or WebP images are accepted.');
 
   const role = await readMembership(env.FIREBASE_PROJECT_ID, clinicId, user.uid, token);
-  if (role !== 'owner' && role !== 'editor') {
-    throw new HttpError(403, 'Only clinic owners and editors can upload patient images.');
+  if (!role) {
+    throw new HttpError(403, 'Clinic membership is required to upload patient images.');
   }
   await enforceRateLimit(env.CLINIC_UPLOAD_LIMITER, clinicId);
   await requireUploadsEnabled(env.FIREBASE_PROJECT_ID, clinicId, token);

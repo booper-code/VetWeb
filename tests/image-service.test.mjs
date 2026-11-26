@@ -21,7 +21,7 @@ test('image service enforces authentication, membership, roles and signed URLs',
     const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keys.privateKey, new TextEncoder().encode(input));
     return `${input}.${Buffer.from(signature).toString('base64url')}`;
   };
-  const roles = { owner: 'owner', editor: 'editor', viewer: 'viewer' };
+  const roles = { owner: 'owner', member: 'member', viewer: 'viewer' };
   globalThis.fetch = async input => {
     const url = String(input);
     if (url.includes('googleapis.com/service_accounts/')) return Response.json({ keys: [jwk] });
@@ -55,6 +55,7 @@ test('image service enforces authentication, membership, roles and signed URLs',
   const request = (path, init = {}) => worker.fetch(new Request(`https://images.example${path}`, init), env);
   const auth = value => ({ Authorization: `Bearer ${value}` });
   const owner = await token('owner');
+  const member = await token('member');
   const viewer = await token('viewer');
   const outsider = await token('outsider');
   const expired = await token('owner', { exp: 1 });
@@ -69,7 +70,8 @@ test('image service enforces authentication, membership, roles and signed URLs',
   assert.equal((await upload(expired)).status, 401);
   assert.equal((await upload(wrongAudience)).status, 401);
   assert.equal((await upload(`${owner.slice(0, owner.lastIndexOf('.') + 1)}!`)).status, 401);
-  assert.equal((await upload(viewer)).status, 403);
+  assert.equal((await upload(viewer)).status, 200);
+  assert.equal((await upload(member)).status, 200);
   assert.equal((await upload(outsider)).status, 403);
   assert.equal((await upload(owner, 'clinic-b')).status, 403);
   assert.equal((await upload(owner, 'clinic-a', [0, 1, 2])).status, 415);

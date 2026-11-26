@@ -226,7 +226,7 @@ export const SystemSettingsView = ({
               <div>
                 <label htmlFor="aiEnabled" className="text-sm font-bold text-content-heading">Enable AI features</label>
                 <p className="text-xs text-content-hint">
-                  {isDemo ? 'Applies to this offline demo session.' : 'The clinic owner controls this setting for all members.'}
+                   {isDemo ? 'Applies to this offline demo session.' : 'This setting applies to everyone in this clinic.'}
                   {' '}Turning it off hides AI features without deleting saved summaries or provider settings.
                 </p>
               </div>

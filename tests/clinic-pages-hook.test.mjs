@@ -13,6 +13,8 @@ for (const transition of ['switch', 'wipe', 'logout']) {
         CLINIC_PAGE_SIZE: 50,
         appendUnique: (old, incoming, identity) => [...old, ...incoming.filter(record => !old.some(item => identity(item) === identity(record)))],
         subscribeClinicInventory: async () => () => {},
+        subscribeClinicConsultations: async () => () => {},
+        subscribePatientDirectory: async () => () => {},
         loadClinicPage(clinicId, kind, cursor) {
           const pending = deferred();
           requests.push({ clinicId, kind, cursor, ...pending });
@@ -71,7 +73,7 @@ const snapshotPage = (records, cursor = null, hasMore = false) => ({ records, cu
 
 function createHookHarness() {
   const dom = domHarness();
-  const loads = [], subscriptions = [], unsubscribes = [];
+  const loads = [], subscriptions = [], unsubscribes = [], consultationSubscriptions = [], patientSubscriptions = [];
   let result;
   const { useClinicPages } = loadSource('../../lib/useClinicPages.ts', {
     react: React,
@@ -89,6 +91,15 @@ function createHookHarness() {
         subscriptions.push({ clinicId, size, onServer, onError, uid, onDenied, ...pending });
         return pending.promise;
       },
+      subscribeClinicConsultations(clinicId, uid, size, chronological, onServer, onError, onDenied) {
+        const pending = deferred();
+        consultationSubscriptions.push({ clinicId, uid, size, chronological, onServer, onError, onDenied, ...pending });
+        return pending.promise;
+      },
+      subscribePatientDirectory(clinicId, uid, kind, size, onServer, onError, onDenied) {
+        patientSubscriptions.push({ clinicId, uid, kind, size, onServer, onError, onDenied });
+        return Promise.resolve(() => {});
+      },
     },
   });
   function Screen({ clinicId, uid, authenticated }) {
@@ -100,12 +111,76 @@ function createHookHarness() {
     return null;
   }
   return {
-    dom, loads, subscriptions, unsubscribes,
+    dom, loads, subscriptions, unsubscribes, consultationSubscriptions, patientSubscriptions,
     current: () => result,
     render: (clinicId, authenticated = true, uid = 'user-a') =>
       act(async () => { dom.root.render(React.createElement(Screen, { clinicId, uid, authenticated })); }),
   };
 }
+
+test('consultation history widens the live prefix, retries at the same size, and clears on denial', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    const first = hook.consultationSubscriptions[0];
+    assert.equal(first?.size, 50);
+    await act(async () => first.onServer({ records: [{ id: 'fresh' }], hasMore: true, chronological: true }));
+    await act(async () => hook.loads.find(request => request.kind === 'consultations')
+      .resolve(snapshotPage([{ id: 'old-read' }])));
+    assert.deepEqual(hook.current().consultations.map(row => row.id), ['fresh']);
+    assert.equal(hook.current().pages.state.consultations.chronological, true);
+    await act(async () => hook.current().pages.load('consultations'));
+    const wider = hook.consultationSubscriptions[1];
+    assert.equal(wider.size, 100);
+    assert.equal(wider.chronological, true);
+    let released = false;
+    await act(async () => {
+      first.resolve(() => { released = true; });
+      first.onServer({ records: [{ id: 'late' }], hasMore: false, chronological: true });
+      wider.onError(new Error('Temporary outage'));
+    });
+    assert.equal(released, true);
+    assert.deepEqual(hook.current().consultations.map(row => row.id), ['fresh']);
+    await act(async () => hook.current().pages.load('consultations'));
+    const retry = hook.consultationSubscriptions[2];
+    assert.equal(retry.size, 100);
+    await act(async () => retry.onDenied(new Error('Access removed')));
+    assert.equal(hook.current().consultations.length, 0);
+    assert.equal(hook.current().pages.state.consultations.accessDenied, true);
+    await hook.render('clinic-b', true, 'user-b');
+    await act(async () => retry.onServer({ records: [{ id: 'revoked-row' }], hasMore: false, chronological: true }));
+    assert.equal(hook.current().consultations.length, 0);
+    assert.equal(hook.consultationSubscriptions[3].chronological, false);
+  } finally { await hook.dom.close(); }
+});
+
+test('live patient directories move a record between lists, remove deleted records, and clear on denial', async () => {
+  const hook = createHookHarness();
+  try {
+    await hook.render('clinic-a');
+    const active = hook.patientSubscriptions[0];
+    assert.equal(active?.kind, 'activePatients');
+    const row = { id: 'patient-a', status: 'Waiting', revision: 1 };
+    await act(async () => {
+      active.onServer({ records: [row], hasMore: false });
+      void hook.current().pages.load('dischargedPatients');
+    });
+    const discharged = hook.patientSubscriptions[1];
+    assert.equal(discharged.kind, 'dischargedPatients');
+    await act(async () => {
+      discharged.onServer({ records: [{ ...row, status: 'Discharged', revision: 2 }], hasMore: false });
+      active.onServer({ records: [], hasMore: false });
+      hook.loads[0].resolve(snapshotPage([row]));
+    });
+    assert.deepEqual(Array.from(hook.current().patients, patient => patient.status), ['Discharged']);
+    await act(async () => discharged.onServer({ records: [], hasMore: false }));
+    assert.equal(hook.current().patients.length, 0);
+    await act(async () => active.onServer({ records: [{ ...row, id: 'patient-b' }], hasMore: false }));
+    await act(async () => discharged.onDenied(new Error('Revoked')));
+    assert.equal(hook.current().patients.length, 0);
+    assert.equal(hook.current().pages.state.activePatients.accessDenied, true);
+  } finally { await hook.dom.close(); }
+});
 
 test('inventory shows the first batch then replaces it with each confirmed server snapshot', async () => {
   const hook = createHookHarness();
@@ -338,6 +413,49 @@ test('subscribeClinicInventory ignores cached and pending snapshots and maps the
   assert.equal(denied.length, 0);
   unsubscribe();
   assert.deepEqual(releases, ['auth', 'unsubscribed']);
+});
+
+test('consultation order changes only after a server-confirmed readiness marker', async () => {
+  const listeners = [];
+  const firestore = {
+    doc: (_db, ...parts) => ({ marker: parts.join('/') }),
+    collection: (_db, ...parts) => parts.join('/'),
+    documentId: () => 'documentId',
+    orderBy: (...order) => order,
+    limit: size => ({ size }),
+    query: (path, ...constraints) => ({ path, constraints }),
+    onSnapshot(query, _options, next) {
+      listeners.push({ query, next });
+      return () => {};
+    },
+  };
+  const auth = {
+    currentUser: { uid: 'clinic-user' },
+    onAuthStateChanged(next) { next(this.currentUser); return () => {}; }
+  };
+  const { subscribeClinicConsultations } = loadSource('../../lib/clinic-pages.ts', {
+    '@/lib/firebase': { initializeFirebase: async () => ({ db: {}, auth, firestore }) },
+  });
+  const pages = [];
+  const stop = await subscribeClinicConsultations('clinic-a', 'clinic-user', 1, false, page => pages.push(page),
+    error => { throw error; }, error => { throw error; });
+  try {
+    const ready = { data: () => ({ state: 'ready' }) };
+    listeners[1].next({ ...ready, metadata: { fromCache: true, hasPendingWrites: false } });
+    listeners[1].next({ ...ready, metadata: { fromCache: false, hasPendingWrites: true } });
+    assert.equal(listeners.length, 2, 'cached or pending readiness cannot switch the query');
+    listeners[1].next({ ...ready, metadata: { fromCache: false, hasPendingWrites: false } });
+    assert.deepEqual(listeners[2].query.constraints.slice(0, 2), [['historySortAt', 'desc'], ['documentId', 'desc']]);
+    const rows = {
+      docs: [{ id: 'fresh', data: () => ({ status: 'Completed' }) }], size: 1,
+      metadata: { fromCache: false, hasPendingWrites: false },
+    };
+    listeners[0].next(rows);
+    assert.equal(pages.length, 0, 'the superseded ID query cannot replace chronological history');
+    listeners[2].next(rows);
+    assert.equal(pages[0].records[0].id, 'fresh');
+    assert.equal(pages[0].chronological, true);
+  } finally { stop(); }
 });
 
 test('subscribeClinicInventory rejects stale-identity snapshots and explicit access denial', async () => {

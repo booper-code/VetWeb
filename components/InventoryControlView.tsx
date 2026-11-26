@@ -174,7 +174,7 @@ const filteredInventory = inventory.filter(item => {
 
   return (
     <div className="space-y-6 relative">
-      {!canEdit && <p role="status" className="rounded-xl border border-warning-stroke bg-warning-wash p-3 text-sm text-warning-text-deep">Inventory is read-only. Changes require an online owner or editor.</p>}
+       {!canEdit && <p role="status" className="rounded-xl border border-warning-stroke bg-warning-wash p-3 text-sm text-warning-text-deep">Inventory is read-only. Changes require an online clinic session.</p>}
       {saveError && <p role="alert" className="rounded-xl bg-danger-wash p-3 text-sm text-danger-text-deep">{saveError}</p>}
       {partialData && <p role="note" className="rounded-xl border border-warning-stroke bg-warning-wash p-3 text-sm text-warning-text-deep">
         Search, counts and PDF exports cover loaded inventory only. Load more items below to expand the list.

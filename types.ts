@@ -109,6 +109,8 @@ export type Consultation = {
   appointmentId?: string | null;
   /** Actual visit time as a UTC ISO string, separate from the entry/audit time. */
   occurredAt?: string;
+  /** UTC sort key for history; null means the legacy visit date is unknown. */
+  historySortAt?: string | null;
   /** Server-recorded entry time as a UTC ISO string. */
   recordedAt?: string;
   staffUid?: string;
@@ -155,7 +157,7 @@ export type Appointment = {
 export type AppointmentDraft = Pick<Appointment,
   'patientId' | 'type' | 'status' | 'dueAt' | 'durationMinutes' | 'notes' | 'occurredAt'>;
 
-export type ClinicRole = 'owner' | 'editor' | 'viewer';
+export type ClinicRole = 'owner' | 'member';
 
 export type ClinicSessionUser = {
   uid: string;
@@ -182,7 +184,7 @@ export type ClinicInvitation = {
   clinicId: string;
   clinicName: string;
   email: string;
-  role: Exclude<ClinicRole, 'owner'>;
+  role: 'member' | 'editor' | 'viewer';
   status: 'pending' | 'accepted' | 'revoked';
   createdBy: string;
   createdByEmail: string;
@@ -194,6 +196,7 @@ export type PayBasis = 'daily' | 'monthly';
 
 export type StaffMember = {
   id: string;
+  revision?: number;
   name: string;
   kind: StaffKind;
   position: string;
@@ -204,15 +207,16 @@ export type StaffMember = {
   notes?: string;
 };
 
-/** Pay rates live in a separate owner-only collection because Firestore rules
- *  cannot hide individual fields on a document. */
+/** Pay rates live in a separate collection from the staff roster. */
 export type StaffPayProfile = {
+  revision?: number;
   payBasis: PayBasis;
   rate: number;
 };
 
 export type PayrollPeriod = {
   id: string;
+  revision?: number;
   startDate: string;
   endDate: string;
   status: 'open' | 'closed';

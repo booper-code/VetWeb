@@ -8,22 +8,33 @@ import type {
 } from '@/types';
 import type { DocumentData, Firestore } from 'firebase/firestore';
 import { initializeFirebase } from '@/lib/firebase';
+import { mutateClinicalRecord, mutateClinicalRecords } from '@/lib/clinical-mutations';
+import type { ClinicalMutation } from '@/lib/clinical-mutations';
 
 type FirestoreModule = typeof import('firebase/firestore');
-type FirebaseHandles = { db: Firestore; fs: FirestoreModule };
+type FirebaseHandles = { db: Firestore; fs: FirestoreModule; uid?: string };
+type PayrollActor = { uid: string; isCurrent: () => boolean };
 
 const GENESIS = 'GENESIS';
 
 const getHandles = async (): Promise<FirebaseHandles> => {
-  const { db: initializedDb, firestore: initializedModule } = await initializeFirebase();
+  const { db: initializedDb, firestore: initializedModule, auth } = await initializeFirebase();
   const db = initializedDb as Firestore | null;
   const fs = initializedModule as FirestoreModule | null;
   if (!db || !fs) throw new Error('Firebase is not available. Check the connection and try again.');
-  return { db, fs };
+  return { db, fs, uid: auth?.currentUser?.uid };
+};
+
+const getWriteHandles = async (actor: PayrollActor) => {
+  const handles = await getHandles();
+  if (!actor.uid || handles.uid !== actor.uid) throw new Error('The signed-in account changed. Reopen Staff & Payroll.');
+  if (!actor.isCurrent()) throw new Error('The clinic workspace changed. Reopen Staff & Payroll.');
+  return { ...handles, uid: actor.uid };
 };
 
 const staffFromData = (id: string, data: DocumentData): StaffMember => ({
   id,
+  revision: data.revision ?? 0,
   name: typeof data.name === 'string' ? data.name : 'Unnamed staff',
   kind: data.kind === 'veterinarian' ? 'veterinarian' : 'employee',
   position: typeof data.position === 'string' ? data.position : '',
@@ -36,6 +47,7 @@ const staffFromData = (id: string, data: DocumentData): StaffMember => ({
 
 const periodFromData = (id: string, data: DocumentData): PayrollPeriod => ({
   id,
+  revision: data.revision ?? 0,
   startDate: typeof data.startDate === 'string' ? data.startDate : '',
   endDate: typeof data.endDate === 'string' ? data.endDate : '',
   status: data.status === 'closed' ? 'closed' : 'open',
@@ -69,12 +81,15 @@ export const listStaff = async (clinicId: string): Promise<StaffMember[]> => {
 
 export const saveStaffMember = async (
   clinicId: string,
-  staff: Omit<StaffMember, 'id'> & { id?: string }
+  staff: Omit<StaffMember, 'id'> & { id?: string },
+  profile: StaffPayProfile | undefined,
+  actor: PayrollActor
 ): Promise<StaffMember> => {
   const name = staff.name.trim();
   if (!name) throw new Error('Enter the staff member’s name.');
+  if (profile && (!Number.isFinite(profile.rate) || profile.rate < 0)) throw new Error('Enter a valid pay rate.');
 
-  const { db, fs } = await getHandles();
+  const { db, fs, uid } = await getWriteHandles(actor);
   const payload = {
     name,
     kind: staff.kind,
@@ -86,14 +101,17 @@ export const saveStaffMember = async (
     notes: staff.notes?.trim() ?? ''
   };
 
-  if (staff.id) {
-    await fs.updateDoc(fs.doc(db, 'clinics', clinicId, 'staff', staff.id), payload);
-    return { id: staff.id, ...payload };
-  }
-
-  const ref = fs.doc(fs.collection(db, 'clinics', clinicId, 'staff'));
-  await fs.setDoc(ref, payload);
-  return { id: ref.id, ...payload };
+  const id = staff.id ?? fs.doc(fs.collection(db, 'clinics', clinicId, 'staff')).id;
+  const writes: ClinicalMutation[] = [{
+    clinicId, collection: 'staff', id, expectedRevision: staff.id ? staff.revision ?? 0 : null,
+    expectedUid: uid, action: 'save', data: payload
+  }];
+  if (profile) writes.push({
+    clinicId, collection: 'payProfiles', id, expectedRevision: profile.revision ?? null, expectedUid: uid, action: 'save',
+    data: { payBasis: profile.payBasis, rate: profile.rate, updatedAt: fs.serverTimestamp() }
+  });
+  const [saved] = await mutateClinicalRecords(writes);
+  return { id, ...payload, revision: saved.revision };
 };
 
 export const listPayProfiles = async (clinicId: string): Promise<Record<string, StaffPayProfile>> => {
@@ -103,25 +121,12 @@ export const listPayProfiles = async (clinicId: string): Promise<Record<string, 
   snapshot.docs.forEach(profile => {
     const data = profile.data();
     profiles[profile.id] = {
+      revision: data.revision ?? 0,
       payBasis: data.payBasis === 'monthly' ? 'monthly' : 'daily',
       rate: Number(data.rate) || 0
     };
   });
   return profiles;
-};
-
-export const savePayProfile = async (
-  clinicId: string,
-  staffId: string,
-  profile: StaffPayProfile
-): Promise<void> => {
-  if (!Number.isFinite(profile.rate) || profile.rate < 0) throw new Error('Enter a valid pay rate.');
-  const { db, fs } = await getHandles();
-  await fs.setDoc(fs.doc(db, 'clinics', clinicId, 'payProfiles', staffId), {
-    payBasis: profile.payBasis,
-    rate: profile.rate,
-    updatedAt: fs.serverTimestamp()
-  });
 };
 
 export const listPayrollPeriods = async (clinicId: string): Promise<PayrollPeriod[]> => {
@@ -135,27 +140,25 @@ export const listPayrollPeriods = async (clinicId: string): Promise<PayrollPerio
 export const createPayrollPeriod = async (
   clinicId: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  actor: PayrollActor
 ): Promise<PayrollPeriod> => {
   if (!startDate || !endDate) throw new Error('Choose a start and end date.');
   if (endDate < startDate) throw new Error('The end date must be on or after the start date.');
 
-  const { db, fs } = await getHandles();
-  const ref = fs.doc(fs.collection(db, 'clinics', clinicId, 'payrollPeriods'));
-  await fs.setDoc(ref, {
-    startDate,
-    endDate,
-    status: 'open',
-    createdAt: fs.serverTimestamp()
+  const { fs, uid } = await getWriteHandles(actor);
+  const saved = await mutateClinicalRecord({
+    clinicId, collection: 'payrollPeriods', expectedRevision: null, expectedUid: uid, action: 'save',
+    data: { startDate, endDate, status: 'open', createdAt: fs.serverTimestamp() }
   });
-  return { id: ref.id, startDate, endDate, status: 'open' };
+  return { id: saved.id, revision: saved.revision, startDate, endDate, status: 'open' };
 };
 
-export const closePayrollPeriod = async (clinicId: string, periodId: string): Promise<void> => {
-  const { db, fs } = await getHandles();
-  await fs.updateDoc(fs.doc(db, 'clinics', clinicId, 'payrollPeriods', periodId), {
-    status: 'closed',
-    closedAt: fs.serverTimestamp()
+export const closePayrollPeriod = async (clinicId: string, periodId: string, revision: number, actor: PayrollActor): Promise<void> => {
+  const { fs, uid } = await getWriteHandles(actor);
+  await mutateClinicalRecord({
+    clinicId, collection: 'payrollPeriods', id: periodId, expectedRevision: revision, expectedUid: uid, action: 'save',
+    data: { status: 'closed', closedAt: fs.serverTimestamp() }
   });
 };
 

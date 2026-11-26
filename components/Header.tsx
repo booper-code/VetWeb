@@ -7,8 +7,7 @@ import { ThemeSelector } from '@/components/ThemeSelector';
 
 const roleLabel = (role: ClinicRole | null) => {
   if (role === 'owner') return 'Owner';
-  if (role === 'editor') return 'Editor';
-  if (role === 'viewer') return 'Viewer';
+  if (role === 'member') return 'Member';
   return 'Demo';
 };
 
@@ -72,7 +71,7 @@ export const Header = ({
           type="button"
           onClick={onRecordVisit}
           disabled={!canEdit}
-          title={canEdit ? 'Record a visit for a patient' : 'An online owner or editor session is required to record a visit.'}
+           title={canEdit ? 'Record a visit for a patient' : 'An online clinic session is required to record a visit.'}
           className="vc-btn vc-btn-primary h-10"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />

@@ -27,6 +27,29 @@ async function setup(props = {}) {
   return { ...dom, doc, render, click };
 }
 
+test('an open follow-up queue applies confirmed remote contact and removes rescheduled rows', async () => {
+  let watch;
+  const app = await setup({
+    subscribe(size, endMs, accept, fail, deny) {
+      watch = { size, endMs, accept, fail, deny };
+      return Promise.resolve(() => {});
+    },
+  });
+  try {
+    assert.ok(watch?.size > 0);
+    await act(async () => watch.accept({ rows: [first], next: null }));
+    assert.match(app.doc.body.textContent, /Needs contact/);
+    await act(async () => watch.accept({ rows: [{ ...first, revision: 2, followUpContact: contact }], next: null }));
+    assert.match(app.doc.body.textContent, /Contact recorded/);
+    await act(async () => watch.accept({ rows: [], next: null }));
+    assert.doesNotMatch(app.doc.body.textContent, /Fictional first/);
+    await act(async () => watch.deny(new Error('Revoked')));
+    await act(async () => watch.accept({ rows: [first], next: null }));
+    assert.doesNotMatch(app.doc.body.textContent, /Fictional first/);
+    assert.match(app.doc.body.textContent, /access changed/i);
+  } finally { await app.close(); }
+});
+
 test('a paged queue records contact once without completing the visit', async () => {
   const recorded = deferred();
   let writes = 0, reads = 0;

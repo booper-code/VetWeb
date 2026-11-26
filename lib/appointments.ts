@@ -1,6 +1,7 @@
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import type { Appointment, AppointmentDraft } from '@/types';
 import { initializeFirebase } from '@/lib/firebase';
+import { subscribeConfirmedClinicQuery } from '@/lib/clinic-pages';
 import { mutateClinicalRecord, ClinicalConflictError } from '@/lib/clinical-mutations';
 import { appointmentValidationError, appointmentWindowBounds, APPOINTMENT_PAGE_SIZE } from '@/lib/appointment-values';
 import type { AppointmentWindow } from '@/lib/appointment-values';
@@ -17,20 +18,44 @@ export function appointmentFromDocument(id: string, data: DocumentData): Appoint
   return { ...values, ...contactFromDocument(followUpContact), id, dueAt: iso(data.dueAt), occurredAt: iso(data.occurredAt) || null,
     createdAt: iso(data.createdAt), updatedAt: iso(data.updatedAt) } as Appointment;
 }
-export async function loadAppointmentsPage(clinicId: string, window: AppointmentWindow, cursor: AppointmentCursor = null) {
-  if (!clinicId || clinicId === 'demo-clinic') throw new Error('Cloud appointments need a clinic.');
+const appointmentQueryConstraints = (fs: typeof import('firebase/firestore'), window: AppointmentWindow) => {
   const { start, end } = appointmentWindowBounds(window);
-  const { db, firestore: fs } = await initializeFirebase();
-  const constraints = [
+  return [
     fs.where('dueAt', '>=', fs.Timestamp.fromDate(new Date(start))),
     fs.where('dueAt', '<', fs.Timestamp.fromDate(new Date(end))),
-    fs.orderBy('dueAt'), ...(cursor ? [fs.startAfter(cursor)] : []), fs.limit(APPOINTMENT_PAGE_SIZE),
+    fs.orderBy('dueAt'),
   ];
-  const query = fs.query(fs.collection(db, 'clinics', clinicId, 'appointments'), ...constraints);
+};
+
+export async function loadAppointmentsPage(clinicId: string, window: AppointmentWindow, cursor: AppointmentCursor = null, uid?: string) {
+  if (!clinicId || clinicId === 'demo-clinic') throw new Error('Cloud appointments need a clinic.');
+  const { db, auth, firestore: fs } = await initializeFirebase();
+  const checkAccount = () => {
+    if (uid !== undefined && auth.currentUser?.uid !== uid) {
+      throw Object.assign(new Error('Appointment access changed.'), { code: 'unauthenticated' });
+    }
+  };
+  checkAccount();
+  const query = fs.query(fs.collection(db, 'clinics', clinicId, 'appointments'), ...appointmentQueryConstraints(fs, window),
+    ...(cursor ? [fs.startAfter(cursor)] : []), fs.limit(APPOINTMENT_PAGE_SIZE));
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
   const page = await (offline ? fs.getDocsFromCache(query) : fs.getDocs(query));
+  checkAccount();
   return { records: page.docs.map(doc => appointmentFromDocument(doc.id, doc.data())),
     cursor: page.docs.at(-1) ?? cursor, hasMore: page.size === APPOINTMENT_PAGE_SIZE, fromCache: page.metadata.fromCache };
+}
+
+export function subscribeAppointments(
+  clinicId: string, uid: string, window: AppointmentWindow, size: number,
+  onServer: (page: { records: Appointment[]; hasMore: boolean }) => void,
+  onError: (error: Error) => void, onDenied: (error: Error) => void,
+) {
+  return subscribeConfirmedClinicQuery(uid, (db, fs) => fs.query(fs.collection(db, 'clinics', clinicId, 'appointments'),
+    ...appointmentQueryConstraints(fs, window), fs.limit(size + 1)),
+  snapshot => onServer({
+    records: snapshot.docs.slice(0, size).map(row => appointmentFromDocument(row.id, row.data())),
+    hasMore: snapshot.size > size
+  }), onError, onDenied);
 }
 
 /** Fixed, validated domain action; a future assistant must use this, not arbitrary writes. */

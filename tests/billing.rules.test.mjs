@@ -184,11 +184,9 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
       await denied(() => write({ billing: { ...current.billing, balanceMinor: 0 } }));
       await denied(() => mutateClinicalRecord({ clinicId, collection: 'patients', id: 'untouched', expectedRevision: 0, action: 'delete' }));
       await denied(() => mutateClinicalRecord({ clinicId, collection: 'patients', id: 'legacy', expectedRevision: current.revision, action: 'delete' }));
-      await denied(() => fs.getDoc(ref('billingEntries', 'first-payment', clients.viewer)));
+      assert.equal((await fs.getDoc(ref('billingEntries', 'first-payment', clients.viewer))).exists(), true);
       await denied(() => fs.getDoc(ref('billingEntries', 'first-payment', clients.outsider)));
       await denied(() => fs.getDoc(ref('billingEntries', 'first-payment', owner, `${clinicId}-foreign`)));
-      select('viewer');
-      await denied(() => apply('legacy', 'viewer-payment', current.revision, { ...payment, amountMinor: 10 }));
       select('editor');
       assert.equal((await loadPaymentReceipt({ clinicId, patientId: 'legacy', entryId: first.entry.id })).amountMinor, 50000);
       select('owner');
@@ -255,11 +253,9 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
       await denied(() => forged('settle-fake-cash', { method: 'cash' }));
       await denied(() => forged('settle-stock', { stockMoves: [{ itemCode: 'MED-1', quantityDelta: 1 }] }));
       await assert.rejects(() => apply('legacy', 'settle-stale', current.revision - 1, draft));
-      for (const role of ['viewer', 'outsider']) {
-        select(role);
-        await denied(() => apply('legacy', `settle-${role}`, current.revision, draft));
-      }
-      select('owner');
+      select('outsider');
+      await denied(() => apply('legacy', 'settle-outsider', current.revision, draft));
+      select('viewer');
       const result = await apply('legacy', 'settle-legacy', current.revision, draft);
       assert.equal(result.state.balanceMinor, 0);
       assert.equal(result.entry.businessDayMs, businessDayMs);
@@ -367,10 +363,8 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
       assert.equal(balances.find(row => row.id === 'legacy').ledgerMinor, (await get('patients', 'legacy')).billing.balanceMinor);
       await write([reversal('close-missing-original')]);
       await assert.rejects(() => query('corrections', { dayStartMs: nextDay }), /original/i);
-      for (const role of ['viewer', 'outsider']) {
-        const client = select(role);
-        await denied(() => query('entries', { uid: client.auth.currentUser.uid }));
-      }
+      const outsider = select('outsider');
+      await denied(() => query('entries', { uid: outsider.auth.currentUser.uid }));
       select('owner');
       const indexes = JSON.parse(await readFile(new URL('../firestore.indexes.json', import.meta.url), 'utf8'));
       for (const [collectionGroup, first, second] of [

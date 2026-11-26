@@ -58,7 +58,7 @@ function recentRange(now: number): ImportRange {
 
 export const assistantToolRegistry = {
   inventory_import_history: {
-    access: 'owner', modelVisibility: 'summary-only', mutates: false,
+    access: 'member', modelVisibility: 'summary-only', mutates: false,
     description: 'Count tracked CSV inventory creates within a Manila calendar range.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['from', 'through'],

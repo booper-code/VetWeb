@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSource } from './helpers/tsx-harness.mjs';
 
-const { basePayForPeriod } = loadSource('../../lib/payroll.ts', { '@/lib/firebase': {} });
+const { basePayForPeriod } = loadSource('../../lib/payroll.ts', {
+  '@/lib/firebase': {}, '@/lib/clinical-mutations': {},
+});
 const monthly = { payBasis: 'monthly', rate: 21000 };
 const period = (startDate, endDate) => ({ startDate, endDate });
 

@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { Copy, Crown, Loader2, MailPlus, RefreshCw, Shield, Trash2, UserRound, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Copy, Loader2, MailPlus, RefreshCw, Shield, Trash2, UserRound, X } from 'lucide-react';
 import type { ClinicInvitation, ClinicMember, ClinicRole, ClinicSessionUser } from '@/types';
 import {
-  changeClinicMemberRole,
   createClinicInvitation,
   listClinicInvitations,
   listClinicMembers,
   removeClinicMember,
-  revokeClinicInvitation,
-  transferClinicOwnership
+  revokeClinicInvitation
 } from '@/lib/clinics';
 
 export const ClinicTeamView = ({
@@ -18,25 +16,17 @@ export const ClinicTeamView = ({
   clinicName,
   user,
   role,
-  onOwnershipTransferred,
   triggerToast
 }: {
   clinicId: string;
   clinicName: string;
   user: ClinicSessionUser;
   role: ClinicRole;
-  onOwnershipTransferred: (nextRole: ClinicRole) => void;
   triggerToast: (message: string) => void;
 }) => {
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
   const [members, setMembers] = useState<ClinicMember[]>([]);
   const [invitations, setInvitations] = useState<ClinicInvitation[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'editor' | 'viewer'>('viewer');
   const [newInviteUrl, setNewInviteUrl] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
@@ -52,6 +42,7 @@ export const ClinicTeamView = ({
   };
 
   useEffect(() => {
+    if (role !== 'owner') return;
     let active = true;
     Promise.all([listClinicMembers(clinicId), listClinicInvitations(clinicId)])
       .then(([nextMembers, nextInvitations]) => {
@@ -67,7 +58,7 @@ export const ClinicTeamView = ({
       })
       .finally(() => { if (active) setIsLoading(false); });
     return () => { active = false; };
-  }, [clinicId]);
+  }, [clinicId, role]);
 
   const handleCreateInvite = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -79,7 +70,6 @@ export const ClinicTeamView = ({
         clinicId,
         clinicName,
         email: inviteEmail,
-        role: inviteRole,
         user
       });
       const url = new URL(window.location.href);
@@ -131,24 +121,6 @@ export const ClinicTeamView = ({
     }
   };
 
-  const handleRoleChange = async (member: ClinicMember, nextRole: 'editor' | 'viewer') => {
-    if (nextRole === member.role) return;
-    if (!window.confirm(`Change ${member.email || member.displayName} to ${nextRole} access?`)) return;
-
-    setIsWorking(true);
-    setError('');
-    try {
-      await changeClinicMemberRole(clinicId, member.uid, nextRole);
-      setMembers(previous => previous.map(item => (item.uid === member.uid ? { ...item, role: nextRole } : item)));
-      triggerToast(`${member.email || member.displayName} is now ${nextRole}.`);
-    } catch (changeError) {
-      console.error('[Clinic team] Failed to change role:', changeError);
-      setError(changeError instanceof Error ? changeError.message : 'Could not change this member’s role.');
-    } finally {
-      setIsWorking(false);
-    }
-  };
-
   const handleRemoveMember = async (member: ClinicMember) => {
     if (!window.confirm(`Remove ${member.email || member.displayName} from ${clinicName}? They lose access immediately.`)) return;
 
@@ -163,27 +135,6 @@ export const ClinicTeamView = ({
       setError(removeError instanceof Error ? removeError.message : 'Could not remove this member.');
     } finally {
       setIsWorking(false);
-    }
-  };
-
-  const handleTransferOwnership = async (member: ClinicMember) => {
-    if (!window.confirm(`Make ${member.email || member.displayName} the owner of ${clinicName}? You will become an editor and lose owner-only access.`)) return;
-
-    setIsWorking(true);
-    setError('');
-    try {
-      await transferClinicOwnership(clinicId, user.uid, member.uid);
-      // The parent checks workspace scope. A same-clinic tab change must still
-      // downgrade its role even after this view unmounts.
-      onOwnershipTransferred('editor');
-      if (!mounted.current) return;
-      triggerToast('Ownership transferred. You now have editor access.');
-    } catch (transferError) {
-      if (!mounted.current) return;
-      console.error('[Clinic team] Failed to transfer ownership:', transferError);
-      setError(transferError instanceof Error ? transferError.message : 'Could not transfer ownership.');
-    } finally {
-      if (mounted.current) setIsWorking(false);
     }
   };
 
@@ -210,9 +161,9 @@ export const ClinicTeamView = ({
           <h3 className="font-black text-content-title">Invite someone</h3>
         </div>
         <p className="text-sm text-content-hint">
-          Create a 7-day invite link, then copy and send it yourself. The invite is limited to the email address entered here.
+          Create a 7-day Member invite, then copy and send it yourself. Members have full clinic access except for managing invitations and removing members.
         </p>
-        <form onSubmit={handleCreateInvite} className="grid grid-cols-1 sm:grid-cols-[1fr_160px_auto] gap-3">
+        <form onSubmit={handleCreateInvite} className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
           <input
             type="email"
             required
@@ -221,14 +172,6 @@ export const ClinicTeamView = ({
             placeholder="person@example.com"
             className="rounded-xl border border-field-outline bg-field-subtle px-4 py-3 text-sm text-content-title outline-none focus:ring-2 focus:ring-teal-500"
           />
-          <select
-            value={inviteRole}
-            onChange={event => setInviteRole(event.target.value as 'editor' | 'viewer')}
-            className="rounded-xl border border-field-outline bg-field-subtle px-4 py-3 text-sm font-bold text-content-title outline-none focus:ring-2 focus:ring-teal-500"
-          >
-            <option value="viewer">Viewer — read only</option>
-            <option value="editor">Editor — can edit</option>
-          </select>
           <button
             type="submit"
             disabled={isWorking || !inviteEmail.trim()}
@@ -295,24 +238,7 @@ export const ClinicTeamView = ({
                   </span>
                 ) : (
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <select
-                      value={member.role}
-                      disabled={isWorking}
-                      onChange={event => handleRoleChange(member, event.target.value as 'editor' | 'viewer')}
-                      aria-label={`Access level for ${member.email}`}
-                      className="rounded-lg border border-field-outline bg-field-panel px-2 py-1.5 text-xs font-bold text-content-copy outline-none disabled:opacity-50"
-                    >
-                      <option value="viewer">Viewer</option>
-                      <option value="editor">Editor</option>
-                    </select>
-                    <button
-                      type="button"
-                      disabled={isWorking}
-                      onClick={() => handleTransferOwnership(member)}
-                      className="rounded-lg bg-warning-wash px-2.5 py-1.5 text-xs font-bold text-warning-text hover:bg-warning-tint disabled:opacity-50 inline-flex items-center gap-1"
-                    >
-                      <Crown className="w-3.5 h-3.5" /> Make owner
-                    </button>
+                    <span className="text-xs font-bold text-content-copy">Member</span>
                     <button
                       type="button"
                       disabled={isWorking}
@@ -343,15 +269,15 @@ export const ClinicTeamView = ({
                   <div>
                     <p className="text-sm font-bold text-content-title">{invitation.email}</p>
                     <p className="text-xs text-content-hint capitalize">
-                      {invitation.role} access · {invitation.expiresAt?.toMillis
+                      {invitation.role === 'viewer' ? 'Legacy Viewer · Reissue required' : 'Member access'} · {invitation.expiresAt?.toMillis
                         ? `expires ${new Date(invitation.expiresAt.toMillis()).toLocaleDateString()}`
                         : 'expiry unavailable'}
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => handleCopy(invitationUrl(invitation.id))} className="rounded-lg bg-panel-raised px-3 py-2 text-xs font-bold text-content-copy hover:bg-panel-pressed inline-flex items-center gap-1">
+                    {invitation.role !== 'viewer' && <button type="button" onClick={() => handleCopy(invitationUrl(invitation.id))} className="rounded-lg bg-panel-raised px-3 py-2 text-xs font-bold text-content-copy hover:bg-panel-pressed inline-flex items-center gap-1">
                       <Copy className="w-3.5 h-3.5" /> Copy link
-                    </button>
+                    </button>}
                     <button type="button" disabled={isWorking} onClick={() => handleRevoke(invitation)} className="rounded-lg bg-danger-wash px-3 py-2 text-xs font-bold text-danger-text hover:bg-danger-tint disabled:opacity-50 inline-flex items-center gap-1">
                       <X className="w-3.5 h-3.5" /> Revoke
                     </button>

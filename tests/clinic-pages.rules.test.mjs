@@ -90,6 +90,59 @@ test('real Firestore cursors bound pages, preserve legacy history and isolate cl
       error => error.code === 'permission-denied');
     await assert.rejects(loadClinicPage('demo-clinic', 'inventory'));
 
+    await t.test('legacy consultation backfill is a guarded dry run, is resumable, and is idempotent', async () => {
+      const { backfillConsultationHistory } = await import('../scripts/backfill-consultation-history.mjs');
+      const root = `projects/${projectId}/databases/(default)/documents`;
+      const endpoint = `http://${host}/v1/${root}`;
+      const consultations = `clinics/${clinicId}/consultations`;
+      const marker = `clinics/${clinicId}/workspaceConfig/consultationHistory`;
+      const get = path => fetch(`${endpoint}/${path}`, { headers: { Authorization: 'Bearer owner' } });
+      const fixture = [
+        ['precise', { occurredAt: { timestampValue: '2024-03-01T12:34:56.123456Z' }, date: { stringValue: '3/1/2024' } }],
+        ['dated', { date: { stringValue: '29/2/2024' } }],
+        ['unknown', { date: { stringValue: '2/3/2024' } }],
+      ];
+      const commit = writes => fetch(`${endpoint}:commit`, {
+        method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ writes })
+      });
+      assert.equal((await commit(fixture.map(([id, fields]) => ({
+        update: { name: `${root}/${consultations}/${id}`, fields }
+      })))).status, 200);
+      await assert.rejects(backfillConsultationHistory({ host: 'example.invalid:8080', projectId, clinicId }), /loopback/i);
+      await assert.rejects(backfillConsultationHistory({ host, projectId: 'non-demo-project', clinicId }), /demo/i);
+      const options = { host, projectId, clinicId };
+      const preview = await backfillConsultationHistory(options);
+      assert.equal(preview.needsWrite, 63);
+      assert.equal((await get(marker)).status, 404);
+      assert.equal((await (await get(`${consultations}/dated`)).json()).fields.historySortAt, undefined);
+      let raced = false;
+      const raceFetch = async (url, init) => {
+        const changes = init?.body && JSON.parse(init.body).writes;
+        if (!raced && changes?.some(write => write.update?.name.endsWith('/SOAP-0000'))) {
+          raced = true;
+          assert.equal((await commit([{
+            update: { name: `${root}/${consultations}/SOAP-0000`, fields: { notes: { stringValue: 'Concurrent edit' } } },
+            updateMask: { fieldPaths: ['notes'] }
+          }])).status, 200);
+        }
+        return fetch(url, init);
+      };
+      await assert.rejects(backfillConsultationHistory({ ...options, apply: true, request: raceFetch }), /commit/i);
+      assert.equal((await (await get(marker)).json()).fields.state.stringValue, 'preparing');
+      const result = await backfillConsultationHistory({ ...options, apply: true });
+      assert.equal(result.needsWrite, 63);
+      assert.equal((await (await get(marker)).json()).fields.state.stringValue, 'ready');
+      const readFields = async id => (await (await get(`${consultations}/${id}`)).json()).fields;
+      assert.deepEqual(await readFields('dated'), {
+        date: { stringValue: '29/2/2024' }, historySortAt: { timestampValue: '2024-02-29T00:00:00Z' }
+      });
+      assert.deepEqual((await readFields('unknown')).historySortAt, { nullValue: null });
+      assert.deepEqual((await readFields('precise')).historySortAt, { timestampValue: '2024-03-01T12:34:56.123456Z' });
+      assert.equal((await readFields('SOAP-0000')).notes.stringValue, 'Concurrent edit');
+      assert.equal((await backfillConsultationHistory({ ...options, apply: true })).needsWrite, 0);
+    });
+
     await t.test('clinic-wide patient scans read past active pages and stop at the real end', async () => {
       assert.equal(typeof loadClinicScanPage, 'function', 'the clinic-wide scan loader is available');
       const first = await loadClinicScanPage(clinicId, 'patients', null);

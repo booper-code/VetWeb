@@ -1,8 +1,9 @@
 import {
   ASSISTANT_IMPORT_PREVIEW_LIMIT, ASSISTANT_PERSON_LIMIT, assistantRangeBounds, assistantResourceId,
-  assistantToolRegistry, exactAssistantObject, isAssistantToolId, parseAssistantToolInput, parseAssistantToolResult,
+  exactAssistantObject, isAssistantToolId, parseAssistantToolInput, parseAssistantToolResult,
   type AssistantToolError, type ImportRange, type PersonQuery,
 } from '../../../lib/assistant-tools';
+import { normalizeClinicRole } from '../../../lib/clinic-role';
 
 type Env = { FIREBASE_PROJECT_ID: string; ALLOWED_ORIGINS: string };
 type Value = { stringValue?: string; booleanValue?: boolean; integerValue?: string; timestampValue?: string };
@@ -161,11 +162,9 @@ export async function handleAssistantTools(request: Request, env: Env, fetcher: 
     const read = firestoreClient(path, token, signal, fetcher);
     const [member, clinic] = await Promise.all([
       read<Document>(`/members/${uid}?mask.fieldPaths=role`),
-      read<Document>('?mask.fieldPaths=aiEnabled&mask.fieldPaths=ownerId'),
+      read<Document>('?mask.fieldPaths=aiEnabled'),
     ]);
-    const role = member.fields?.role?.stringValue;
-    if (clinic.fields?.aiEnabled?.booleanValue !== true || !role || !['owner', 'editor', 'viewer'].includes(role) ||
-      (assistantToolRegistry[body.tool].access === 'owner' && (role !== 'owner' || clinic.fields.ownerId?.stringValue !== uid))) throw deny();
+    if (clinic.fields?.aiEnabled?.booleanValue !== true || !normalizeClinicRole(member.fields?.role?.stringValue)) throw deny();
     const result = body.tool === 'find_person_by_name' ? await findPerson(read, path, input as PersonQuery)
       : await importHistory(read, path, input as ImportRange);
     if (!parseAssistantToolResult(body.tool, result)) throw unavailable();

@@ -399,7 +399,7 @@ export function WorkspaceAssistant({ schedule, canEdit, onNavigate, onReview, on
               {proposal && <p>Proposed time: {assistantManilaTime(proposal.proposedDueAt)}</p>}
               {reply.kind === 'reschedule' && !proposal && <p>That is already the scheduled time. Choose a different time.</p>}
             </div>}
-            {reply.kind === 'reschedule' && !canEdit && <p role="status">Your schedule access is read-only. An online owner or editor can review changes.</p>}
+             {reply.kind === 'reschedule' && !canEdit && <p role="status">Your schedule access is read-only. An online clinic session is required to review changes.</p>}
             {proposal && canEdit && <>
               <p className="vc-note">The assistant only prepares a draft. Opening it does not save anything.
                 To reschedule, select Review &amp; save appointment in Appointments and confirm. This does not send messages or change billing.</p>

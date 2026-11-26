@@ -7,6 +7,7 @@ import { initializeFirebase, dbRef, firestore, restoreFirebaseSession } from '@/
 import { nextPatientId } from '@/lib/patients';
 import { useClinicPages } from '@/lib/useClinicPages';
 import { PageControls } from '@/components/PageControls';
+import { ConsultationHistory } from '@/components/ConsultationHistory';
 import { mutateClinicalRecord } from '@/lib/clinical-mutations';
 import { checkBillingReconciliation, commitBilling, loadBillingHistory, loadBillingRecords, loadPaymentReceipt, type BillingOperation, type BillingRecords } from '@/lib/billing';
 import { reconcileBillingLedger } from '@/lib/billing-reconciliation';
@@ -22,7 +23,7 @@ import { createMutationScope } from '@/lib/mutation-scope';
 import { useAppointments } from '@/lib/useAppointments';
 import { AppointmentsView } from '@/components/AppointmentsView';
 import { FollowUpQueue } from '@/components/FollowUpQueue';
-import { loadDemoFollowUpPage, loadFollowUpPage, recordFollowUpContact, type FollowUpCursor } from '@/lib/follow-up';
+import { loadDemoFollowUpPage, loadFollowUpPage, recordFollowUpContact, subscribeFollowUps, type FollowUpCursor, type FollowUpSubscription } from '@/lib/follow-up';
 import type { Appointment } from '@/types';
 import { inventoryFromDocument, loadClinicScanPage, loadDemoClinicScanPage, loadInventoryCatalogCount, patientFromDocument } from '@/lib/clinic-pages';
 import { saveConsultation } from '@/lib/consultations';
@@ -69,7 +70,8 @@ const assistantWorker = process.env.NEXT_PUBLIC_ASSISTANT_TOOLS_URL;
 
 export default function App() {
   const [mutationScope] = useState(createMutationScope);
-  const workspaceGeneration = mutationScope.capture();
+  // Give React Compiler a primitive snapshot to track in callback dependencies.
+  const workspaceGeneration = Number(mutationScope.capture());
   const leaving = useRef(false);
   // Chat history is owned here, keyed by workspace scope + saved AI setup, so a
   // provider/model/key change can never forward the previous setup's turns.
@@ -84,7 +86,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [patientToOpen, setPatientToOpen] = useState<string | null>(null);
+  const [patientToOpen, setPatientToOpen] = useState<PatientRecord | null>(null);
   const [treatmentLink, setTreatmentLink] = useState<{
     patientId: string; appointmentId: string; occurredAt: string;
   } | null>(null);
@@ -103,9 +105,9 @@ export default function App() {
   const [online, setOnline] = useState(true);
   const [deviceNotice, setDeviceNotice] = useState('');
   const canChangeRecords = currentClinicId === 'demo-clinic' ||
-    (online && (currentClinicRole === 'owner' || currentClinicRole === 'editor'));
+    (online && currentClinicRole !== null);
   const canOpenClose = !!currentClinicId && !!sessionUser && (currentClinicId === 'demo-clinic'
-    || currentClinicRole === 'owner' || currentClinicRole === 'editor');
+    || currentClinicRole !== null);
   const canReadClinic = !!currentClinicId && !!sessionUser && (currentClinicId === 'demo-clinic' || currentClinicRole !== null);
   const clinicScanOnline = currentClinicId === 'demo-clinic' || online;
   const clinicScanKey = `${currentClinicId}:${sessionUser?.uid ?? ''}:${workspaceGeneration}:${clinicScanOnline}`;
@@ -118,8 +120,7 @@ export default function App() {
   const verifiedAccess = shouldWatchAssistant && assistantAccess?.workspace === assistantWorkspace ? assistantAccess : null;
   if (assistantAccess && !verifiedAccess) setAssistantAccess(null);
   const assistantAllowed = aiEnabled && canReadClinic && (isDemoWorkspace || !!verifiedAccess?.role);
-  const assistantCanEdit = assistantAllowed && canChangeRecords && (isDemoWorkspace ||
-    verifiedAccess?.role === 'owner' || verifiedAccess?.role === 'editor');
+  const assistantCanEdit = assistantAllowed && canChangeRecords;
   const assistantScopeKey = `${assistantWorkspace}:${verifiedAccess?.version ?? 0}`;
   const assistantReview = activeTab === 'appointments' && assistantCanEdit &&
     assistantHandoff?.scopeKey === assistantScopeKey ? assistantHandoff.proposal : undefined;
@@ -298,6 +299,10 @@ export default function App() {
     return currentClinicId === 'demo-clinic' ? loadDemoFollowUpPage(demoAppointments(), endMs, after)
       : loadFollowUpPage({ clinicId: currentClinicId, uid: followUpUid, after, endMs });
   }, [currentClinicId, demoAppointments, followUpIsCurrent, followUpUid]);
+  const watchFollowUps = useCallback<FollowUpSubscription>((...args) => {
+    if (!currentClinicId || !followUpUid || !followUpIsCurrent()) return Promise.reject(new Error('Choose a clinic workspace.'));
+    return subscribeFollowUps({ clinicId: currentClinicId, uid: followUpUid }, ...args);
+  }, [currentClinicId, followUpIsCurrent, followUpUid]);
 
   useEffect(() => watchDevicePreference(change => {
     if (change !== 'wipe' && getDevicePreference() !== 'memory') return;
@@ -327,7 +332,7 @@ export default function App() {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) return false;
     const captured = mutationScope.capture();
     if (!canChangeRecords) {
-      triggerToast('Clinical changes require an online owner or editor session.');
+      triggerToast('Clinical changes require an online clinic session.');
       return false;
     }
     // A partial page cannot allocate a sequential ID without collisions.
@@ -400,7 +405,7 @@ export default function App() {
       });
       console.log(`[Firebase] Successfully committed patient record ${newPat.id} to cloud!`);
       if (!mutationScope.isCurrent(captured)) return false;
-      setPatients(prev => [{ ...newPat, revision: saved.revision }, ...prev]);
+      setPatients(prev => prev.some(row => row.id === newPat.id) ? prev : [{ ...newPat, revision: saved.revision }, ...prev]);
       triggerToast(`Successfully admitted ${newPat.name} to the clinic queue.`);
       return true;
     } catch (e) {
@@ -415,7 +420,7 @@ export default function App() {
   const createInventoryItem = async (newItem: InventoryItem, csvBatchId?: string) => {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) throw new Error('Workspace is closing. No changes were started.');
     const captured = mutationScope.capture();
-    if (!canChangeRecords) throw new Error('Inventory changes require an online owner or editor session.');
+    if (!canChangeRecords) throw new Error('Inventory changes require an online clinic session.');
     const invalid = inventoryValidationError(newItem);
     if (invalid) throw new Error(invalid);
     if (currentClinicId === 'demo-clinic') {
@@ -467,7 +472,7 @@ export default function App() {
   const updateInventoryItem = async (updatedItem: InventoryItem) => {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) throw new Error('Workspace is closing. No changes were started.');
     const captured = mutationScope.capture();
-    if (!canChangeRecords) throw new Error('Inventory changes require an online owner or editor session.');
+    if (!canChangeRecords) throw new Error('Inventory changes require an online clinic session.');
     const invalid = inventoryValidationError(updatedItem);
     if (invalid) throw new Error(invalid);
     if (currentClinicId === 'demo-clinic') {
@@ -510,7 +515,7 @@ export default function App() {
   const deleteInventoryItem = async (itemCode: string) => {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) throw new Error('Workspace is closing. No changes were started.');
     const captured = mutationScope.capture();
-    if (!canChangeRecords) throw new Error('Inventory changes require an online owner or editor session.');
+    if (!canChangeRecords) throw new Error('Inventory changes require an online clinic session.');
     const existing = inventory.find(item => item.itemCode === itemCode);
     if (existing?.billingStockEntryId) throw new Error('This item is part of billing history and must remain available for stock returns.');
     if (currentClinicId === 'demo-clinic') {
@@ -554,7 +559,7 @@ export default function App() {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) return false;
     const captured = mutationScope.capture();
     if (!canChangeRecords) {
-      triggerToast('Clinical changes require an online owner or editor session.');
+      triggerToast('Clinical changes require an online clinic session.');
       return false;
     }
     const invalid = patientValidationError(updatedRecord);
@@ -598,8 +603,9 @@ export default function App() {
       console.log(`[Firebase] Successfully updated patient record ${updatedRecord.id} in cloud.`);
       // Keep the returned version on both the list and the edit buffer.
       if (!mutationScope.isCurrent(captured)) return false;
-      setPatients(prev => prev.map(p => p.id === updatedRecord.id
-        ? { ...payload, revision: saved.revision } : p));
+      setPatients(prev => prev.map(p => p.id === updatedRecord.id && (p.revision ?? 0) < saved.revision
+        ? { ...payload, revision: saved.revision, balance: p.balance, billing: p.billing,
+          legacyBillingBalance: p.legacyBillingBalance, billableItems: p.billableItems } : p));
       triggerToast(`Clinical record updated successfully.`);
       return true;
     } catch (e) {
@@ -610,14 +616,14 @@ export default function App() {
     }
   };
 
-  const deletePatientRecord = async (id: string) => {
+  const deletePatientRecord = async (id: string, selected?: PatientRecord) => {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) return false;
     const captured = mutationScope.capture();
     if (!canChangeRecords) {
-      triggerToast('Clinical changes require an online owner or editor session.');
+      triggerToast('Clinical changes require an online clinic session.');
       return false;
     }
-    const existing = patients.find(patient => patient.id === id);
+    const existing = selected?.id === id ? selected : patients.find(patient => patient.id === id);
     if (existing?.billing || existing?.balance || existing?.billableItems?.length
       || (existing?.legacyBillingBalance !== undefined && existing.legacyBillingBalance !== 0)) {
       triggerToast('This patient has financial history. Discharge the patient instead of deleting the record.');
@@ -678,10 +684,10 @@ export default function App() {
     pending(patientId) {
       return pendingBilling.current.get(pendingKey(activeBillingClinic(), patientId)) ?? null;
     },
-    async submit(operationId, draft, patientId, expectedPatientRevision) {
+    async submit(operationId, draft, patientId, expectedPatientRevision, selected) {
       const clinicId = activeBillingClinic();
       const operation = { clinicId, operationId, draft, patientId, expectedPatientRevision };
-      const patient = patients.find(row => row.id === patientId);
+      const patient = selected?.id === patientId ? selected : patients.find(row => row.id === patientId);
       if (!patient) throw new Error('Reload this patient before saving.');
       if (firestoreDocBytes(patient) > MAX_PATIENT_DOC_BYTES) throw new Error('This patient record is too large to update safely.');
       const key = pendingKey(clinicId, patientId);
@@ -754,7 +760,7 @@ export default function App() {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) return;
     const captured = mutationScope.capture();
     if (!canChangeRecords || !currentClinicId) {
-      triggerToast('Consultation changes require an online owner or editor.');
+      triggerToast('Consultation changes require an online clinic session.');
       return;
     }
     const current = consultations.find(record => record.id === id);
@@ -768,12 +774,15 @@ export default function App() {
       if (currentClinicId !== 'demo-clinic') {
         const saved = await mutateClinicalRecord({
           clinicId: currentClinicId, collection: 'consultations', id,
-          expectedRevision: current.revision ?? 0, data: updated, action: 'save'
+          expectedRevision: current.revision ?? 0, data: { status: updated.status }, action: 'save',
+          expectedUid: sessionUser?.uid, consultationStatusOnly: true
         });
         updated.revision = saved.revision;
       }
       if (!mutationScope.isCurrent(captured)) return;
-      setConsultations(previous => previous.map(record => record.id === id ? updated : record));
+      setConsultations(previous => previous.map(record => record.id === id && record.revision === current.revision
+        ? { ...record, status: updated.status, revision: updated.revision }
+        : record));
       triggerToast('Consultation status saved.');
     } catch (error) {
       if (!mutationScope.isCurrent(captured)) return;
@@ -785,7 +794,7 @@ export default function App() {
     if (leaving.current || !mutationScope.isCurrent(workspaceGeneration)) return false;
     const captured = mutationScope.capture();
     if (!canChangeRecords || !currentClinicId) {
-      triggerToast('Treatment records require an online owner or editor.');
+      triggerToast('Treatment records require an online clinic session.');
       return false;
     }
     const invalid = consultationValidationError(draft, inventory);
@@ -811,7 +820,6 @@ export default function App() {
     try {
       const result = await saveConsultation({ clinicId: currentClinicId, draft, inventory });
       if (!mutationScope.isCurrent(captured)) return false;
-      setConsultations(previous => [result.consultation, ...previous]);
       setInventory(previous => previous.map(item => {
         const change = result.inventory.find(row => row.itemCode === item.itemCode);
         return change && (change.revision ?? 0) >= (item.revision ?? 0) ? change : item;
@@ -837,8 +845,6 @@ export default function App() {
       if (!mutationScope.isCurrent(workspaceGeneration) || !stillOpen()) return null;
       if (!snapshot.exists()) throw new Error('The linked patient is no longer available in this clinic.');
       patient = patientFromDocument(snapshot.id, snapshot.data());
-      const loaded = patient;
-      setPatients(previous => [...previous.filter(row => row.id !== id), loaded]);
     }
     if (!patient) throw new Error('The linked demo patient is no longer available.');
     return patient;
@@ -848,14 +854,14 @@ export default function App() {
     const patient = await loadAppointmentPatient(id, stillOpen, freshRecord);
     if (!patient) return;
     setTreatmentLink(null);
-    setPatientToOpen(patient.id); setSearchQuery(patient.id); setActiveTab('patients');
+    setPatientToOpen(patient); setSearchQuery(patient.id); setActiveTab('patients');
   };
 
   const openAppointmentTreatment = async (
     appointment: { id: string; patientId: string; occurredAt: string | null; dueAt: string },
     stillOpen: () => boolean = () => true
   ) => {
-    if (!canChangeRecords) throw new Error('An online owner or editor session is required to record treatments.');
+    if (!canChangeRecords) throw new Error('An online clinic session is required to record treatments.');
     const patient = await loadAppointmentPatient(appointment.patientId, stillOpen);
     if (!patient) return;
     setTreatmentLink({
@@ -863,7 +869,7 @@ export default function App() {
       appointmentId: appointment.id,
       occurredAt: appointment.occurredAt || appointment.dueAt
     });
-    setPatientToOpen(patient.id); setSearchQuery(patient.id); setActiveTab('patients');
+    setPatientToOpen(patient); setSearchQuery(patient.id); setActiveTab('patients');
   };
 
   const handleRecordVisit = () => {
@@ -872,7 +878,7 @@ export default function App() {
     setActiveTab('patients');
     triggerToast(canChangeRecords
       ? 'Choose a patient to record a visit.'
-      : 'An online owner or editor session is required to record a visit.');
+      : 'An online clinic session is required to record a visit.');
   };
 
   const navigateTo = (tab: string) => {
@@ -914,7 +920,7 @@ export default function App() {
     if (problem) return problem;
     if (!isDemoWorkspace && currentClinicId && assistantUid) {
       const role = await readAssistantRole(currentClinicId, assistantUid);
-      if ((role !== 'owner' && role !== 'editor') || role !== verifiedAccess?.role) {
+      if (!role || role !== verifiedAccess?.role) {
         return 'Your clinic access changed or could not be verified. Reopen the assistant before continuing.';
       }
     }
@@ -937,7 +943,6 @@ export default function App() {
 
   const lookupAssistantTool = async (call: AssistantToolCall, signal: AbortSignal): Promise<AssistantLookup> => {
     if (!assistantWorker || !currentClinicId || !mayInvestigate() || signal.aborted) return { error: 'access-denied' };
-    if (call.tool === 'inventory_import_history' && verifiedAccess?.role !== 'owner') return { error: 'access-denied' };
     const { auth } = await initializeFirebase();
     const user = auth.currentUser;
     if (!mayInvestigate() || signal.aborted || !user || user.uid !== assistantUid) return { error: 'access-denied' };
@@ -1075,7 +1080,8 @@ export default function App() {
         return canReadClinic ? <FollowUpQueue
           key={JSON.stringify([currentClinicId, followUpUid, currentClinicRole, online, workspaceGeneration])}
           canEdit={canChangeRecords} online={online || currentClinicId === 'demo-clinic'} isCurrent={followUpIsCurrent}
-          load={loadFollowUps} onContact={handleFollowUpContact} onOpenPatient={openAppointmentPatient} onBack={() => navigateTo('dashboard')}
+           load={loadFollowUps} subscribe={currentClinicId === 'demo-clinic' ? undefined : watchFollowUps}
+           onContact={handleFollowUpContact} onOpenPatient={openAppointmentPatient} onBack={() => navigateTo('dashboard')}
         /> : null;
       case 'dashboard':
       default:
@@ -1084,6 +1090,7 @@ export default function App() {
             patients={patients}
             inventory={inventory}
             consultations={consultations}
+            chronologicalConsultations={clinicPages.state.consultations.chronological}
             appointments={appointments.rows}
             onToggleStatus={toggleConsultationStatus}
             partialData={currentClinicId !== 'demo-clinic'}
@@ -1103,10 +1110,10 @@ export default function App() {
             appointmentsFromCache={appointments.fromCache}
             appointmentsRange={`${appointments.window.from} through ${appointments.window.through}`}
           />
-          {currentClinicId !== 'demo-clinic' && <div className="mt-4">
-            <PageControls label="consultations" status={clinicPages.state.consultations}
-              onLoad={() => void clinicPages.load('consultations')} />
-          </div>}</>
+          <ConsultationHistory rows={consultations}
+            status={currentClinicId === 'demo-clinic' ? undefined : clinicPages.state.consultations}
+            onLoad={() => void clinicPages.load('consultations')}
+            canEdit={canChangeRecords} onToggleStatus={toggleConsultationStatus} /></>
         );
       case 'appointments':
         return currentClinicId ? <AppointmentsView
@@ -1122,8 +1129,9 @@ export default function App() {
       case 'patients':
         return (
           <PatientRecordsView 
-            key={`${currentClinicId}:${patientToOpen ?? ''}`}
-            initialPatientId={patientToOpen ?? undefined}
+            key={`${currentClinicId}:${patientToOpen?.id ?? ''}`}
+            initialPatientId={patientToOpen?.id}
+            initialPatient={patientToOpen ?? undefined}
             initialTreatmentLink={treatmentLink}
             patients={patients} 
             consultations={consultations}
@@ -1154,6 +1162,9 @@ export default function App() {
               active: clinicPages.state.activePatients,
               discharged: clinicPages.state.dischargedPatients,
               load: kind => void clinicPages.load(kind === 'Active' ? 'activePatients' : 'dischargedPatients')
+            }}
+            consultationPaging={currentClinicId === 'demo-clinic' ? undefined : {
+              status: clinicPages.state.consultations, load: () => void clinicPages.load('consultations')
             }}
             canEdit={canChangeRecords}
             staffUid={sessionUser?.uid ?? 'demo-user'}
@@ -1193,14 +1204,14 @@ export default function App() {
       case 'settings':
         return (
           <><OfflineDeviceSettings beforeClear={handleLogout} />
-          {currentClinicId && currentClinicId !== 'demo-clinic' && currentClinicRole === 'owner' &&
+          {currentClinicId && currentClinicId !== 'demo-clinic' && currentClinicRole &&
             <ImageStorageControls key={currentClinicId} clinicId={currentClinicId} online={online} />}
           <SystemSettingsView
             key={JSON.stringify([currentClinicId, sessionUser?.uid, workspaceGeneration])}
             inventory={inventory}
             onAddInventoryItem={createInventoryItem}
             aiEnabled={aiEnabled}
-            canManageAI={(currentClinicRole === 'owner' && online) || sessionUser?.isDemo === true}
+            canManageAI={canChangeRecords}
             isDemo={sessionUser?.isDemo ?? false}
             onSetAIEnabled={async enabled => {
               if (currentClinicId === 'demo-clinic') setDemoAIEnabled(enabled);
@@ -1229,11 +1240,13 @@ export default function App() {
         if (!online && currentClinicId !== 'demo-clinic') return <p>Staff and payroll management require a connection. No changes are queued offline.</p>;
         return (
           <StaffPayrollView
+            key={JSON.stringify([currentClinicId, sessionUser?.uid, workspaceGeneration])}
             clinicId={currentClinicId}
             clinicName={currentClinicName}
             user={sessionUser}
             role={currentClinicRole}
             isDemo={sessionUser?.isDemo ?? false}
+            isCurrent={followUpIsCurrent}
             triggerToast={notifyCurrentWorkspace}
           />
         );
@@ -1246,18 +1259,13 @@ export default function App() {
             clinicName={currentClinicName}
             user={sessionUser}
             role={currentClinicRole}
-            onOwnershipTransferred={nextRole => {
-              if (!mutationScope.isCurrent(workspaceGeneration)) return;
-              setCurrentClinicRole(nextRole);
-              setActiveTab(previous => previous === 'team' ? 'dashboard' : previous);
-            }}
             triggerToast={notifyCurrentWorkspace}
           />
         ) : null;
       case 'audit':
-        return currentClinicId && currentClinicId !== 'demo-clinic' && currentClinicRole === 'owner'
+        return currentClinicId && currentClinicId !== 'demo-clinic' && currentClinicRole
           ? <AuditLogView key={currentClinicId} clinicId={currentClinicId} searchQuery={searchQuery} />
-          : <p>Audit events are available to the clinic owner in a connected clinic.</p>;
+          : <p>Audit events are available to members of a connected clinic.</p>;
     }
   };
     const handleLogout = async () => {

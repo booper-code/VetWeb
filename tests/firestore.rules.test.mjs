@@ -62,14 +62,19 @@ const verificationUrl = await loadClientModule('../lib/invitation-verification.t
 });
 const clinicsUrl = await loadClientModule('../lib/clinics.ts', {
   '@/lib/firebase': handlesUrl,
-  '@/lib/invitation-verification': verificationUrl
+  '@/lib/invitation-verification': verificationUrl,
+  '@/lib/clinic-role': await loadClientModule('../lib/clinic-role.ts', {})
 });
-const { acceptClinicInvitation } = await import(clinicsUrl);
+const { acceptClinicInvitation, createClinic: createClientClinic, createClinicInvitation, listUserClinics } = await import(clinicsUrl);
 const { refreshInvitationVerification } = await import(verificationUrl);
 const clinicalUrl = await loadClientModule('../lib/clinical-mutations.ts', {
   '@/lib/firebase': handlesUrl
 });
 const { mutateClinicalRecord, mutateClinicalRecords } = await import(clinicalUrl);
+const { saveStaffMember, createPayrollPeriod, closePayrollPeriod } = await import(await loadClientModule('../lib/payroll.ts', {
+  '@/lib/firebase': handlesUrl,
+  '@/lib/clinical-mutations': clinicalUrl
+}));
 
 async function verifyCurrentEmail() {
   await sendEmailVerification(auth.currentUser);
@@ -102,9 +107,9 @@ async function adversarialClaim(clinicId, invitationRef, uid, email, verified) {
   const response = await fetch(`http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents:commit`, {
     method: 'POST', headers,
     body: JSON.stringify({ writes: [
-      { update: { name: `${root}/clinics/${clinicId}/members/${uid}`, fields: fields({ uid, email, displayName: 'Adversary', role: 'viewer', invitationId: invitationRef.id }) },
+       { update: { name: `${root}/clinics/${clinicId}/members/${uid}`, fields: fields({ uid, email, displayName: 'Adversary', role: 'member', invitationId: invitationRef.id }) },
         updateTransforms: [{ fieldPath: 'joinedAt', setToServerValue: 'REQUEST_TIME' }] },
-      { update: { name: `${root}/users/${uid}/clinics/${clinicId}`, fields: fields({ clinicId, clinicName: 'Renamed Clinic', role: 'viewer', invitationId: invitationRef.id }) },
+       { update: { name: `${root}/users/${uid}/clinics/${clinicId}`, fields: fields({ clinicId, clinicName: 'Renamed Clinic', role: 'member', invitationId: invitationRef.id }) },
         updateTransforms: [{ fieldPath: 'joinedAt', setToServerValue: 'REQUEST_TIME' }] },
       { update: { name: invitePath, fields: fields({ status: 'accepted', acceptedBy: uid }) },
         updateMask: { fieldPaths: ['status', 'acceptedBy'] },
@@ -253,6 +258,21 @@ async function transferOwnership(clinicId, fromUid, toUid) {
   });
 }
 
+async function seedLegacyInvite(clinicId, clinicName, email, role, owner) {
+  const ref = doc(collection(db, 'clinics', clinicId, 'invitations'));
+  const fields = Object.fromEntries(Object.entries({
+    clinicId, clinicName, email, role, status: 'pending', createdBy: owner.uid, createdByEmail: owner.email
+  }).map(([name, stringValue]) => [name, { stringValue }]));
+  fields.expiresAt = { timestampValue: new Date(Date.now() + 86400000).toISOString() };
+  const response = await fetch(`http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents/${ref.path}`, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields })
+  });
+  assert.equal(response.status, 200, await response.text());
+  return ref;
+}
+
 async function rejectIncompleteTransfers(clinicId, fromUid, toUid) {
   const writes = [
     ['clinic ownerId', doc(db, 'clinics', clinicId), { ownerId: toUid }],
@@ -273,7 +293,7 @@ async function rejectIncompleteTransfers(clinicId, fromUid, toUid) {
   }
   assert.equal((await getDoc(doc(db, 'clinics', clinicId))).data().ownerId, fromUid);
   assert.equal((await getDoc(doc(db, 'clinics', clinicId, 'members', fromUid))).data().role, 'owner');
-  assert.equal((await getDoc(doc(db, 'clinics', clinicId, 'members', toUid))).data().role, 'editor');
+  assert.equal((await getDoc(doc(db, 'clinics', clinicId, 'members', toUid))).data().role, 'member');
   assert.equal((await getDoc(doc(db, 'users', fromUid, 'clinics', clinicId))).data().role, 'owner');
 }
 
@@ -341,8 +361,12 @@ try {
     updateDoc(clinicRef, { ownerId: 'someone-else' })
   );
 
-  // --- Viewer invite ---
-  const viewerInvite = await invite(clinicId, 'Renamed Clinic', emails.viewer, 'viewer');
+  // --- Member invite ---
+  const createdInvite = await createClinicInvitation({
+    clinicId, clinicName: 'Renamed Clinic', email: emails.viewer, user: owner
+  });
+  assert.equal(createdInvite.role, 'member');
+  const viewerInvite = doc(db, 'clinics', clinicId, 'invitations', createdInvite.id);
   const viewer = await signUp(emails.viewer);
   assert.equal(viewer.emailVerified, false);
   await denied('unverified signup cannot read invite', () => getDoc(viewerInvite));
@@ -363,26 +387,15 @@ try {
   await acceptClinicInvitation(clinicId, viewerInvite.id, {
     uid: viewer.uid, email: viewer.email, displayName: 'Viewer'
   });
-  pass('viewer accepts invitation');
+  pass('verified recipient accepts Member invitation');
   assert.equal((await getDoc(patientRef)).exists(), true);
-  pass('viewer reads clinic data');
+  pass('member reads clinic data');
   assert.equal((await getDoc(clinicRef)).data().aiEnabled, false);
-  await denied('viewer cannot change AI setting', () => updateDoc(clinicRef, { aiEnabled: true }));
-  await denied('viewer cannot change image upload setting', () => updateDoc(clinicRef, { imageUploadsEnabled: false }));
-  await denied('viewer cannot write clinic data', () =>
+  await updateDoc(clinicRef, { aiEnabled: true });
+  await updateDoc(clinicRef, { imageUploadsEnabled: false });
+  pass('member manages clinic settings');
+  await denied('member cannot bypass clinical audit', () =>
     setDoc(doc(db, 'clinics', clinicId, 'patients', 'VIEWER-WRITE'), { id: 'VIEWER-WRITE' })
-  );
-  await denied('viewer cannot record a treatment', () =>
-    mutateClinicalRecord({
-      clinicId, collection: 'consultations', id: 'VIEWER-CONSULT', expectedRevision: null, action: 'save',
-      data: {
-        date: '11/17/2026', client: '', patient: 'Test Patient', type: 'Consultation',
-        status: 'Completed', notes: '', patientId: patientRef.id, appointmentId: null,
-        occurredAt: Timestamp.fromDate(new Date(Date.now() - 3_600_000)),
-        recordedAt: serverTimestamp(), staffUid: viewer.uid, staffName: 'Viewer',
-        treatments: [], stockMoves: []
-      }
-    })
   );
 
   // --- Role change ---
@@ -394,16 +407,15 @@ try {
   await denied('index cannot grant a role absent from membership', () =>
     updateDoc(doc(db, 'users', viewer.uid, 'clinics', clinicId), { role: 'editor' })
   );
-  await changeRole(clinicId, viewer.uid, 'editor');
-  pass('owner changes viewer to editor and syncs the index');
+  await denied('owner cannot reassign member roles', () => changeRole(clinicId, viewer.uid, 'editor'));
 
   await signInWithEmailAndPassword(auth, emails.viewer, password);
   const viewerIndex = await getDoc(doc(db, 'users', viewer.uid, 'clinics', clinicId));
-  assert.equal(viewerIndex.data().role, 'editor');
-  pass('member index reflects the new role');
+  assert.equal(viewerIndex.data().role, 'member');
+  pass('member index retains its role');
 
   await mutateClinicalRecord({ clinicId, collection: 'patients', id: 'EDITOR-WRITE', expectedRevision: null, action: 'save', data: {} });
-  pass('promoted member can now write clinic data');
+  pass('member writes audited clinic data');
 
   // --- Structured clinical activity / treatment entry ---
   const consultPatientId = 'CONS-PAT';
@@ -528,8 +540,7 @@ try {
     })
   );
   pass('clinical-activity rules reject unsafe stock, time and edit transitions');
-  await denied('editor cannot change AI setting', () => updateDoc(clinicRef, { aiEnabled: true }));
-  await denied('editor cannot manage the team', () =>
+  await denied('member cannot manage the team', () =>
     updateDoc(doc(db, 'clinics', clinicId, 'members', viewer.uid), { role: 'viewer' })
   );
 
@@ -557,64 +568,72 @@ try {
     setDoc(doc(db, 'clinics', clinicId, 'patients', 'REMOVED-WRITE'), { id: 'REMOVED-WRITE' })
   );
 
-  // --- Editor invite + ownership transfer ---
+  // --- Member invitation and permanent ownership ---
   await signOut(auth);
   await signInWithEmailAndPassword(auth, emails.owner, password);
-  const rejoinInvite = await invite(clinicId, 'Renamed Clinic', emails.viewer, 'viewer');
+  const rejoinInvite = await invite(clinicId, 'Renamed Clinic', emails.viewer, 'member');
   await signInWithEmailAndPassword(auth, emails.viewer, password);
-  await acceptInvite(clinicId, 'Renamed Clinic', rejoinInvite, 'viewer');
+  await acceptInvite(clinicId, 'Renamed Clinic', rejoinInvite, 'member');
   pass('removed member can accept a fresh invitation');
   await signInWithEmailAndPassword(auth, emails.owner, password);
-  const editorInvite = await invite(clinicId, 'Renamed Clinic', emails.editor, 'editor');
+  const editorInvite = await invite(clinicId, 'Renamed Clinic', emails.editor, 'member');
   const editor = await signUp(emails.editor);
   await verifyCurrentEmail();
-  await acceptInvite(clinicId, 'Renamed Clinic', editorInvite, 'editor');
-  pass('editor accepts invitation and writes clinic data');
+  await acceptInvite(clinicId, 'Renamed Clinic', editorInvite, 'member');
+  await denied('member cannot invite someone', () => invite(clinicId, 'Renamed Clinic', emails.outsider, 'member'));
+  await denied('member cannot remove another member', () => removeMember(clinicId, viewer.uid));
 
   await signOut(auth);
   await signInWithEmailAndPassword(auth, emails.owner, password);
   await rejectIncompleteTransfers(clinicId, owner.uid, editor.uid);
-  await transferOwnership(clinicId, owner.uid, editor.uid);
-  assert.equal((await getDoc(clinicRef)).data().ownerId, editor.uid);
-  assert.equal((await getDoc(doc(db, 'clinics', clinicId, 'members', editor.uid))).data().role, 'owner');
-  assert.equal((await getDoc(doc(db, 'clinics', clinicId, 'members', owner.uid))).data().role, 'editor');
-  assert.equal((await getDoc(doc(db, 'users', owner.uid, 'clinics', clinicId))).data().role, 'editor');
-
-  await denied('previous owner can no longer manage the team', () =>
-    updateDoc(doc(db, 'clinics', clinicId, 'members', editor.uid), { role: 'viewer' })
-  );
-  await denied('previous owner cannot reclaim ownership', () =>
-    transferOwnership(clinicId, editor.uid, owner.uid)
-  );
-  await denied('previous owner cannot rename clinic', () =>
-    updateDoc(clinicRef, { name: 'Reclaimed Clinic' })
-  );
-
+  await denied('owner cannot transfer ownership', () => transferOwnership(clinicId, owner.uid, editor.uid));
+  assert.equal((await getDoc(clinicRef)).data().ownerId, owner.uid);
+  assert.equal((await getDoc(doc(db, 'clinics', clinicId, 'members', editor.uid))).data().role, 'member');
+  const pending = await invite(clinicId, 'Renamed Clinic', emails.outsider, 'member');
   await signInWithEmailAndPassword(auth, emails.editor, password);
-  assert.equal((await getDoc(doc(db, 'users', editor.uid, 'clinics', clinicId))).data().role, 'owner');
-  pass('ownership transfer updates clinic, members, and both indexes');
-  await updateDoc(clinicRef, { name: 'Editor Owned Clinic' });
-  pass('new owner can rename the clinic');
+  assert.equal((await listUserClinics(editor.uid))[0].role, 'member');
+  await denied('member cannot revoke a pending invite', () => updateDoc(pending, { status: 'revoked', revokedAt: serverTimestamp() }));
+  await updateDoc(clinicRef, { name: 'Member Renamed Clinic' });
 
   // --- Staff & payroll ---
-  const staffRef = doc(collection(db, 'clinics', clinicId, 'staff'));
-  await setDoc(staffRef, staffPayload);
-  pass('owner creates staff member');
-  await setDoc(doc(db, 'clinics', clinicId, 'payProfiles', staffRef.id), {
-    payBasis: 'daily',
-    rate: 800,
-    updatedAt: serverTimestamp()
-  });
-  pass('owner sets pay profile');
-
-  const periodRef = doc(collection(db, 'clinics', clinicId, 'payrollPeriods'));
-  await setDoc(periodRef, {
-    startDate: '2026-11-09',
-    endDate: '2026-11-15',
-    status: 'open',
-    createdAt: serverTimestamp()
-  });
-  pass('owner creates payroll period');
+  const payrollActor = { uid: editor.uid, isCurrent: () => true };
+  await denied('direct staff save requires an audit event', () =>
+    setDoc(doc(db, 'clinics', clinicId, 'staff', 'unaudited'), staffPayload));
+  const staff = await saveStaffMember(clinicId, staffPayload, { payBasis: 'daily', rate: 800 }, payrollActor);
+  const staffRef = doc(db, 'clinics', clinicId, 'staff', staff.id);
+  const profileRef = doc(db, 'clinics', clinicId, 'payProfiles', staff.id);
+  await assert.rejects(saveStaffMember(clinicId, { ...staff, position: 'Draft from a previous account' }, undefined, {
+    uid: owner.uid, isCurrent: () => true
+  }), /account changed/i);
+  await denied('pay rates cannot bypass the audit transaction', () => updateDoc(profileRef, { rate: 900 }));
+  const editedStaff = await saveStaffMember(clinicId, { ...staff, position: 'Synthetic lead' }, {
+    payBasis: 'monthly', rate: 14000, revision: 1
+  }, payrollActor);
+  await assert.rejects(saveStaffMember(clinicId, { ...editedStaff, position: 'Stale pay rate must roll back staff' }, {
+    payBasis: 'daily', rate: 800, revision: 1
+  }, payrollActor), { name: 'ClinicalConflictError' });
+  assert.equal((await getDoc(staffRef)).data().position, 'Synthetic lead');
+  assert.equal((await getDoc(profileRef)).data().rate, 14000);
+  await denied('payroll period creation requires an audit event', () =>
+    setDoc(doc(db, 'clinics', clinicId, 'payrollPeriods', 'unaudited'), {
+      startDate: '2026-11-09', endDate: '2026-11-15', status: 'open', createdAt: serverTimestamp()
+    }));
+  const period = await createPayrollPeriod(clinicId, '2026-11-09', '2026-11-15', payrollActor);
+  const periodRef = doc(db, 'clinics', clinicId, 'payrollPeriods', period.id);
+  await denied('direct payroll close requires an audit event', () =>
+    updateDoc(periodRef, { status: 'closed', closedAt: serverTimestamp() }));
+  await closePayrollPeriod(clinicId, period.id, period.revision, payrollActor);
+  assert.equal((await getDoc(periodRef)).data().status, 'closed');
+  const payrollEvents = (await getDocs(collection(db, 'clinics', clinicId, 'auditEvents'))).docs
+    .filter(row => ['staff', 'payProfiles', 'payrollPeriods'].includes(row.data().entityType));
+  assert.deepEqual(payrollEvents.map(row => {
+    const { action, entityType, seq, actorUid, ...fields } = row.data();
+    assert.equal(actorUid, editor.uid);
+    assert.deepEqual(Object.keys(fields).sort(), ['entityId', 'eventId', 'time']);
+    return `${entityType}:${action}:${seq}`;
+  }).sort(), ['payProfiles:create:1', 'payProfiles:update:2', 'payrollPeriods:create:1',
+    'payrollPeriods:update:2', 'staff:create:1', 'staff:update:2']);
+  await denied('Member cannot edit payroll audit events', () => updateDoc(payrollEvents[0].ref, { action: 'delete' }));
 
   const ledgerRef = await appendLedgerEntry(clinicId, { id: staffRef.id, name: staffPayload.name });
   pass('owner appends ledger entry');
@@ -644,15 +663,12 @@ try {
   );
   pass('owner updates ledger head');
 
-  // --- Editor (now a regular member) cannot see payroll ---
+  // Both roles can read payroll.
   await signOut(auth);
   await signInWithEmailAndPassword(auth, emails.owner, password);
-  await denied('non-owner cannot read payroll periods', () =>
-    getDocs(collection(db, 'clinics', clinicId, 'payrollPeriods'))
-  );
-  await denied('non-owner cannot read pay profiles', () =>
-    getDoc(doc(db, 'clinics', clinicId, 'payProfiles', staffRef.id))
-  );
+  assert.equal((await getDocs(collection(db, 'clinics', clinicId, 'payrollPeriods'))).size, 1);
+  assert.equal((await getDoc(profileRef)).data().rate, 14000);
+  await denied('Owner cannot delete payroll audit events', () => deleteDoc(payrollEvents[0].ref));
 
   // --- Outsider ---
   await signUp(emails.outsider);
@@ -663,16 +679,33 @@ try {
     appendLedgerEntry(clinicId, { id: staffRef.id, name: staffPayload.name })
   );
 
-  await signInWithEmailAndPassword(auth, emails.editor, password);
-  await transferOwnership(clinicId, editor.uid, viewer.uid);
-  assert.equal((await getDoc(clinicRef)).data().ownerId, viewer.uid);
-  assert.equal((await getDoc(doc(db, 'users', editor.uid, 'clinics', clinicId))).data().role, 'editor');
-  await denied('second previous owner loses payroll access', () => getDoc(ledgerRef));
-  await signInWithEmailAndPassword(auth, emails.viewer, password);
-  assert.equal((await getDoc(doc(db, 'users', viewer.uid, 'clinics', clinicId))).data().role, 'owner');
-  await updateDoc(clinicRef, { name: 'Viewer Owned Clinic' });
-  pass('new owner can subsequently transfer ownership to an existing viewer');
+  await verifyCurrentEmail();
+  const legacyViewer = await seedLegacyInvite(clinicId, 'Member Renamed Clinic', emails.outsider, 'viewer', owner);
+  const legacyEditor = await seedLegacyInvite(clinicId, 'Member Renamed Clinic', emails.outsider, 'editor', owner);
+  await assert.rejects(() => acceptClinicInvitation(clinicId, legacyViewer.id, {
+    uid: auth.currentUser.uid, email: emails.outsider, displayName: 'Legacy invitee'
+  }), /new Member invitation/);
+  await denied('legacy Viewer invitation requires reissue in the rules', () =>
+    acceptInvite(clinicId, 'Member Renamed Clinic', legacyViewer, 'member')
+  );
+  const legacyMembership = await acceptClinicInvitation(clinicId, legacyEditor.id, {
+    uid: auth.currentUser.uid, email: emails.outsider, displayName: 'Legacy invitee'
+  });
+  assert.equal(legacyMembership.role, 'member');
+  pass('legacy Editor invitation creates a Member');
 
+  await signInWithEmailAndPassword(auth, emails.editor, password);
+  assert.equal((await getDoc(clinicRef)).data().ownerId, owner.uid);
+  assert.equal((await getDoc(ledgerRef)).exists(), true);
+
+  const newClinic = await createClientClinic({ uid: editor.uid, email: editor.email, displayName: 'Fictional creator' }, 'Empty chronology clinic');
+  const historyMarker = doc(db, 'clinics', newClinic.clinicId, 'workspaceConfig', 'consultationHistory');
+  assert.equal((await getDoc(historyMarker)).data()?.state, 'ready');
+  await denied('new Owner cannot rewrite the consultation readiness marker', () => updateDoc(historyMarker, { state: 'preparing' }));
+  await denied('an existing clinic Owner cannot bypass consultation history migration', async () => {
+    await signInWithEmailAndPassword(auth, emails.owner, password);
+    return setDoc(doc(db, 'clinics', clinicId, 'workspaceConfig', 'consultationHistory'), { state: 'ready' });
+  });
   console.log('\nAll Firestore rule scenarios passed.');
 } finally {
   await signOut(auth).catch(() => {});

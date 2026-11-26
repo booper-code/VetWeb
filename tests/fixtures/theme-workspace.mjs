@@ -24,18 +24,18 @@ const source = `
       onSelectClinic={choice => { setClinic(choice); setTab(choice.role === 'owner' ? 'team' : 'settings'); }} onLogout={() => {}} />;
     return <div className="flex min-h-screen bg-canvas">
       <Sidebar currentUser={user.displayName} currentClinicName={clinic.clinicName} currentClinicRole={clinic.role}
-        activeTab={tab} setActiveTab={setTab} isOpen={open} setIsOpen={setOpen} aiEnabled={clinic.role === 'owner'} isDemo={false}
+         activeTab={tab} setActiveTab={setTab} isOpen={open} setIsOpen={setOpen} aiEnabled isDemo={false}
         onLogout={() => setClinic(null)} onSwitchClinic={() => setClinic(null)} />
       <div className="min-w-0 flex-1">
         <Header toggleSidebar={() => setOpen(!open)} searchQuery={search} setSearchQuery={setSearch}
-          currentClinicRole={clinic.role} onRecordVisit={() => {}} canEdit={clinic.role === 'owner'} />
+           currentClinicRole={clinic.role} onRecordVisit={() => {}} canEdit />
         <main className="p-4">
           {clinic.role === 'owner' && tab === 'team' && <ClinicTeamView clinicId={clinic.clinicId} clinicName={clinic.clinicName}
-            role={clinic.role} user={user} onOwnershipTransferred={() => {}} triggerToast={() => {}} />}
-          {clinic.role === 'owner' && tab === 'audit' && <AuditLogView clinicId={clinic.clinicId} searchQuery={search} />}
-          {clinic.role === 'owner' && tab === 'settings' && <ImageStorageControls clinicId={clinic.clinicId} online />}
-          {clinic.role === 'owner' && tab === 'laboratory' && <AILaboratoryView triggerToast={() => {}} />}
-          {clinic.role === 'viewer' && <p role="status">Viewer workspace</p>}
+             role={clinic.role} user={user} triggerToast={() => {}} />}
+           {tab === 'audit' && <AuditLogView clinicId={clinic.clinicId} searchQuery={search} />}
+           {tab === 'settings' && <ImageStorageControls clinicId={clinic.clinicId} online />}
+           {tab === 'laboratory' && <AILaboratoryView triggerToast={() => {}} />}
+           {clinic.role === 'member' && <p role="status">Member workspace</p>}
         </main>
       </div>
     </div>;
@@ -51,7 +51,7 @@ const adapters = {
       await window.fixtureLoad;
       if (new URLSearchParams(location.search).has('load-error')) throw new Error('Simulated unavailable clinic list');
       return [{ clinicId: 'fixture-clinic', clinicName: 'Owner clinic', role: 'owner' },
-        { clinicId: 'viewer-clinic', clinicName: 'Viewer clinic', role: 'viewer' }];
+         { clinicId: 'member-clinic', clinicName: 'Member clinic', role: 'member' }];
     }
     export async function listClinicMembers() {
       return [{ uid: 'fixture', displayName: 'Theme Fixture', email: 'local-fixture@example.test', role: 'owner' }];
@@ -59,8 +59,8 @@ const adapters = {
     export async function listClinicInvitations() { return []; }
     export async function subscribeClinicImageUploads(_clinicId, onValue) { onValue(true); return () => {}; }
     export const acceptClinicInvitation = unavailable, createClinic = unavailable, getClinicInvitation = unavailable,
-      changeClinicMemberRole = unavailable, createClinicInvitation = unavailable, removeClinicMember = unavailable,
-      revokeClinicInvitation = unavailable, transferClinicOwnership = unavailable, setClinicImageUploadsEnabled = unavailable;
+       createClinicInvitation = unavailable, removeClinicMember = unavailable,
+       revokeClinicInvitation = unavailable, setClinicImageUploadsEnabled = unavailable;
   `,
   '@/lib/invitation-verification': `
     export async function refreshInvitationVerification() { return false; }

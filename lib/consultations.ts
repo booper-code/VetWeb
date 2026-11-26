@@ -1,56 +1,17 @@
-import type { DocumentData } from 'firebase/firestore';
 import type { Consultation, ConsultationDraft, InventoryItem, TreatmentLine } from '@/types';
 import { initializeFirebase } from '@/lib/firebase';
 import { mutateClinicalRecords } from '@/lib/clinical-mutations';
+import { consultationFromDocument } from '@/lib/clinic-pages';
 import {
   consultationValidationError,
   isStockTreatment,
   MAX_STOCK_LINES
 } from '@/lib/consultation-values';
 
-const iso = (value: { toDate?: () => Date } | string | null | undefined) =>
-  typeof value === 'string' ? value : value?.toDate?.().toISOString() ?? '';
-
-function treatmentFromData(value: DocumentData): TreatmentLine | null {
-  if (!value || typeof value.itemCode !== 'string' || !value.itemCode) return null;
-  return {
-    id: typeof value.id === 'string' ? value.id : value.itemCode,
-    itemCode: value.itemCode,
-    itemName: typeof value.itemName === 'string' ? value.itemName : '',
-    category: ['Medicine', 'Supplies', 'Service', 'Grooming'].includes(value.category) ? value.category : 'Supplies',
-    quantity: Number.isFinite(value.quantity) ? value.quantity : 0,
-    unitPrice: Number.isFinite(value.unitPrice) ? value.unitPrice : 0,
-    dose: typeof value.dose === 'string' ? value.dose : '',
-    notes: typeof value.notes === 'string' ? value.notes : ''
-  };
-}
-
-export function consultationFromDocument(id: string, data: DocumentData): Consultation {
-  return {
-    ...data,
-    id,
-    date: typeof data.date === 'string' ? data.date : '',
-    client: typeof data.client === 'string' ? data.client : '',
-    patient: typeof data.patient === 'string' ? data.patient : '',
-    type: typeof data.type === 'string' ? data.type : 'Consultation',
-    status: data.status === 'Draft' ? 'Draft' : 'Completed',
-    notes: typeof data.notes === 'string' ? data.notes : '',
-    patientId: typeof data.patientId === 'string' ? data.patientId : undefined,
-    appointmentId: typeof data.appointmentId === 'string' ? data.appointmentId : null,
-    occurredAt: iso(data.occurredAt) || undefined,
-    recordedAt: iso(data.recordedAt) || undefined,
-    staffUid: typeof data.staffUid === 'string' ? data.staffUid : undefined,
-    staffName: typeof data.staffName === 'string' ? data.staffName : undefined,
-    treatments: Array.isArray(data.treatments)
-      ? data.treatments.map(treatmentFromData).filter((line): line is TreatmentLine => line !== null)
-      : undefined
-  } as Consultation;
-}
-
 /**
  * Records one completed treatment visit and, in the same audited transaction,
  * decrements stock for medicine/supply lines. Clinical content is never created
- * automatically; the caller must be an online owner or editor.
+ * automatically; the caller must have an online clinic session.
  */
 export async function saveConsultation(input: {
   clinicId: string;
@@ -122,6 +83,7 @@ export async function saveConsultation(input: {
     throw new Error(`Apply at most ${MAX_STOCK_LINES} stock items per treatment record.`);
   }
 
+  const occurredAt = fs.Timestamp.fromDate(new Date(input.draft.occurredAt));
   const data = {
     date: new Date(input.draft.occurredAt).toLocaleDateString(),
     client: typeof patient.data().ownerName === 'string' ? patient.data().ownerName : '',
@@ -131,7 +93,8 @@ export async function saveConsultation(input: {
     notes: input.draft.notes,
     patientId: input.draft.patientId,
     appointmentId: input.draft.appointmentId || null,
-    occurredAt: fs.Timestamp.fromDate(new Date(input.draft.occurredAt)),
+    occurredAt,
+    historySortAt: occurredAt,
     recordedAt: fs.serverTimestamp(),
     staffUid: uid,
     staffName: input.draft.staffName.trim(),
@@ -171,6 +134,7 @@ export async function saveConsultation(input: {
     id: consultationResult.id,
     revision: consultationResult.revision,
     occurredAt: new Date(input.draft.occurredAt).toISOString(),
+    historySortAt: new Date(input.draft.occurredAt).toISOString(),
     recordedAt: new Date().toISOString(),
     appointmentId: data.appointmentId,
     treatments

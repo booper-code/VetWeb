@@ -38,10 +38,11 @@ Do not put tokens in shell arguments, repository files, or chat.
 npm run backup:images -- /private/location/clinic-export.json /private/location/NEW-image-backup --apply
 ```
 
-The output directory must not already exist. The tool creates it with mode 0700
-and files with mode 0600. Run as your own user on a private filesystem. These
-permissions are not encryption: use encrypted, access-controlled storage and a
-reviewed retention policy for real records.
+The output directory must not already exist. On POSIX systems, the tool
+requests mode 0700 for the directory and 0600 for files. On Windows, Node.js
+does not apply these POSIX permissions; choose a parent folder whose inherited
+ACLs restrict access to authorized users. Use encrypted, access-controlled
+storage and a reviewed retention policy for real records.
 
 Downloads are sequential, bounded to 5 MB each, and restricted to signed URLs on
 the configured Worker origin. Redirects are rejected. Tokens and signed URLs
@@ -60,9 +61,10 @@ npm run test:backup
 Verification checks every manifest entry's clinic, filename, size and hash.
 This detects missing or modified bytes but does not authenticate a manifest
 against malicious alteration. Keep the whole backup in trusted private storage.
-`npm run test:backup` runs the backup and restore suites; 9/9 tests currently
-pass. Those are unit-test results; live evidence is limited to single-object
-rehearsals (see below), not a multi-object restore.
+`npm run test:backup` runs the local backup and restore suites. On Windows,
+the suite checks linked-directory rejection with a junction and skips the
+file-symlink check if Windows denies permission to create the fixture. Live
+evidence is limited to single-object rehearsals (see below).
 
 ## Restore rehearsal
 

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
 import { build } from 'esbuild';
+import { generateKeyPairSync } from 'node:crypto';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword } from 'firebase/auth';
 import * as fs from 'firebase/firestore';
@@ -83,19 +84,19 @@ test('clinical writes require atomic immutable audits and reject stale revisions
     await denied(() => fs.updateDoc(event.ref, { action: 'delete' }));
     await denied(() => fs.deleteDoc(event.ref));
     await denied(() => fs.updateDoc(ref(owner, 'patients', 'legacy'), { revision: 2 }));
-    selectClient('viewer');
+    selectClient('outsider');
     await denied(() => mutateClinicalRecord({
-      clinicId, collection: 'patients', id: 'viewer-write', expectedRevision: null,
+      clinicId, collection: 'patients', id: 'outsider-write', expectedRevision: null,
       action: 'save', data: { name: 'Denied' }
     }));
-    await denied(() => fs.getDocs(fs.collection(clients.viewer.db, 'clinics', clinicId, 'auditEvents')));
+    assert.equal((await fs.getDocs(fs.collection(clients.viewer.db, 'clinics', clinicId, 'auditEvents'))).size, 1);
     selectClient('editor');
     saved = await mutateClinicalRecord({
       clinicId, collection: 'inventory', id: 'item', expectedRevision: null,
       action: 'save', data: { itemCode: 'item', stock: 10 }
     });
     assert.equal(saved.revision, 1);
-    await denied(() => fs.getDocs(fs.collection(clients.editor.db, 'clinics', clinicId, 'auditEvents')));
+    assert.equal((await fs.getDocs(fs.collection(clients.editor.db, 'clinics', clinicId, 'auditEvents'))).size, 2);
     selectClient('owner');
     const concurrent = await Promise.allSettled(['First editor', 'Second editor'].map(name => mutateClinicalRecord({
       clinicId, collection: 'patients', id: 'legacy', expectedRevision: 1,
@@ -272,10 +273,10 @@ test('clinical writes require atomic immutable audits and reject stale revisions
       assert.equal((await fs.getDoc(ref(owner, 'auditHeads', 'inventory_dated-item'))).data().seq, 4);
       await save('item', 1, { itemCode: 'item', stock: 8 });
       assert.equal((await fs.getDoc(ref(editor, 'inventory', 'item'))).data().stock, 8);
-      for (const role of ['viewer', 'outsider']) {
-        selectClient(role);
-        await denied(() => save(`${role}-expiry`, null, { ...data, expiryDate: '2028-02-29' }));
-      }
+      selectClient('viewer');
+      await save('legacy-member-expiry', null, { ...data, expiryDate: '2028-02-29' });
+      selectClient('outsider');
+      await denied(() => save('outsider-expiry', null, { ...data, expiryDate: '2028-02-29' }));
     });
 
     await t.test('assistant gateway reads only authorized names and tracks only audited CSV creates', async () => {
@@ -298,7 +299,7 @@ test('clinical writes require atomic immutable audits and reject stale revisions
       assert.equal((await fs.getDocFromServer(receipt)).data()?.batchId, batchId);
       await denied(() => fs.updateDoc(receipt, { batchId: '10000000-0000-4000-8000-000000000000' }));
       await denied(() => fs.deleteDoc(receipt));
-      await denied(() => fs.getDocs(fs.collection(clients.editor.db, 'clinics', clinicId, 'inventoryImportReceipts')));
+      assert.equal((await fs.getDocs(fs.collection(clients.editor.db, 'clinics', clinicId, 'inventoryImportReceipts'))).size, 1);
       await assert.rejects(mutateClinicalRecord({ clinicId, collection: 'inventory', id: 'tracked-csv', expectedRevision: null,
         data: { itemCode: 'tracked-csv', stock: 17 }, action: 'save', inventoryImportBatchId: batchId }), { name: 'ClinicalConflictError' });
       for (const id of ['person-milo', 'person-luna']) {
@@ -338,10 +339,70 @@ test('clinical writes require atomic immutable audits and reject stale revisions
       assert.equal(result.count, 1);
       assert.equal(result.recent.length, 1);
       assert.equal(result.recent[0].batchId, batchId);
-      assert.equal((await call('viewer', 'inventory_import_history', range)).status, 403);
+      assert.equal((await call('viewer', 'inventory_import_history', range)).status, 200);
+      assert.equal((await call('outsider', 'inventory_import_history', range)).status, 403);
       await fs.updateDoc(clinicDoc, { aiEnabled: false });
       assert.equal((await call('viewer', 'find_person_by_name', { name: 'Alex Reyes' })).status, 403);
       assert.equal((await call('owner', 'inventory_import_history', range)).status, 403);
+    });
+    await t.test('consultation readiness fences missing keys and preserves existing sort values', async () => {
+      const marker = 'consultationHistory';
+      await denied(() => fs.setDoc(ref(owner, 'workspaceConfig', marker), { state: 'ready' }));
+      const response = await fetch(`http://${host}/v1/projects/${projectId}/databases/(default)/documents:commit`, {
+        method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ writes: [{ update: {
+          name: `projects/${projectId}/databases/(default)/documents/clinics/${clinicId}/workspaceConfig/${marker}`,
+          fields: { state: { stringValue: 'preparing' } }
+        } }] })
+      });
+      assert.equal(response.status, 200);
+      const member = selectClient('viewer');
+      assert.equal((await fs.getDocFromServer(ref(member, 'workspaceConfig', marker))).data().state, 'preparing');
+      await denied(() => fs.getDocFromServer(ref(clients.outsider, 'workspaceConfig', marker)));
+      const create = { clinicId, collection: 'consultations', id: 'chronology', expectedRevision: null, action: 'save' };
+      await denied(() => mutateClinicalRecord({ ...create, data: { ...legacyConsultation, status: 'Draft' } }));
+      await denied(() => mutateClinicalRecord({ ...create, data: { ...legacyConsultation, status: 'Draft', historySortAt: null } }));
+      const seeded = await fetch(`http://${host}/v1/projects/${projectId}/databases/(default)/documents:commit`, {
+        method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ writes: [{ update: {
+          name: `projects/${projectId}/databases/(default)/documents/clinics/${clinicId}/consultations/chronology`,
+          fields: { ...Object.fromEntries(Object.entries({ ...legacyConsultation, id: 'chronology', status: 'Draft' })
+            .map(([key, value]) => [key, { stringValue: value }])), historySortAt: { nullValue: null } }
+        } }] })
+      });
+      assert.equal(seeded.status, 200);
+      await denied(() => mutateClinicalRecord({ ...create, expectedRevision: 0, data: {
+        ...legacyConsultation, status: 'Completed', historySortAt: fs.Timestamp.fromMillis(0)
+      } }));
+      await denied(() => mutateClinicalRecord({ ...create, expectedRevision: 0, data: {
+        ...legacyConsultation, status: 'Completed', historySortAt: null, occurredAt: fs.Timestamp.fromMillis(0)
+      } }));
+      await mutateClinicalRecord({ ...create, expectedRevision: 0, consultationStatusOnly: true, data: { status: 'Completed' } });
+      const row = (await fs.getDocFromServer(ref(member, 'consultations', 'chronology'))).data();
+      assert.equal(row.historySortAt, null);
+      assert.equal(row.date, legacyConsultation.date);
+      assert.equal(row.status, 'Completed');
+    });
+    await t.test('a checkpoint captured from Firestore detects a privileged fixture deletion', async () => {
+      const { captureAuditSnapshot, createAuditCheckpoint, verifyAuditCheckpoint } = await import('../scripts/audit-checkpoint.mjs');
+      const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+      const target = { host, projectId, clinicId };
+      await assert.rejects(captureAuditSnapshot({ ...target, host: 'example.invalid:8080' }), /loopback/i);
+      const before = await captureAuditSnapshot(target);
+      assert.ok(before.collections.auditEvents.length > 10);
+      const checkpoint = createAuditCheckpoint(before, privateKey);
+      const intact = await captureAuditSnapshot(target);
+      assert.equal(verifyAuditCheckpoint(checkpoint, intact, publicKey).ok, true);
+      const id = before.collections.auditEvents[0].id;
+      const root = `projects/${projectId}/databases/(default)/documents`;
+      const removed = await fetch(`http://${host}/v1/${root}/clinics/${clinicId}/auditEvents/${id}`, {
+        method: 'DELETE', headers: { Authorization: 'Bearer owner' }, signal: AbortSignal.timeout(10_000)
+      });
+      assert.equal(removed.status, 200);
+      const result = verifyAuditCheckpoint(checkpoint, await captureAuditSnapshot(target), publicKey);
+      assert.equal(result.ok, false);
+      assert.equal(result.missing, 1);
+      assert.equal(result.changed, 0);
     });
   } finally {
     delete globalThis.__auditHandles;

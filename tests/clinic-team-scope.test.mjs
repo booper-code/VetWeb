@@ -1,39 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { React, act, deferred, loadSource, domHarness } from './helpers/tsx-harness.mjs';
+import { React, act, loadSource, domHarness } from './helpers/tsx-harness.mjs';
 
-for (const unmount of [false, true]) {
-  test(`real Team transfer ${unmount ? 'after unmount' : 'while mounted'} updates the scoped parent role`, async () => {
+for (const role of ['owner', 'member']) {
+  test(`team access controls are scoped to the Owner (${role} session)`, async () => {
     const dom = domHarness();
-    const transfer = deferred();
-    const roles = [], toasts = [], requests = [];
+    const requests = [];
     const { ClinicTeamView } = loadSource('../../components/ClinicTeamView.tsx', {
       react: React,
       'lucide-react': new Proxy({}, { get: () => () => null }),
       '@/lib/clinics': {
         listClinicMembers: async () => [
           { uid: 'owner', email: 'owner@example.com', role: 'owner' },
-          { uid: 'editor', email: 'editor@example.com', role: 'editor' },
+          { uid: 'member', email: 'member@example.com', role: 'member' },
         ],
         listClinicInvitations: async () => [],
-        transferClinicOwnership: (...args) => { requests.push(args); return transfer.promise; },
+        removeClinicMember: async (...args) => { requests.push(args); },
       },
     }, { window: dom.window });
     dom.window.confirm = () => true;
     try {
       await act(async () => dom.root.render(React.createElement(ClinicTeamView, {
-        clinicId: 'synthetic', clinicName: 'Synthetic', role: 'owner',
-        user: { uid: 'owner' }, onOwnershipTransferred: role => roles.push(role),
-        triggerToast: message => toasts.push(message),
+        clinicId: 'synthetic', clinicName: 'Synthetic', role,
+        user: { uid: role }, triggerToast: () => {},
       })));
-      const button = [...dom.window.document.querySelectorAll('button')].find(button => button.textContent.includes('Make owner'));
-      assert.ok(button);
-      await act(async () => button.click());
-      assert.equal(requests.length, 1, 'must reach the mocked transfer, never a live clinic');
-      if (unmount) await act(() => dom.root.render(null));
-      await act(async () => { transfer.resolve(); await transfer.promise; });
-      assert.deepEqual(roles, ['editor']);
-      assert.equal(toasts.length, unmount ? 0 : 1);
+      const buttons = [...dom.window.document.querySelectorAll('button')];
+      assert.equal(buttons.some(button => /make owner/i.test(button.textContent)), false);
+      assert.equal(buttons.some(button => /create invite/i.test(button.textContent)), role === 'owner');
+      const remove = buttons.find(button => /remove/i.test(button.textContent));
+      assert.equal(Boolean(remove), role === 'owner');
+      if (remove) await act(async () => remove.click());
+      assert.deepEqual(requests, role === 'owner' ? [['synthetic', 'member']] : []);
     } finally { await dom.close(); }
   });
 }

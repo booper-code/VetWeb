@@ -33,12 +33,38 @@ export function consultationOccurredAt(consultation: Consultation): string {
   return '';
 }
 
-/** New records use the precise event time; legacy rows fall back to their display date. */
-export function consultationTime(consultation: Consultation): number {
-  const precise = Date.parse(consultation.occurredAt || '');
+export function legacyConsultationSortDate(value: string): Date | null {
+  const text = value.trim();
+  const calendarDate = (year: number, month: number, day: number): Date | null => {
+    if (year < 1000 || year > 9999) return null;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1
+      && date.getUTCDate() === day ? date : null;
+  };
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (iso) return calendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  const numeric = /^(\d{1,2})([/. -])(\d{1,2})\2(\d{4})$/.exec(text);
+  if (!numeric) return null;
+  const first = Number(numeric[1]), second = Number(numeric[3]), year = Number(numeric[4]);
+  const monthFirst = calendarDate(year, first, second);
+  const dayFirst = calendarDate(year, second, first);
+  if (monthFirst && dayFirst && first !== second) return null;
+  return monthFirst ?? dayFirst;
+}
+
+/** Explicitly unknown legacy dates remain unknown after the backfill. */
+export function consultationTime(consultation: Consultation): number | null {
+  if (consultation.historySortAt === null) return null;
+  const precise = Date.parse(consultation.historySortAt ?? consultation.occurredAt ?? '');
   if (Number.isFinite(precise)) return precise;
-  const legacy = Date.parse(consultation.date || '');
-  return Number.isFinite(legacy) ? legacy : 0;
+  return legacyConsultationSortDate(consultation.date || '')?.getTime() ?? null;
+}
+
+export function compareConsultationHistory(a: Consultation, b: Consultation): number {
+  const first = consultationTime(a) ?? -Infinity;
+  const second = consultationTime(b) ?? -Infinity;
+  if (first !== second) return second - first;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
 export function consultationMatchesPatient(consultation: Consultation, patient: PatientRecord): boolean {

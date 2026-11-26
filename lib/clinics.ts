@@ -2,11 +2,11 @@ import type {
   ClinicInvitation,
   ClinicMember,
   ClinicMembership,
-  ClinicRole,
   ClinicSessionUser
 } from '@/types';
 import type { DocumentData, Firestore, Transaction } from 'firebase/firestore';
 import { initializeFirebase } from '@/lib/firebase';
+import { normalizeClinicRole } from '@/lib/clinic-role';
 import { refreshInvitationVerification } from '@/lib/invitation-verification';
 
 type FirestoreModule = typeof import('firebase/firestore');
@@ -26,11 +26,11 @@ const getHandles = async (): Promise<FirebaseHandles> => {
   return { db, fs };
 };
 
-const membershipFromData = (clinicId: string, data: DocumentData): ClinicMembership => ({
-  clinicId,
-  clinicName: typeof data.clinicName === 'string' ? data.clinicName : 'Untitled clinic',
-  role: data.role as ClinicRole
-});
+const membershipFromData = (clinicId: string, data: DocumentData): ClinicMembership | null => {
+  const role = normalizeClinicRole(data.role);
+  if (!role) return null;
+  return { clinicId, clinicName: typeof data.clinicName === 'string' ? data.clinicName : 'Untitled clinic', role };
+};
 
 export const listUserClinics = async (uid: string): Promise<ClinicMembership[]> => {
   const { db, fs } = await getHandles();
@@ -41,6 +41,7 @@ export const listUserClinics = async (uid: string): Promise<ClinicMembership[]> 
   const resolved = await Promise.all(
     memberships.docs.map(async snapshot => {
       const membership = membershipFromData(snapshot.id, snapshot.data());
+      if (!membership) return null;
       try {
         const clinic = await fs.getDoc(fs.doc(db, 'clinics', snapshot.id));
         const liveName = clinic.exists() ? clinic.data().name : null;
@@ -53,7 +54,7 @@ export const listUserClinics = async (uid: string): Promise<ClinicMembership[]> 
   );
 
   return resolved
-    .filter((membership: ClinicMembership) => ['owner', 'editor', 'viewer'].includes(membership.role))
+    .filter((membership): membership is ClinicMembership => membership !== null)
     .sort((a: ClinicMembership, b: ClinicMembership) => a.clinicName.localeCompare(b.clinicName));
 };
 
@@ -91,12 +92,13 @@ export const createClinic = async (
     role: 'owner',
     joinedAt: createdAt
   });
+  batch.set(fs.doc(db, 'clinics', clinicRef.id, 'workspaceConfig', 'consultationHistory'), { state: 'ready' });
   await batch.commit();
 
   return { clinicId: clinicRef.id, clinicName, role: 'owner' };
 };
 
-/** Renames a clinic. Only owners are allowed by the published rules. */
+/** Renames a clinic. */
 export const renameClinic = async (clinicId: string, name: string): Promise<string> => {
   requireConnection();
   const clinicName = name.trim();
@@ -108,14 +110,14 @@ export const renameClinic = async (clinicId: string, name: string): Promise<stri
   return clinicName;
 };
 
-/** Owners control whether AI features are shown to members of this clinic. */
+/** Controls whether AI features are shown to members of this clinic. */
 export const setClinicAIEnabled = async (clinicId: string, enabled: boolean): Promise<void> => {
   requireConnection();
   const { db, fs } = await getHandles();
   await fs.updateDoc(fs.doc(db, 'clinics', clinicId), { aiEnabled: enabled });
 };
 
-/** A reversible owner-only storage safeguard; existing images stay readable. */
+/** A reversible storage safeguard; existing images stay readable. */
 export const setClinicImageUploadsEnabled = async (clinicId: string, enabled: boolean): Promise<void> => {
   requireConnection();
   const { db, fs } = await getHandles();
@@ -148,12 +150,11 @@ export const subscribeClinicAI = async (
 export const listClinicMembers = async (clinicId: string): Promise<ClinicMember[]> => {
   const { db, fs } = await getHandles();
   const snapshot = await fs.getDocs(fs.collection(db, 'clinics', clinicId, 'members'));
-  return snapshot.docs.map(member => ({
-    uid: member.id,
-    email: member.data().email ?? '',
-    displayName: member.data().displayName ?? '',
-    role: member.data().role as ClinicRole
-  }));
+  return snapshot.docs.flatMap(member => {
+    const { email, displayName, role: storedRole } = member.data();
+    const role = normalizeClinicRole(storedRole);
+    return role ? [{ uid: member.id, email: email ?? '', displayName: displayName ?? '', role }] : [];
+  });
 };
 
 export const listClinicInvitations = async (clinicId: string): Promise<ClinicInvitation[]> => {
@@ -168,19 +169,16 @@ export const createClinicInvitation = async ({
   clinicId,
   clinicName,
   email,
-  role,
   user
 }: {
   clinicId: string;
   clinicName: string;
   email: string;
-  role: Exclude<ClinicRole, 'owner'>;
   user: ClinicSessionUser;
 }): Promise<ClinicInvitation> => {
   requireConnection();
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) throw new Error('Enter the invitee’s email address.');
-  if (!['editor', 'viewer'].includes(role)) throw new Error('Choose editor or viewer access.');
 
   const { db, fs } = await getHandles();
   const invitationRef = fs.doc(fs.collection(db, 'clinics', clinicId, 'invitations'));
@@ -189,7 +187,7 @@ export const createClinicInvitation = async ({
     clinicId,
     clinicName,
     email: normalizedEmail,
-    role,
+    role: 'member' as const,
     status: 'pending' as const,
     createdBy: user.uid,
     createdByEmail: user.email,
@@ -240,7 +238,10 @@ export const acceptClinicInvitation = async (
     if (existingIndex.exists()) throw new Error('You already have access to this clinic.');
 
     const clinicName = invitation.clinicName;
-    const role = invitation.role as Exclude<ClinicRole, 'owner'>;
+    if (invitation.role !== 'member' && invitation.role !== 'editor') {
+      throw new Error('Ask the clinic owner to issue a new Member invitation.');
+    }
+    const role = 'member' as const;
     const joinedAt = fs.serverTimestamp();
     transaction.set(memberRef, {
       uid: user.uid,
@@ -267,29 +268,7 @@ export const acceptClinicInvitation = async (
   });
 };
 
-/** Changes an editor/viewer role and keeps the member's clinic index in sync. */
-export const changeClinicMemberRole = async (
-  clinicId: string,
-  memberUid: string,
-  role: Exclude<ClinicRole, 'owner'>
-): Promise<void> => {
-  if (!['editor', 'viewer'].includes(role)) throw new Error('Choose editor or viewer access.');
-
-  const { db, fs } = await getHandles();
-  const memberRef = fs.doc(db, 'clinics', clinicId, 'members', memberUid);
-  const indexRef = fs.doc(db, 'users', memberUid, 'clinics', clinicId);
-
-  await fs.runTransaction(db, async transaction => {
-    const member = await transaction.get(memberRef);
-    if (!member.exists()) throw new Error('That member no longer has access to this clinic.');
-    if (member.data().role === 'owner') throw new Error('Transfer ownership before changing the owner’s role.');
-
-    transaction.update(memberRef, { role });
-    transaction.update(indexRef, { role });
-  });
-};
-
-/** Removes a member and their clinic index. The owner must be transferred first. */
+/** Removes a non-owner member and their clinic index. */
 export const removeClinicMember = async (clinicId: string, memberUid: string): Promise<void> => {
   requireConnection();
   const { db, fs } = await getHandles();
@@ -299,43 +278,10 @@ export const removeClinicMember = async (clinicId: string, memberUid: string): P
   await fs.runTransaction(db, async transaction => {
     const member = await transaction.get(memberRef);
     if (!member.exists()) return;
-    if (member.data().role === 'owner') throw new Error('The clinic owner cannot be removed. Transfer ownership first.');
+    if (member.data().role === 'owner') throw new Error('The clinic owner cannot be removed.');
 
     transaction.delete(memberRef);
     transaction.delete(indexRef);
-  });
-};
-
-/** Atomically moves ownership: clinic.ownerId, both member docs, both indexes. */
-export const transferClinicOwnership = async (
-  clinicId: string,
-  fromUid: string,
-  toUid: string
-): Promise<void> => {
-  if (fromUid === toUid) throw new Error('Choose a different member.');
-
-  const { db, fs } = await getHandles();
-  const clinicRef = fs.doc(db, 'clinics', clinicId);
-  const fromMemberRef = fs.doc(db, 'clinics', clinicId, 'members', fromUid);
-  const toMemberRef = fs.doc(db, 'clinics', clinicId, 'members', toUid);
-  const fromIndexRef = fs.doc(db, 'users', fromUid, 'clinics', clinicId);
-  const toIndexRef = fs.doc(db, 'users', toUid, 'clinics', clinicId);
-
-  await fs.runTransaction(db, async transaction => {
-    const clinic = await transaction.get(clinicRef);
-    const fromMember = await transaction.get(fromMemberRef);
-    const toMember = await transaction.get(toMemberRef);
-
-    if (!clinic.exists()) throw new Error('This clinic no longer exists.');
-    if (clinic.data().ownerId !== fromUid) throw new Error('Only the current owner can transfer ownership.');
-    if (!fromMember.exists()) throw new Error('Your owner membership record is missing.');
-    if (!toMember.exists()) throw new Error('Choose an existing clinic member.');
-
-    transaction.update(clinicRef, { ownerId: toUid });
-    transaction.update(fromMemberRef, { role: 'editor' });
-    transaction.update(toMemberRef, { role: 'owner' });
-    transaction.update(fromIndexRef, { role: 'editor' });
-    transaction.update(toIndexRef, { role: 'owner' });
   });
 };
 

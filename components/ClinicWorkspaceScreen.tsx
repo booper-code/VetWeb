@@ -185,9 +185,11 @@ export const ClinicWorkspaceScreen = ({
                       <p className="text-xs font-black uppercase tracking-wider text-brand-text-strong">Clinic invitation</p>
                       <h2 className="text-lg font-black text-content-title mt-1">{invitation.clinicName}</h2>
                       <p className="mt-1 wrap-anywhere text-sm text-content-secondary">
-                        Invited as <strong className="capitalize">{invitation.role}</strong> using {invitation.email}.
+                        {invitation.role === 'viewer'
+                          ? 'This read-only invitation has been retired. Ask the clinic owner for a new Member link.'
+                          : <>Invited as a <strong>Member</strong> using {invitation.email}.</>}
                       </p>
-                      <button
+                      {invitation.role !== 'viewer' && <button
                         type="button"
                         onClick={handleAcceptInvitation}
                         disabled={isWorking || invitation.status !== 'pending'}
@@ -195,7 +197,7 @@ export const ClinicWorkspaceScreen = ({
                       >
                         {isWorking ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                         Accept invitation
-                      </button>
+                      </button>}
                     </div>
                   </div>
                 </section>

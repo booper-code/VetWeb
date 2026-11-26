@@ -55,7 +55,7 @@ export async function loadDailyBriefing(request: DailyBriefingRequest): Promise<
 
   try {
     guard();
-    if (role !== 'owner' && role !== 'editor' && role !== 'viewer') return denied();
+    if (role !== 'owner' && role !== 'member') return denied();
     // Role and the clinic AI gate are verified from fresh server documents
     // before any collection read.
     const before = await readAssistantRole(clinicId, uid);
