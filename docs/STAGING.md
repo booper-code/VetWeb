@@ -17,7 +17,7 @@ unless an explicit, reviewed automation setup requires it.
 
 ## Isolated Firebase preview
 
-For Checkout and End-of-Day Close testing, use the separate `vetcloudpro-staging-6f819b` project, not the shared site above. It has a registered **VetCloudPro Staging Web** app, email/password Auth, and Firestore in Singapore. Set `NEXT_PUBLIC_FIREBASE_STAGING_CONFIG` to the app's JSON web SDK configuration before building with `npm run build:staging`. Get it by app ID with the Firebase CLI and explicitly select the staging project. Do not use a service account key as web configuration.
+For hosted tests, use the separate `vetcloudpro-staging-6f819b` project. It has a registered **VetCloudPro Staging Web** app, email/password Auth, and Firestore in Singapore. Set `NEXT_PUBLIC_FIREBASE_STAGING_CONFIG` to the app's JSON web SDK configuration before building with `npm run build:staging`. Get it by app ID with the Firebase CLI and explicitly select the staging project. Do not use a service account key as web configuration.
 
 An explicit staging build rejects incomplete or mixed production settings at sign-in and disables the shared image Worker. The default build is unchanged. Use fictional data only, and use a separate hosting target if publishing the isolated preview.
 
@@ -73,19 +73,19 @@ the CSV or relax the rules to work around a version mismatch.
    isolated project has the rules from the same revision as the app, and
    the selected clinic is fictional and empty. Do not test the release on a
    real clinic.
-3. In **Clinic setup → Import Inventory CSV**, try the sample as Viewer first:
-   nothing should save. Then sign in as Owner and import it: expect 24 rows
-   and a create audit for each. Sign out and back in, then import again:
-   expect no new items and no additional audit records.
+3. As Owner, use **Clinic setup → Import Inventory CSV** and expect 24 rows
+   and a create audit for each. Sign out and back in, confirm Inventory has
+   loaded, then import again: expect no new items or audit records. Keep
+   permission-denial checks in the emulator. Members also have inventory access.
 4. Treat a shared rollout as a separate approval. Use the coordinated
    app/rules rollout below and have staff reload. Publishing new rules
    alone can block older app clients from saving.
 
-Rehearsal on 2026-11-20: a localhost static build imported all 24 rows as a
-fictional Owner into the isolated cloud database. A separate server read
-confirmed 24 inventory records and 24 matching create audit events. The
-cloud browser retry after a fresh sign-in did not complete; the Viewer and
-duplicate checks passed in the emulator. No website or rules were published.
+Hosted rehearsal on 2026-11-27 (`preview-4515345`): a fictional Owner imported
+all 24 rows. A separate server read confirmed 24 inventory records and 24
+matching create audit events. Re-importing after logout and sign-in left
+inventory and audit records unchanged. The fictional clinic and account were
+removed. This check covers a CSV with explicit item codes.
 
 ## Build and deploy
 
@@ -124,25 +124,47 @@ The image Worker allows this exact staging origin. Firebase's authorized domains
 also include its hostname for verification-email continue URLs. Existing domains
 were preserved; do not use wildcards or replace the domain list on future edits.
 
-## Verification recorded
+## Release verification — 2026-11-27
 
-- Owner/viewer login through real forms in isolated Chromium contexts.
-- Owner AI toggle propagates to the viewer; the viewer control is disabled.
-- Viewer R2 images render after reload and re-login.
-- Demo login and AI toggle work with external HTTPS blocked and no Firebase/R2
-  requests.
-- Unverified invitee reads and atomic acceptance are denied by deployed rules.
-- The verification UI preserves the invitation URL and refreshes token claims.
-  With a controlled **synthetic-only administrator verification update**, the
-  real staging acceptance flow succeeds. This does **not** test mailbox delivery.
-- Headers checked: `nosniff`, `no-referrer`, frame denial and no-index.
-- At 390px, the login layout, labelled navigation toggle and demo settings
-  switch passed a mobile Chromium smoke check.
+The [GitHub verification run](https://github.com/booper-code/VetWeb/actions/runs/45821157736)
+passed for `4515345`. GitHub runs credential-free tests and builds; hosted
+checks use disposable records in the isolated Firebase project.
 
-Live test scripts and account state were kept private outside the repository.
-`.github/workflows/verify.yml` adds credential-free unit/emulator/build checks,
-not live tests or deployments. It has not been run on GitHub; the current
-workspace has no Git metadata, so these changes have not been pushed from here.
+The [admission and follow-up preview](https://vetcloudpro-staging-6f819b--preview-admission-followup-cv77dept.web.app)
+expires December 27, 2026. It contains the local validation and Manila
+rollover patches on top of `4515345`. The deployed admission chunk matched
+the isolated build byte for byte. Hosted checks confirmed the admission
+errors clear when the inputs are corrected and an open queue picks up the
+newly due visit on focus after a simulated Manila date change.
+
+On `preview-4515345`, independent Chromium sessions verified Owner and Member
+onboarding, live patient directory and dossier updates, and a Member
+consultation arriving in the Owner's dossier and appearing in clinic history
+and Clinical audit. A fictional charge and cash payment updated a second
+session's balance without refresh and produced a PDF receipt. Staff, pay rate,
+and payroll period changes appeared under the correct actor in Clinical audit.
+Inventory creation, a new scheduled appointment, and follow-up contact
+also reached the Owner's already-open views after Member saves. Recording
+contact kept the visit scheduled.
+
+On both preview channels, a Member recorded a fictional PHP 400 advance
+against PHP 2,500 base pay and posted the calculated PHP 2,100 payout. The
+Owner saw both ledger entries; the stored actor, amounts and chain matched.
+On those deployed builds, the period still offered **Record payout** after
+the full amount was recorded. Only one payout was posted in each test.
+
+An initially unverified invitee received the Firebase email in a private
+disposable [Mail.tm](https://mail.tm/) inbox, completed verification, returned
+to the exact invitation, and joined as a Member on both preview channels.
+The fictional Firebase clinics and accounts were removed after each run.
+
+The original preview login rendered without horizontal overflow at 375 px and sent
+the `noindex`, `nosniff`, frame denial, referrer and permissions headers.
+
+See [Testing](TESTING.md) for the emulator backfill and audit-checkpoint
+rehearsals. Separate browser sessions do not establish physical-device
+or real-outage behavior. Shared staging and production were not part of
+this release check.
 
 ## Feature development versus production
 

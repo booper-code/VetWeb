@@ -99,6 +99,7 @@ export const PatientRecordsView = ({
   const [weight, setWeight] = useState<number | string>('');
   const [reason, setReason] = useState('');
   const [selectedAdmissions, setSelectedAdmissions] = useState<string[]>(['Medical Checkup']);
+  const [admissionAttempted, setAdmissionAttempted] = useState(false);
   
   const [newPatientImage, setNewPatientImage] = useState<PendingImage | null>(null);
   const [showFullReport, setShowFullReport] = useState(() =>
@@ -233,40 +234,32 @@ export const PatientRecordsView = ({
     }
   };
 
-const handleAdmitPatient = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (isSavingPatient || pendingImages) return;
-
   const trimmedName = name.trim();
   const trimmedBreed = breed.trim();
   const trimmedOwnerName = ownerName.trim();
   const cleanedContact = sanitizePhoneNumber(ownerContact);
   const weightNumber = Number(weight);
+  const breedError = trimmedBreed ? '' : 'Enter the breed.';
+  const weightError = weight === '' ? 'Enter the weight.' :
+    weightNumber < 0.1 || weightNumber > 200 || Number(weightNumber.toFixed(1)) !== weightNumber
+      ? 'Enter a weight from 0.1 to 200 kg, with at most one decimal place.' : '';
+  const admissionErrors = [
+    !trimmedName ? 'Enter the patient name.' :
+      !isValidName(trimmedName) ? 'Patient name should contain letters only and be at least 2 characters.' : '',
+    breedError,
+    weightError,
+    !trimmedOwnerName ? 'Enter the guardian name.' :
+      !isValidName(trimmedOwnerName) ? 'Owner name should contain letters only and be at least 2 characters.' : '',
+    !cleanedContact ? 'Enter the phone number.' :
+      !isValidPhoneNumber(cleanedContact) ? 'Owner contact number must contain 10 to 15 digits only.' : '',
+    selectedAdmissions.length === 0 ? 'Select at least one admission purpose.' : '',
+  ].filter(Boolean);
 
-  if (!trimmedName || !trimmedBreed || !trimmedOwnerName || !cleanedContact || !weight || selectedAdmissions.length === 0) {
-    triggerToast("Please complete all required patient admission fields.");
-    return;
-  }
-
-  if (!isValidName(trimmedName)) {
-    triggerToast("Patient name should contain letters only and be at least 2 characters.");
-    return;
-  }
-
-  if (!isValidName(trimmedOwnerName)) {
-    triggerToast("Owner name should contain letters only and be at least 2 characters.");
-    return;
-  }
-
-  if (!isValidPhoneNumber(cleanedContact)) {
-    triggerToast("Owner contact number must contain 10 to 15 digits only.");
-    return;
-  }
-
-  if (!weightNumber || weightNumber <= 0 || weightNumber > 200) {
-    triggerToast("Weight must be a valid number between 0.1 and 200 kg.");
-    return;
-  }
+const handleAdmitPatient = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (isSavingPatient || pendingImages) return;
+  setAdmissionAttempted(true);
+  if (admissionErrors.length > 0) return;
 
   setIsSavingPatient(true);
   try {
@@ -309,6 +302,7 @@ const handleAdmitPatient = async (e: React.FormEvent) => {
   setWeight('');
   setReason('');
   setSelectedAdmissions(['Medical Checkup']);
+  setAdmissionAttempted(false);
   setNewPatientImage(null);
   } finally {
     setIsSavingPatient(false);
@@ -394,7 +388,7 @@ const visiblePatients =
             Add Patient
           </h3>
 
-          <form onSubmit={handleAdmitPatient} className="space-y-4">
+          <form onSubmit={handleAdmitPatient} noValidate className="space-y-4">
             <fieldset disabled={!canEdit || isSavingPatient} className="contents">
             <div>
               <label className="text-xs font-bold text-content-copy block mb-1">
@@ -428,11 +422,14 @@ const visiblePatients =
               </div>
 
               <div>
-                <label className="text-xs font-bold text-content-copy block mb-1">
-                  Breed
+                <label htmlFor="admission-breed" className="text-xs font-bold text-content-copy block mb-1">
+                  Breed *
                 </label>
                 <input
+                  id="admission-breed"
                   type="text"
+                  required
+                  aria-invalid={admissionAttempted && Boolean(breedError)}
                   className="w-full p-2.5 bg-field-subtle border border-field-outline rounded-xl text-xs text-content-title outline-none"
                   placeholder="e.g. Aspin"
                   value={breed}
@@ -443,11 +440,14 @@ const visiblePatients =
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-bold text-content-copy block mb-1">
-                  Weight (kg)
+                <label htmlFor="admission-weight" className="text-xs font-bold text-content-copy block mb-1">
+                  Weight (kg) *
                 </label>
                 <input
+                  id="admission-weight"
                   type="number"
+                  required
+                  aria-invalid={admissionAttempted && Boolean(weightError)}
                   step="0.1"
                   min="0.1"
                   max="200"
@@ -593,6 +593,14 @@ const visiblePatients =
               />
             </div>
 
+            {admissionAttempted && admissionErrors.length > 0 && (
+              <div role="alert" className="rounded-xl border border-danger-stroke bg-danger-wash p-3 text-sm text-danger-text">
+                <p className="font-bold">Check the admission details:</p>
+                <ul className="list-disc pl-5">
+                  {admissionErrors.map(message => <li key={message}>{message}</li>)}
+                </ul>
+              </div>
+            )}
             <button
               type="submit"
               disabled={isSavingPatient || pendingImages > 0}

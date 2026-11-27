@@ -21,13 +21,13 @@ const [hostname, port] = host.split(':');
 fs.connectFirestoreEmulator(db, hostname, Number(port));
 const liteDb = fsLite.getFirestore(app);
 fsLite.connectFirestoreEmulator(liteDb, hostname, Number(port));
-globalThis.__pagingHandles = { app, db, firestore: fs };
+globalThis.__pagingHandles = { app, auth, db, firestore: fs };
 const url = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 let source = await readFile(new URL('../lib/clinic-pages.ts', import.meta.url), 'utf8');
 source = source.replace('@/lib/firebase', url('export const initializeFirebase = async () => globalThis.__pagingHandles;'));
 source = source.replace('firebase/firestore/lite', import.meta.resolve('firebase/firestore/lite'));
 source = source.replace('@/lib/stock-alert-values', new URL('../lib/stock-alert-values.ts', import.meta.url).href);
-const { loadClinicPage, loadClinicScanPage, loadInventoryCatalogCount, appendUnique, CLINIC_PAGE_SIZE } = await import(url(ts.transpileModule(source, {
+const { loadClinicPage, loadClinicScanPage, loadInventoryCatalogCount, subscribeClinicConsultations, appendUnique, CLINIC_PAGE_SIZE } = await import(url(ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
 }).outputText));
 
@@ -141,6 +141,28 @@ test('real Firestore cursors bound pages, preserve legacy history and isolate cl
       assert.deepEqual((await readFields('precise')).historySortAt, { timestampValue: '2024-03-01T12:34:56.123456Z' });
       assert.equal((await readFields('SOAP-0000')).notes.stringValue, 'Concurrent edit');
       assert.equal((await backfillConsultationHistory({ ...options, apply: true })).needsWrite, 0);
+
+      // Exercise the same bounded, server-confirmed read as Consultation history.
+      const expectedIds = [
+        ...Array.from({ length: 60 }, (_, index) => `SOAP-${String(index).padStart(4, '0')}`),
+        ...fixture.map(([id]) => id)
+      ].sort();
+      const ready = Promise.withResolvers();
+      const timeout = setTimeout(() => ready.reject(new Error('No confirmed chronological history')), 8000);
+      let unsubscribe;
+      try {
+        unsubscribe = await subscribeClinicConsultations(clinicId, user.uid, 65, false, page => {
+          if (page.chronological) ready.resolve(page);
+        }, ready.reject, ready.reject);
+        const page = await ready.promise;
+        assert.equal(page.hasMore, false);
+        const ids = page.records.map(row => row.id);
+        assert.deepEqual(ids.slice(0, 2), ['precise', 'dated']);
+        assert.deepEqual(ids.toSorted(), expectedIds, 'chronological query preserves every legacy visit');
+      } finally {
+        clearTimeout(timeout);
+        unsubscribe?.();
+      }
     });
 
     await t.test('clinic-wide patient scans read past active pages and stop at the real end', async () => {

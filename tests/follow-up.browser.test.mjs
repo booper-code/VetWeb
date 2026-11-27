@@ -35,7 +35,7 @@ test('exported demo records follow-up contact without completing or sending a vi
     const page = await context.newPage();
     page.setDefaultTimeout(8000);
     page.on('pageerror', error => errors.push(error.message));
-    await page.clock.setFixedTime(new Date('2026-11-19T17:00:00Z')); // Manila Nov 20, Los Angeles Nov 19.
+    await page.clock.install({ time: new Date('2026-11-19T17:00:00Z') }); // Manila Nov 20, Los Angeles Nov 19.
     await page.goto(origin);
     await page.getByPlaceholder('you@example.com').fill('admin@binanvet.com');
     await page.getByPlaceholder('Enter your password').fill('admin123');
@@ -49,12 +49,16 @@ test('exported demo records follow-up contact without completing or sending a vi
     }
     await button(page, 'Follow-up queue').waitFor();
     await go('Appointments');
-    for (const [id, status] of [['PAT-00101', 'scheduled'], ['PAT-00102', 'no-show']]) {
+    for (const [id, status, date] of [
+      ['PAT-00101', 'scheduled', '2026-11-19T06:00'],
+      ['PAT-00102', 'no-show', '2026-11-19T06:00'],
+      ['PAT-00102', 'scheduled', '2026-11-21T06:00'],
+    ]) {
       await button(page, 'New appointment').click();
       const form = page.getByRole('form', { name: 'Appointment details' });
       await form.getByRole('combobox', { name: 'Patient', exact: true }).selectOption(id);
       await form.getByRole('combobox', { name: 'Type', exact: true }).selectOption('Follow-up');
-      await form.getByLabel('Scheduled date & time').fill('2026-11-19T06:00');
+      await form.getByLabel('Scheduled date & time').fill(date);
       await form.getByRole('combobox', { name: 'Appointment status' }).selectOption(status);
       page.once('dialog', dialog => dialog.accept());
       await button(form, 'Review & save appointment').click();
@@ -63,7 +67,7 @@ test('exported demo records follow-up contact without completing or sending a vi
     await go('Overview');
     await button(page, 'Follow-up queue').click();
     await page.getByRole('heading', { name: 'Follow-up queue', exact: true }).waitFor();
-    await page.getByText('As of 2026-11-20 Manila', { exact: false }).waitFor();
+    await page.getByText('Through 2026-11-20 Manila', { exact: false }).waitFor();
     const row = page.getByRole('listitem').filter({ hasText: 'Dobby' });
     await row.getByText('Overdue', { exact: true }).waitFor();
     assert.equal(await page.getByRole('listitem').filter({ hasText: 'Max' }).count(), 0);
@@ -77,6 +81,17 @@ test('exported demo records follow-up contact without completing or sending a vi
     await row.getByText(/Contact recorded/).waitFor();
     await button(row, 'Undo contact').click();
     await row.getByText('Needs contact', { exact: true }).waitFor();
+
+    const tomorrow = page.getByRole('listitem').filter({ hasText: 'Max' });
+    const midnight = Date.parse('2026-11-20T16:00:00Z');
+    await page.clock.fastForward(midnight - await page.evaluate(() => Date.now()) + 1000);
+    await page.getByText('Through 2026-11-21 Manila', { exact: false }).waitFor();
+    await tomorrow.getByText('Due today', { exact: true }).waitFor();
+
+    await page.clock.setSystemTime(new Date('2026-11-21T17:00:00Z'));
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.getByText('Through 2026-11-22 Manila', { exact: false }).waitFor();
+    await tomorrow.getByText('Overdue', { exact: true }).waitFor();
     assert.equal(await page.locator('main').evaluate(main => [document.documentElement, main].every(el => el.scrollWidth <= el.clientWidth + 1)), true);
     assert.deepEqual(unexpected, []);
     assert.deepEqual(errors, []);

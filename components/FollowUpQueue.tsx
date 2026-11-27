@@ -19,6 +19,7 @@ type Props = {
 };
 const initialPage = () => ({ rows: [] as Appointment[], next: null as FollowUpCursor, endMs: 0, loaded: false, loading: true });
 const clinicTime = (ms: number) => `${billingLocalTime(ms).replace('T', ' ')} Manila`;
+const syncError = 'Could not keep the follow-up queue in sync. Refresh to retry.';
 
 export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBack, isCurrent, canEdit, online }: Props) {
   const [page, setPage] = useState(initialPage);
@@ -27,19 +28,21 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
   const [opening, setOpening] = useState(false);
   const [watch, setWatch] = useState(() => ({ size: FOLLOW_UP_PAGE_SIZE, endMs: followUpDayEndMs(Date.now()) }));
   const [accessDenied, setAccessDenied] = useState(false);
-  const generation = useRef(0);
+  const queue = useRef<HTMLDivElement>(null);
+  const loadVersion = useRef(0);
+  const contactVersion = useRef(0);
   const loading = useRef(false);
   const contactBusy = useRef(false);
   const openVersion = useRef(0);
   const loadPage = useCallback(async (after: FollowUpCursor, endMs: number) => {
     if (!isCurrent() || !online || loading.current || contactBusy.current) return;
-    const version = ++generation.current;
+    const version = ++loadVersion.current;
     loading.current = true;
     setError('');
     setPage(previous => ({ ...(after === null ? initialPage() : previous), endMs, loading: true }));
     try {
       const result = await load(after, endMs);
-      if (generation.current !== version || !isCurrent()) return;
+      if (loadVersion.current !== version || !isCurrent()) return;
       setPage(previous => {
         const combined = after === null ? result.rows : [...previous.rows, ...result.rows];
         const rows = new Map<string, Appointment>();
@@ -50,14 +53,44 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
         return { rows: [...rows.values()], next: result.next, loaded: true, endMs, loading: false };
       });
     } catch {
-      if (generation.current === version && isCurrent()) {
+      if (loadVersion.current === version && isCurrent()) {
         setError('Could not load the follow-up queue. Check your connection and refresh.');
         setPage(previous => ({ ...previous, loading: false }));
       }
     } finally {
-      if (generation.current === version) loading.current = false;
+      if (loadVersion.current === version) loading.current = false;
     }
   }, [isCurrent, load, online]);
+
+  useEffect(() => () => {
+    contactVersion.current += 1;
+    openVersion.current += 1;
+  }, [isCurrent]);
+
+  useEffect(() => {
+    const doc = queue.current?.ownerDocument;
+    const view = doc?.defaultView;
+    if (!online || accessDenied || !doc || !view) return;
+    let timer: number;
+    const updateCutoff = () => {
+      view.clearTimeout(timer);
+      const now = Date.now();
+      const endMs = followUpDayEndMs(now);
+      setWatch(previous => previous.endMs === endMs ? previous : { ...previous, endMs });
+      timer = view.setTimeout(updateCutoff, endMs - now);
+    };
+    const checkWhenVisible = () => {
+      if (doc.visibilityState === 'visible') updateCutoff();
+    };
+    updateCutoff();
+    view.addEventListener('focus', updateCutoff);
+    doc.addEventListener('visibilitychange', checkWhenVisible);
+    return () => {
+      view.clearTimeout(timer);
+      view.removeEventListener('focus', updateCutoff);
+      doc.removeEventListener('visibilitychange', checkWhenVisible);
+    };
+  }, [accessDenied, online]);
 
   useEffect(() => {
     if (subscribe) return;
@@ -65,14 +98,20 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
     void Promise.resolve().then(() => { if (active) void loadPage(null, followUpDayEndMs(Date.now())); });
     return () => {
       active = false;
-      generation.current += 1;
-      openVersion.current += 1;
+      loadVersion.current += 1;
       loading.current = false;
     };
   }, [loadPage, subscribe]);
 
   useEffect(() => {
-    if (!subscribe || !online) return;
+    if (subscribe || !online || saving || page.loading || !page.endMs || page.endMs === watch.endMs) return;
+    let active = true;
+    void Promise.resolve().then(() => { if (active) void loadPage(null, watch.endMs); });
+    return () => { active = false; };
+  }, [loadPage, online, page.endMs, page.loading, saving, subscribe, watch.endMs]);
+
+  useEffect(() => {
+    if (!subscribe || !online || accessDenied) return;
     let active = true;
     let release: (() => void) | undefined;
     let failed = false;
@@ -81,13 +120,13 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
       if (!current()) return;
       failed = true;
       loading.current = false;
-      setError('Could not keep the follow-up queue in sync. Refresh to retry.');
+      setError(syncError);
       setPage(previous => ({ ...previous, loading: false }));
     };
     const deny = () => {
       if (!current()) return;
       failed = true;
-      generation.current += 1;
+      contactVersion.current += 1;
       openVersion.current += 1;
       loading.current = false;
       setSaving('');
@@ -98,6 +137,7 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
     void subscribe(watch.size, watch.endMs, result => {
       if (!current() || failed) return;
       loading.current = false;
+      setError(previous => previous === syncError ? '' : previous);
       setPage({ ...result, endMs: watch.endMs, loaded: true, loading: false });
     }, fail, deny).then(unsubscribe => {
       if (current()) release = unsubscribe;
@@ -105,11 +145,9 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
     }).catch(fail);
     return () => {
       active = false;
-      generation.current += 1;
-      openVersion.current += 1;
       release?.();
     };
-  }, [isCurrent, online, subscribe, watch]);
+  }, [accessDenied, isCurrent, online, subscribe, watch]);
 
   const requestPage = (more: boolean) => {
     if (!subscribe) {
@@ -131,21 +169,21 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
     contactBusy.current = true;
     setSaving(row.id);
     setError('');
-    const version = generation.current;
+    const version = contactVersion.current;
     try {
       const updated = await onContact(row, contacted);
-      if (generation.current !== version || !isCurrent()) return;
+      if (contactVersion.current !== version || !isCurrent()) return;
       setPage(previous => ({ ...previous, rows: previous.rows.flatMap(existing => existing.id !== updated.id ? [existing]
         : existing.revision > updated.revision ? [existing]
           : isDueFollowUp(updated, previous.endMs - 1) ? [updated] : []) }));
     } catch (reason) {
-      if (generation.current === version && isCurrent()) {
+      if (contactVersion.current === version && isCurrent()) {
         const message = reason instanceof Error ? reason.message : 'Could not confirm contact.';
         setError(/refresh/i.test(message) ? message : `${message} Refresh before trying again.`);
       }
     } finally {
       contactBusy.current = false;
-      if (generation.current === version && isCurrent()) setSaving('');
+      if (contactVersion.current === version && isCurrent()) setSaving('');
     }
   };
 
@@ -159,7 +197,7 @@ export function FollowUpQueue({ load, subscribe, onContact, onOpenPatient, onBac
     finally { if (stillOpen()) setOpening(false); }
   };
 
-  return <div className="min-w-0 space-y-4">
+  return <div ref={queue} className="min-w-0 space-y-4">
     <div className="vc-page-heading">
       <div>
         <p className="vc-kicker">Clinic operations</p>

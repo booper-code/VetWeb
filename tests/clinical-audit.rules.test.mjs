@@ -383,7 +383,7 @@ test('clinical writes require atomic immutable audits and reject stale revisions
       assert.equal(row.date, legacyConsultation.date);
       assert.equal(row.status, 'Completed');
     });
-    await t.test('a checkpoint captured from Firestore detects a privileged fixture deletion', async () => {
+    await t.test('a checkpoint captured from Firestore detects privileged alteration and deletion', async () => {
       const { captureAuditSnapshot, createAuditCheckpoint, verifyAuditCheckpoint } = await import('../scripts/audit-checkpoint.mjs');
       const { privateKey, publicKey } = generateKeyPairSync('ed25519');
       const target = { host, projectId, clinicId };
@@ -393,16 +393,29 @@ test('clinical writes require atomic immutable audits and reject stale revisions
       const checkpoint = createAuditCheckpoint(before, privateKey);
       const intact = await captureAuditSnapshot(target);
       assert.equal(verifyAuditCheckpoint(checkpoint, intact, publicKey).ok, true);
-      const id = before.collections.auditEvents[0].id;
+      const [removed, changed] = before.collections.auditEvents;
       const root = `projects/${projectId}/databases/(default)/documents`;
-      const removed = await fetch(`http://${host}/v1/${root}/clinics/${clinicId}/auditEvents/${id}`, {
-        method: 'DELETE', headers: { Authorization: 'Bearer owner' }, signal: AbortSignal.timeout(10_000)
+      const auditPath = `${root}/clinics/${clinicId}/auditEvents`;
+      const tampered = await fetch(`http://${host}/v1/${root}:commit`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ writes: [
+          { delete: `${auditPath}/${removed.id}` },
+          {
+            update: {
+              name: `${auditPath}/${changed.id}`,
+              fields: { actorUid: { stringValue: 'fixture-privileged-rewrite' } }
+            },
+            updateMask: { fieldPaths: ['actorUid'] }
+          }
+        ] })
       });
-      assert.equal(removed.status, 200);
+      assert.equal(tampered.status, 200);
       const result = verifyAuditCheckpoint(checkpoint, await captureAuditSnapshot(target), publicKey);
       assert.equal(result.ok, false);
       assert.equal(result.missing, 1);
-      assert.equal(result.changed, 0);
+      assert.equal(result.changed, 1);
     });
   } finally {
     delete globalThis.__auditHandles;
