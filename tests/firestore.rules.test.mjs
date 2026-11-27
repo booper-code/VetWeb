@@ -71,7 +71,7 @@ const clinicalUrl = await loadClientModule('../lib/clinical-mutations.ts', {
   '@/lib/firebase': handlesUrl
 });
 const { mutateClinicalRecord, mutateClinicalRecords } = await import(clinicalUrl);
-const { saveStaffMember, createPayrollPeriod, closePayrollPeriod } = await import(await loadClientModule('../lib/payroll.ts', {
+const { saveStaffMember, createPayrollPeriod, closePayrollPeriod, confirmPayrollPayoutLimit, appendPayrollEntry } = await import(await loadClientModule('../lib/payroll.ts', {
   '@/lib/firebase': handlesUrl,
   '@/lib/clinical-mutations': clinicalUrl
 }));
@@ -663,10 +663,65 @@ try {
   );
   pass('owner updates ledger head');
 
+  const payoutPeriod = await createPayrollPeriod(clinicId, '2026-11-16', '2026-11-22', payrollActor);
+  const payoutLimit = doc(db, 'clinics', clinicId, 'payrollPeriods', payoutPeriod.id, 'payoutLimits', staff.id);
+  const ledgerHead = doc(db, 'clinics', clinicId, 'payrollMeta', 'ledger');
+  const payoutData = (amount, seq) => ({
+    seq, type: 'payout', direction: 'out', staffId: staff.id, staffName: staff.name,
+    amount, periodId: payoutPeriod.id, note: '', createdBy: auth.currentUser.uid,
+    prevHash: hash64, hash: hash64, createdAt: serverTimestamp()
+  });
+  const pay = (entry, amount, seq, paidMinor) => {
+    const batch = writeBatch(db);
+    batch.set(entry, payoutData(amount, seq));
+    batch.set(ledgerHead, { seq, hash: hash64, updatedAt: serverTimestamp() });
+    if (paidMinor !== undefined) batch.update(payoutLimit, { paidMinor, lastEntryId: entry.id });
+    return batch.commit();
+  };
+  const payoutEntry = id => doc(db, 'clinics', clinicId, 'payrollLedger', id);
+  await denied('an old app cannot post a payout without updating a confirmed limit', () =>
+    pay(payoutEntry('old-client-payment'), 1000, 2));
+  await assert.rejects(confirmPayrollPayoutLimit(clinicId, payoutPeriod.id, staff.id, {
+    approvedMinor: 333333, paidMinor: 0, unassignedPaidMinor: 0
+  }, payrollActor), /payroll changed/i);
+  await assert.rejects(confirmPayrollPayoutLimit(clinicId, payoutPeriod.id, staff.id, {
+    approvedMinor: 283333, paidMinor: 100, unassignedPaidMinor: 100
+  }, payrollActor), /older unassigned payouts/i);
+  await confirmPayrollPayoutLimit(clinicId, payoutPeriod.id, staff.id, {
+    approvedMinor: 283333, paidMinor: 0, unassignedPaidMinor: 0
+  }, payrollActor);
+  assert.equal((await getDoc(payoutLimit)).data().confirmedBy, editor.uid);
+  await denied('an old app cannot bypass an existing payout limit', () =>
+    pay(payoutEntry('old-client-confirmed-payment'), 1000, 2));
+  await denied('a confirmed payout limit cannot be raised', () => updateDoc(payoutLimit, { approvedMinor: 200000 }));
+  await denied('a limit cannot be changed outside its ledger write', () => updateDoc(payoutLimit, { paidMinor: 100 }));
+  await pay(payoutEntry('first-split-payment'), 600.29, 2, 60029);
+  assert.equal((await getDoc(payoutLimit)).data().paidMinor, 60029);
+  await denied('an over-limit split payout and its balance change are rejected atomically', () =>
+    pay(payoutEntry('over-limit-payment'), 2233.05, 3, 283334));
+  await denied('a payout cannot use an understated balance change', () =>
+    pay(payoutEntry('understated-payment'), 2233.05, 3, 283333));
+  await denied('the same payout cannot be counted again', () =>
+    updateDoc(payoutLimit, { paidMinor: 70029, lastEntryId: 'first-split-payment' }));
+  await assert.rejects(closePayrollPeriod(clinicId, payoutPeriod.id, payoutPeriod.revision, payrollActor), /finish confirmed payouts/i);
+  await denied('a period with a confirmed unpaid balance cannot close even with an audit event', () => mutateClinicalRecord({
+    clinicId, collection: 'payrollPeriods', id: payoutPeriod.id, expectedRevision: payoutPeriod.revision,
+    expectedUid: editor.uid, action: 'save', data: { status: 'closed', closedAt: serverTimestamp() }
+  }));
+  await appendPayrollEntry({
+    clinicId, actor: payrollActor, type: 'payout', direction: 'out', staff, amount: 2233.04, periodId: payoutPeriod.id
+  });
+  await closePayrollPeriod(clinicId, payoutPeriod.id, payoutPeriod.revision, payrollActor);
+  await assert.rejects(appendPayrollEntry({
+    clinicId, actor: payrollActor, type: 'payout', direction: 'out', staff, amount: 1, periodId: payoutPeriod.id
+  }), /period is closed/i);
+  assert.equal((await getDoc(payoutLimit)).data().paidMinor, 283333);
+
   // Both roles can read payroll.
   await signOut(auth);
   await signInWithEmailAndPassword(auth, emails.owner, password);
-  assert.equal((await getDocs(collection(db, 'clinics', clinicId, 'payrollPeriods'))).size, 1);
+  assert.equal((await getDocs(collection(db, 'clinics', clinicId, 'payrollPeriods'))).size, 2);
+  assert.equal((await getDoc(payoutLimit)).data().approvedMinor, 283333);
   assert.equal((await getDoc(profileRef)).data().rate, 14000);
   await denied('Owner cannot delete payroll audit events', () => deleteDoc(payrollEvents[0].ref));
 

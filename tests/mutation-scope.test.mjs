@@ -11,13 +11,14 @@ const consultation = { id: 'shared-id', status: 'Draft', patient: 'Synthetic A' 
 
 async function mountApp({ readPatient = async () => ({ exists: () => false }),
   init = async () => ({ auth: {}, db: {}, firestore: { doc: (_, ...path) => path, getDoc: readPatient } }),
-  restore, trusted = false, billingCommit, billingRecords, appointmentRows = [], appointmentSave = async () => true,
+  restore, trusted = false, billingCommit, billingAcknowledge, billingRecords, appointmentRows = [], appointmentSave = async () => true,
   assistantEnabled, inventorySeed, consultationSave, publishPatients } = {}) {
   const dom = domHarness();
   const props = {};
   const pending = deferred();
   const signout = deferred();
   const calls = [];
+  const acknowledgements = [];
   let deviceListener, watchRole;
   let membership = 'owner';
   const scopes = loadSource('../../lib/mutation-scope.ts');
@@ -52,7 +53,12 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
     ...(consultationSave && { '@/lib/consultation-values': { consultationValidationError: () => null } }),
     '@/lib/billing': {
       commitBilling: input => { calls.push(input); return billingCommit ? billingCommit(input) : pending.promise; },
+      acknowledgeBillingPayment: (operation, actor) => {
+        acknowledgements.push({ operation, actor });
+        return billingAcknowledge ? billingAcknowledge(operation, actor) : Promise.resolve();
+      },
       loadBillingRecords: billingRecords,
+      loadUnconfirmedPayment: async () => null,
     },
     '@/lib/offline-device': {
       getDevicePreference: () => trusted ? 'trusted' : 'memory',
@@ -100,7 +106,7 @@ async function mountApp({ readPatient = async () => ({ exists: () => false }),
     props.ClinicWorkspaceScreen.onSelectClinic({ clinicId, clinicName: clinicId, role });
   });
   await select('clinic-a');
-  return { ...dom, props, pending, signout, calls, select,
+  return { ...dom, props, pending, signout, calls, acknowledgements, select,
     wipe: () => deviceListener('wipe'),
     changeMembership: async (role, publish = true) => act(() => {
       membership = role;
@@ -136,17 +142,43 @@ test('uncertain checkout blocks a replacement and survives a clinic switch', asy
     let gateway = app.props.PatientRecordsView.billingGateway;
     await act(async () => { await assert.rejects(() => gateway.submit('original', draft, patient.id, 0), /Lost receipt/); });
     await act(() => app.props.Sidebar.onSwitchClinic()); await app.select('clinic-b'); await app.tab('patients');
-    assert.equal(app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
+    assert.equal(await app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
     await act(() => app.props.Sidebar.onSwitchClinic()); await app.select('clinic-a'); await app.tab('patients');
     gateway = app.props.PatientRecordsView.billingGateway;
-    const unresolved = gateway.pending(patient.id);
+    const unresolved = await gateway.pending(patient.id);
     assert.equal(unresolved.operationId, 'original');
     await assert.rejects(() => gateway.submit('replacement', draft, patient.id, 0), /unconfirmed/i);
     assert.equal(sends, 1);
     await act(async () => { await gateway.submit(unresolved.operationId, unresolved.draft, patient.id, unresolved.expectedPatientRevision); });
     assert.equal(sends, 2);
-    assert.equal(app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
+    assert.equal(await app.props.PatientRecordsView.billingGateway.pending(patient.id), null);
   } finally { await app.close(); }
+});
+
+test('payment acknowledgement follows acceptance with the original operation and current scope', async () => {
+  const saved = deferred();
+  const app = await mountApp({ billingCommit: () => saved.promise });
+  try {
+    await app.tab('patients');
+    const draft = { kind: 'payment', amountMinor: 500, method: 'cash', occurredAtMs: 1795000000000 };
+    const gateway = app.props.PatientRecordsView.billingGateway;
+    let committed;
+    await act(async () => { committed = gateway.submit('original', draft, patient.id, 0); });
+    assert.deepEqual(app.acknowledgements, [], 'an uncertain result must not be acknowledged');
+    await act(async () => {
+      saved.resolve(completionResult('commitBilling'));
+      await committed;
+    });
+    assert.equal(app.acknowledgements.length, 1);
+    const { operation, actor } = app.acknowledgements[0];
+    assert.equal(operation.operationId, 'original');
+    assert.equal(operation.clinicId, 'clinic-a');
+    assert.equal(operation.patientId, patient.id);
+    assert.deepEqual(operation.draft, draft);
+    assert.equal(operation.expectedPatientRevision, 0);
+    assert.equal(actor.uid, 'owner');
+    assert.equal(typeof actor.assertWorkspace, 'function');
+  } finally { app.signout.resolve(); await app.close(); }
 });
 
 test('a delayed treatment result cannot overwrite newer confirmed stock', async () => {

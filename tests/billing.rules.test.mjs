@@ -37,7 +37,7 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
     '@/lib/firebase': handles, '@/lib/clinical-mutations': mutationUrl, '@/lib/billing-values': valuesUrl,
     '@/lib/billing-reconciliation': await compile('billing-reconciliation.ts'),
   });
-  const { commitBilling, loadBillingHistory, loadPaymentReceipt } = await import(serviceUrl);
+  const { acknowledgeBillingPayment, commitBilling, loadBillingHistory, loadPaymentReceipt, loadUnconfirmedPayment } = await import(serviceUrl);
   const { mutateClinicalRecord } = await import(mutationUrl);
   const clinicId = `billing-${Date.now()}`;
   const localTime = Math.floor(Date.now() / 60000) * 60000;
@@ -51,9 +51,14 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
   const denied = operation => assert.rejects(operation, error => error.code === 'permission-denied');
   const get = async (collection, id) => (await fs.getDoc(ref(collection, id))).data();
   const payment = { kind: 'payment', amountMinor: 50000, method: 'cash', occurredAtMs: localTime - 60000 };
-  const apply = (patientId, operationId, expectedPatientRevision, draft) => commitBilling({
+  const operation = (patientId, operationId, expectedPatientRevision, draft) => ({
     clinicId, patientId, operationId, expectedPatientRevision, draft,
   });
+  const apply = (patientId, operationId, expectedPatientRevision, draft) => commitBilling(operation(patientId, operationId, expectedPatientRevision, draft));
+  const actor = () => ({ uid: globalThis.__billingHandles.auth.currentUser.uid, assertWorkspace: () => {} });
+  // The UI acknowledges a posted payment only after accepting its result.
+  const settle = (patientId, operationId, expectedPatientRevision, draft, who = actor()) =>
+    acknowledgeBillingPayment(operation(patientId, operationId, expectedPatientRevision, draft), who);
   const verify = { kind: 'opening', verifiedMinor: 120000, source: 'Paper ledger', reason: 'Duplicate balance entry', cutoffMs };
 
   try {
@@ -93,6 +98,7 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
         seed('patients', 'untouched', { id: { stringValue: 'untouched' }, name: { stringValue: 'Fixture' }, balance: { doubleValue: 4.5 } }),
         seed('patients', 'zero', { id: { stringValue: 'zero' }, name: { stringValue: 'Fixture' }, balance: { integerValue: '0' } }),
         seed('patients', 'missing', { id: { stringValue: 'missing' }, name: { stringValue: 'Fixture' } }),
+        seed('patients', 'recovery', { id: { stringValue: 'recovery' }, name: { stringValue: 'Recovery fixture' }, balance: { integerValue: '1500' } }),
       ] }),
     });
     assert.equal(seeded.status, 200);
@@ -105,6 +111,9 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
     await assert.rejects(() => apply('legacy', 'exact-cutoff', opened.patientRevision, { ...payment, occurredAtMs: cutoffMs }));
     const first = await apply('legacy', 'first-payment', opened.patientRevision, payment);
     assert.equal(first.state.balanceMinor, 70000);
+    assert.deepEqual(await loadUnconfirmedPayment(clinicId, 'legacy', actor()), operation('legacy', 'first-payment', opened.patientRevision, payment));
+    await settle('legacy', 'first-payment', opened.patientRevision, payment);
+    assert.equal(await loadUnconfirmedPayment(clinicId, 'legacy', actor()), null);
     const receipt = await loadPaymentReceipt({ clinicId, patientId: 'legacy', entryId: first.entry.id });
     assert.equal(receipt.patientName, 'Dobby');
     assert.equal(receipt.clinicName, 'Billing Fixture');
@@ -114,6 +123,7 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
 
     await t.test('same reviewed payment replays after the next ledger commit', async () => {
       const other = await apply('legacy', 'second-payment', first.patientRevision, { ...payment, amountMinor: 10000 });
+      await settle('legacy', 'second-payment', first.patientRevision, { ...payment, amountMinor: 10000 });
       const patient = await get('patients', 'legacy');
       const profile = await mutateClinicalRecord({
         clinicId, collection: 'patients', id: 'legacy', expectedRevision: other.patientRevision,
@@ -124,6 +134,7 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
       assert.equal(replay.state.balanceMinor, 60000);
       assert.equal(replay.patientRevision, profile.revision);
       assert.equal(replay.records.patient.notes, 'Committed after the payment');
+      await settle('legacy', 'first-payment', opened.patientRevision, payment); // repeat acknowledgement is a no-op
       const history = await loadBillingHistory({ clinicId, patientId: 'legacy' });
       assert.deepEqual(history.entries.map(entry => entry.id), ['second-payment', 'first-payment', 'opening-legacy']);
       await assert.rejects(() => apply('legacy', 'first-payment', opened.patientRevision, { ...payment, amountMinor: 1 }));
@@ -131,10 +142,54 @@ test('billing commits and rules protect money, stock, receipt and clinic boundar
 
     await t.test('only one competing reviewed payment can apply at the same revision', async () => {
       const revision = (await get('patients', 'legacy')).revision;
-      const outcomes = await Promise.allSettled(['concurrent-A', 'concurrent-B'].map(id =>
-        apply('legacy', id, revision, { ...payment, amountMinor: 10000 })));
+      const attempts = ['concurrent-A', 'concurrent-B'].map(id => ({ id, draft: { ...payment, amountMinor: 10000 } }));
+      const outcomes = await Promise.allSettled(attempts.map(({ id, draft }) => apply('legacy', id, revision, draft)));
       assert.equal(outcomes.filter(x => x.status === 'fulfilled').length, 1);
+      const winner = attempts[outcomes.findIndex(x => x.status === 'fulfilled')];
+      await settle('legacy', winner.id, revision, winner.draft);
       assert.equal((await get('patients', 'legacy')).billing.balanceMinor, 50000);
+    });
+
+    await t.test('a posted payment recovery record is private, atomic, and blocks a replacement', async () => {
+      const patientId = 'recovery';
+      const opened = await apply(patientId, 'opening-recovery', 0, verify);
+      const draft = { ...payment, reference: '  trace ' };
+      const editor = select('editor');
+      const payerUid = editor.auth.currentUser.uid;
+      const marker = (client, clinic = clinicId) =>
+        fs.doc(client.db, 'clinics', clinic, 'billingPaymentRecovery', payerUid, 'patients', patientId);
+      const operationId = 'lost-payment';
+      const expectedPatientRevision = opened.patientRevision;
+      await denied(() => fs.setDoc(marker(editor), { operationId, expectedPatientRevision, draft }));
+      globalThis.__billingHandles.firestore = { ...fs, async getDocFromServer(ref) {
+        const snapshot = await fs.getDocFromServer(ref);
+        if (ref.id === operationId) throw new Error('Lost payment response');
+        return snapshot;
+      } };
+      try {
+        await assert.rejects(() => apply(patientId, operationId, expectedPatientRevision, draft), /Lost payment response/);
+      } finally {
+        select('editor');
+      }
+      const actor = { uid: payerUid, assertWorkspace: () => {} };
+      const recover = () => loadUnconfirmedPayment(clinicId, patientId, actor);
+      assert.deepEqual(await recover(), { clinicId, patientId, operationId, expectedPatientRevision, draft });
+      await denied(() => fs.getDocFromServer(marker(owner)));
+      await denied(() => fs.deleteDoc(marker(owner)));
+      await denied(() => fs.getDocFromServer(marker(editor, `${clinicId}-foreign`)));
+      const patient = await get('patients', patientId);
+      await assert.rejects(() => apply(patientId, 'replacement-payment', patient.revision, draft), /unconfirmed payment/);
+      const pending = await recover();
+      const recovered = await commitBilling(pending, actor);
+      assert.equal(recovered.entry.id, operationId);
+      assert.equal(recovered.state.balanceMinor, 70000);
+      // A replay keeps the original marker until the current view explicitly
+      // acknowledges the accepted receipt.
+      assert.deepEqual(await recover(), pending);
+      await acknowledgeBillingPayment(pending, actor);
+      assert.equal(await recover(), null);
+      assert.deepEqual((await loadBillingHistory({ clinicId, patientId })).entries.map(entry => entry.id), [operationId, 'opening-recovery']);
+      select('owner');
     });
 
     await t.test('a payment can be reversed just once without changing stock', async () => {

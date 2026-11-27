@@ -223,6 +223,10 @@ export function PatientBilling({ patient, inventory, canEdit, billing }: {
         const itemCodes = reviewedStock(candidate.draft);
         setRefreshRequired(itemCodes);
         await reloadReviewed(itemCodes);
+      } else if (e instanceof Error && e.name === 'UnconfirmedPaymentError') {
+        inFlight.current = false;
+        dismiss();
+        setError(e.message);
       } else {
         setRetrying(true);
         setError(`${e instanceof Error ? e.message : 'The save was not confirmed.'} Retry the same review to avoid a duplicate.`);
@@ -253,7 +257,9 @@ export function PatientBilling({ patient, inventory, canEdit, billing }: {
       await billing.submit(operation);
     } catch (e) {
       if (e instanceof Error && e.name === 'ClinicalConflictError') await reloadReviewed(reviewedStock(operation.draft));
-      else if (mounted.current) setError('The outcome is still unconfirmed. Retry this same save before entering another.');
+      else if (mounted.current) setError(billing.pendingPaymentPosted
+        ? 'The payment is saved. Reconnect and finish confirmation before entering another.'
+        : 'The outcome is still unconfirmed. Retry this same save before entering another.');
     } finally {
       inFlight.current = false;
       if (mounted.current) setSaving(false);
@@ -278,11 +284,15 @@ export function PatientBilling({ patient, inventory, canEdit, billing }: {
       <strong className="text-xl text-content-title">{amountOrUnknown(balance)}</strong>
     </div>
     {canEdit && billing.pending && <div className="bg-panel-subtle rounded-xl border border-outline-soft p-3 space-y-2">
-      <p className="font-bold">Unconfirmed billing save</p>
-      <p className="text-sm">Retry the save that was already reviewed. New entries are blocked until it is resolved.</p>
+      <p className="font-bold">{billing.pendingPaymentPosted ? 'Payment saved' : 'Unconfirmed billing save'}</p>
+      <p className="text-sm">{billing.pendingPaymentPosted
+        ? 'The payment is in the billing ledger. Finish confirmation before entering another payment.'
+        : 'Retry the save that was already reviewed. New entries are blocked until it is resolved.'}</p>
       {billing.pending.draft.kind === 'payment' && <p className="text-sm">{formatBillingAmount(billing.pending.draft.amountMinor)} · {methods[billing.pending.draft.method]} · {billingLocalTime(billing.pending.draft.occurredAtMs).replace('T', ' ')} Manila</p>}
       {billing.pending.draft.kind === 'unitemized-settlement' && <p className="text-sm">{settlementLabel} · {formatBillingAmount(billing.pending.draft.amountMinor)} · {billingLocalTime(billing.pending.draft.businessDayMs).slice(0, 10)} Manila</p>}
-      <button type="button" className={primary} disabled={saving} onClick={() => void resume()}>Retry unconfirmed save</button>
+      <button type="button" className={primary} disabled={saving} onClick={() => void resume()}>
+        {billing.pendingPaymentPosted ? 'Finish payment confirmation' : 'Retry unconfirmed save'}
+      </button>
     </div>}
     {canEdit && !billing.pending && <div className="flex flex-wrap gap-2">
       {needsOpening ? <button type="button" className={primary} onClick={e => start('opening', e.currentTarget)}>Verify opening balance</button>

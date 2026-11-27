@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -61,6 +62,9 @@ const inventoryFixture = `
   createRoot(document.getElementById('root')).render(<><OfflineStatus staticShell={false} /><App /></>);
   window.fixture = {
     ready: true,
+    losePaymentResponse() { window.losePaymentResponse = true; },
+    loseAcknowledgementResponse() { window.loseAckResponse = true; window.checkoutTransactions = 0; },
+    holdPayrollSave() { window.payrollSaveGate = new Promise(resolve => { window.releasePayrollSave = resolve; }); },
     async verifyEmail(code) {
       const { auth } = await firebase.initializeFirebase();
       await applyActionCode(auth, code);
@@ -106,6 +110,35 @@ async function startFixture(contents = fixture, handleTools) {
                 return auth;
               }`,
             firestore: `const connected = new WeakSet();
+              export async function runTransaction(db, update, options) {
+                window.checkoutTransactions = (window.checkoutTransactions ?? 0) + 1;
+                const number = window.checkoutTransactions;
+                const result = await real.runTransaction(db, async tx => {
+                  const result = await update(tx);
+                  if (window.payrollSaveGate && result?.hash && result?.seq) {
+                    window.payrollSaveReady = true;
+                    await window.payrollSaveGate;
+                    window.payrollSaveGate = null;
+                  }
+                  return result;
+                }, options);
+                // The second transaction after arming is the payment
+                // acknowledgement. Lose its response only after it committed.
+                if (number === 2 && window.loseAckResponse) {
+                  window.loseAckResponse = false;
+                  Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+                  throw new Error('Connection lost after acknowledgement');
+                }
+                return result;
+              }
+              export async function getDocFromServer(ref) {
+                const snapshot = await real.getDocFromServer(ref);
+                if (window.losePaymentResponse && ref.parent.id === 'billingEntries' && snapshot.data()?.kind === 'payment') {
+                  window.losePaymentResponse = false;
+                  throw new Error('Payment response lost after commit');
+                }
+                return snapshot;
+              }
               export function getFirestore(app) {
                 const db = real.getFirestore(app);
                 if (!connected.has(db)) {
@@ -191,6 +224,311 @@ async function startFixture(contents = fixture, handleTools) {
     await browser.close(); await new Promise(resolve => server.close(resolve));
   } };
 }
+
+async function financeFixture() {
+  const id = `finance-${Date.now()}`;
+  const password = 'FinanceFixture123!';
+  const accounts = {};
+  for (const role of ['owner', 'member']) {
+    const email = `${id}-${role}@example.com`;
+    const response = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-key', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    });
+    const account = await response.json();
+    assert.equal(response.status, 200, account.error?.message);
+    accounts[role] = { uid: account.localId, email };
+  }
+  const documents = `projects/${projectId}/databases/(default)/documents`;
+  const clinics = { first: [id, 'Fictional Finance Clinic'], second: [`${id}-other`, 'Fictional Other Clinic'] };
+  const admin = { Authorization: 'Bearer owner', 'Content-Type': 'application/json' };
+  const write = (path, data) => ({
+    update: {
+      name: `${documents}/${path}`,
+      fields: Object.fromEntries(Object.entries(data).map(([key, value]) => [
+        key, typeof value === 'number' ? { integerValue: String(value) } : { stringValue: value },
+      ])),
+    },
+  });
+  const staffId = 'fictional-staff';
+  const periodId = 'fictional-period';
+  const pastStaffId = 'existing-payout-staff';
+  const firstClinic = `clinics/${id}`;
+  const periodWrite = write(`${firstClinic}/payrollPeriods/${periodId}`, {
+    status: 'open', startDate: '2026-11-23', endDate: '2026-11-27'
+  });
+  periodWrite.update.fields.createdAt = { timestampValue: '2026-11-23T00:00:00Z' };
+  const ledgerEntry = (seq, type, staff, amount, prevHash, entryPeriodId = periodId) => {
+    const staffName = staff === staffId ? 'Fictional Staff' : 'Fictional Earlier Staff';
+    const actor = accounts.member.uid;
+    const hash = createHash('sha256').update(JSON.stringify([
+      seq, type, 'out', staff, staffName, amount, entryPeriodId, '', actor, prevHash,
+    ])).digest('hex');
+    return { seq, type, direction: 'out', staffId: staff, staffName, amount,
+      periodId: entryPeriodId, note: '', createdBy: actor, prevHash, hash };
+  };
+  const advance = ledgerEntry(1, 'advance', staffId, 400, 'GENESIS');
+  const priorPayout = ledgerEntry(2, 'payout', pastStaffId, 300, advance.hash);
+  const unassignedPayout = ledgerEntry(3, 'payout', pastStaffId, 100, priorPayout.hash, '');
+  const seed = await fetch(`http://${host}/v1/${documents}:commit`, {
+    method: 'POST', headers: admin,
+    body: JSON.stringify({ writes: [
+      ...Object.values(clinics).flatMap(([clinicId, clinicName]) => [
+        write(`clinics/${clinicId}`, { name: clinicName, ownerId: accounts.owner.uid }),
+        write(`clinics/${clinicId}/patients/fictional-patient`, { name: 'Fictional Patient', balance: 1500, status: 'Waiting' }),
+        ...Object.entries(accounts).flatMap(([role, { uid, email }]) => [
+          write(`clinics/${clinicId}/members/${uid}`, { uid, email, role }),
+          write(`users/${uid}/clinics/${clinicId}`, { clinicId, clinicName, role }),
+        ]),
+      ]),
+      ...[[staffId, 'Fictional Staff'], [pastStaffId, 'Fictional Earlier Staff']].flatMap(([staff, name]) => [
+        write(`${firstClinic}/staff/${staff}`, { name, kind: 'employee', position: 'Assistant' }),
+        write(`${firstClinic}/payProfiles/${staff}`, { payBasis: 'daily', rate: 500 }),
+      ]),
+      periodWrite,
+      write(`${firstClinic}/payrollLedger/old-advance`, advance),
+      write(`${firstClinic}/payrollLedger/old-payout`, priorPayout),
+      write(`${firstClinic}/payrollLedger/unassigned-payout`, unassignedPayout),
+      write(`${firstClinic}/payrollMeta/ledger`, { seq: unassignedPayout.seq, hash: unassignedPayout.hash }),
+    ] }),
+  });
+  assert.equal(seed.status, 200, await seed.text());
+  const rows = async (collection, clinic = 'first') => {
+    const result = await fetch(`http://${host}/v1/${documents}/clinics/${clinics[clinic][0]}/${collection}`, { headers: admin });
+    assert.equal(result.status, 200);
+    return (await result.json()).documents ?? [];
+  };
+  const app = await startFixture(inventoryFixture);
+  const choose = (page, clinic) => page.getByRole('button', { name: new RegExp(clinics[clinic][1]) }).click();
+  const signIn = async (page, role, clinic = 'first') => {
+    await page.getByPlaceholder('you@example.com').fill(accounts[role].email);
+    await page.getByPlaceholder('Enter your password').fill(password);
+    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+    await choose(page, clinic);
+  };
+  return { ...app, rows, choose, signIn, staffId, pastStaffId, accounts, clinics };
+}
+
+test('a disconnect after acknowledgement keeps a posted payment confirmed and recoverable', { timeout: 120000 }, async () => {
+  const app = await financeFixture();
+  try {
+    const page = await app.open(await app.newContext());
+    const dossier = async () => {
+      await page.getByRole('button', { name: 'Patients', exact: true }).click();
+      await page.getByRole('row').filter({ hasText: 'Fictional Patient' }).click();
+      return page.getByRole('region', { name: 'Patient billing' });
+    };
+    const date = offset => new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short',
+    }).format(Date.now() - offset * 60_000).replace(' ', 'T');
+    const payments = async () => (await app.rows('billingEntries')).filter(row => row.fields.kind.stringValue === 'payment');
+    await app.signIn(page, 'member');
+    let billing = await dossier();
+    await billing.getByRole('button', { name: 'Verify opening balance' }).click();
+    const opening = page.getByRole('dialog', { name: 'Verify opening balance' });
+    await opening.getByLabel('Checked against').selectOption('Paper ledger');
+    await opening.getByLabel('Balance as of (Asia/Manila)').fill(date(120));
+    await opening.getByRole('button', { name: 'Review update' }).click();
+    await opening.getByRole('button', { name: 'Confirm PHP 1,500.00' }).click();
+    await opening.waitFor({ state: 'hidden' });
+    await billing.getByRole('button', { name: 'Record payment', exact: true }).click();
+    const payment = page.getByRole('dialog', { name: 'Record payment' });
+    await payment.getByLabel('Amount received (PHP)').fill('500');
+    await payment.getByLabel('Received at (Asia/Manila)').fill(date(60));
+    await payment.getByRole('button', { name: 'Review update' }).click();
+    await page.evaluate(() => window.fixture.loseAcknowledgementResponse());
+    await payment.getByRole('button', { name: 'Confirm payment' }).click();
+    // The result is accepted before acknowledgement; a lost acknowledgement
+    // response must not leave an uncertain checkout or duplicate the payment.
+    await payment.waitFor({ state: 'hidden' });
+    const finish = billing.getByRole('button', { name: 'Finish payment confirmation' });
+    await finish.waitFor();
+    assert.equal(await billing.getByRole('button', { name: 'Retry unconfirmed save' }).count(), 0);
+    assert.equal((await payments()).length, 1);
+    await page.evaluate(() => {
+      delete navigator.onLine;
+      window.dispatchEvent(new Event('online'));
+    });
+    await finish.waitFor({ state: 'hidden' });
+
+    await page.reload();
+    await app.signIn(page, 'member');
+    billing = await dossier();
+    await billing.getByText('PHP 1,000.00', { exact: true }).waitFor();
+    assert.equal(await billing.getByRole('button', { name: 'Retry unconfirmed save' }).count(), 0);
+    assert.equal((await payments()).length, 1);
+
+    // A separate later payment is still a legitimate new entry.
+    await billing.getByRole('button', { name: 'Record payment', exact: true }).click();
+    const later = page.getByRole('dialog', { name: 'Record payment' });
+    await later.getByLabel('Amount received (PHP)').fill('250');
+    await later.getByLabel('Received at (Asia/Manila)').fill(date(30));
+    await later.getByRole('button', { name: 'Review update' }).click();
+    await later.getByRole('button', { name: 'Confirm payment' }).click();
+    await later.waitFor({ state: 'hidden' });
+    assert.equal((await payments()).length, 2);
+    assert.equal(await billing.getByRole('button', { name: 'Retry unconfirmed save' }).count(), 0);
+  } finally { await app.close(); }
+});
+
+test('payroll enforces the same remaining balance for calculated and manual payouts', { timeout: 90000 }, async () => {
+  const app = await financeFixture();
+  try {
+    const [member, owner] = await Promise.all(['member', 'owner'].map(async role => {
+      const page = await app.open(await app.newContext());
+      await app.signIn(page, role);
+      await page.getByRole('button', { name: 'Staff & Payroll' }).click();
+      return page;
+    }));
+    const payrollRow = (page, name) => page.getByRole('table')
+      .filter({ has: page.getByRole('columnheader', { name: 'Remaining payable' }) })
+      .getByRole('row', { name: new RegExp(name) });
+    const payout = (page, name) => payrollRow(page, name).getByRole('button', { name: 'Record payout' });
+    const confirmLimit = (page, name) => payrollRow(page, name).getByRole('button', { name: 'Confirm payout limit' });
+    const prepareManual = async (page, staffId, amount) => {
+      const form = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Cash in / out' }) });
+      await form.getByLabel('Staff').selectOption(staffId);
+      await form.getByLabel('Entry type').selectOption('payout');
+      await form.getByLabel('Amount (PHP)').fill(String(amount));
+      return form.getByRole('button', { name: 'Record entry' });
+    };
+    const memberPayout = payout(member, 'Fictional Staff');
+    const ownerPayout = payout(owner, 'Fictional Staff');
+    const dialogs = [];
+    member.on('dialog', dialog => {
+      dialogs.push(dialog.message());
+      return dialog.type() === 'prompt' ? dialog.accept('100') : dialog.accept();
+    });
+    await (await prepareManual(owner, app.staffId, 2100)).click();
+    await owner.getByText(/confirm the payout limit for this staff member first/i).waitFor();
+    await confirmLimit(member, 'Fictional Staff').click();
+    await Promise.all([memberPayout.waitFor(), ownerPayout.waitFor()]);
+    assert.match(dialogs.at(-1), /PHP 2,100\.00 total pay.*Already paid: PHP 0\.00/s);
+    assert.equal((await app.rows('payrollLedger')).length, 3);
+    await memberPayout.click();
+    await member.getByText('Payout recorded for Fictional Staff.').waitFor();
+    await (await prepareManual(owner, app.staffId, 2100)).click();
+    await owner.getByText(/no pay remains/i).waitFor({ timeout: 5000 });
+    assert.equal(await memberPayout.isDisabled(), true);
+    assert.equal(await payrollRow(member, 'Fictional Staff').getByRole('cell').nth(5).innerText(), 'PHP 0.00');
+    assert.equal((await app.rows('payrollLedger')).filter(row =>
+      row.fields.staffId.stringValue === app.staffId && row.fields.type.stringValue === 'payout').length, 1);
+
+    await confirmLimit(member, 'Fictional Earlier Staff').click();
+    await Promise.all([member, owner].map(page => payout(page, 'Fictional Earlier Staff').waitFor()));
+    assert.match(dialogs.at(-1), /PHP 2,500\.00 total pay.*Already paid: PHP 400\.00.*Remaining: PHP 2,100\.00/s);
+    const closePeriod = member.getByRole('button', { name: 'Close period', exact: true });
+    assert.equal(await closePeriod.isDisabled(), true, 'do not close a period with a confirmed amount still payable');
+    await (await prepareManual(owner, app.pastStaffId, 2101)).click();
+    await owner.getByText(/only.*2,100\.00.*remains/i).waitFor();
+    await (await prepareManual(member, app.pastStaffId, 1000)).click();
+    await member.getByText('Ledger entry recorded.').waitFor();
+    await payrollRow(member, 'Fictional Earlier Staff').getByRole('cell', { name: 'PHP 1,100.00', exact: true }).waitFor();
+    const ownerSave = await prepareManual(owner, app.pastStaffId, 1100);
+    await Promise.all([member, owner].map(page => page.evaluate(() => window.fixture.holdPayrollSave())));
+    await Promise.all([
+      payout(member, 'Fictional Earlier Staff').click(),
+      ownerSave.click(),
+    ]);
+    await Promise.all([member, owner].map(page => page.waitForFunction(() => window.payrollSaveReady)));
+    await Promise.all([member, owner].map(page => page.evaluate(() => window.releasePayrollSave())));
+    await member.getByText(/payout recorded for Fictional Earlier Staff|no pay remains/i).waitFor();
+    await owner.getByText(/ledger entry recorded|no pay remains/i).waitFor({ timeout: 5000 }).catch(async error => {
+      const alert = await owner.getByRole('alert').allTextContents();
+      throw new Error(`Concurrent manual payout did not report a result: ${alert.join(' ')}`, { cause: error });
+    });
+    const paid = (await app.rows('payrollLedger')).filter(row =>
+      row.fields.staffId.stringValue === app.pastStaffId && row.fields.type.stringValue === 'payout');
+    assert.deepEqual(paid.map(row => Number(row.fields.amount.integerValue ?? row.fields.amount.doubleValue)).sort((a, b) => a - b),
+      [100, 300, 1000, 1100]);
+    await closePeriod.click();
+    await member.getByText('Payroll period closed.').waitFor({ timeout: 5000 }).catch(async error => {
+      const alert = await member.getByRole('alert').allTextContents();
+      throw new Error(`Payroll period did not close: ${alert.join(' ')}`, { cause: error });
+    });
+    assert.equal(await (await prepareManual(member, app.pastStaffId, 1)).isDisabled(), true);
+
+    await member.getByRole('button', { name: 'New period', exact: true }).click();
+    await member.getByLabel('Start', { exact: true }).fill('2026-11-30');
+    await member.getByLabel('End', { exact: true }).fill('2026-12-04');
+    await member.getByRole('button', { name: 'Create period', exact: true }).click();
+    const dialogCount = dialogs.length;
+    await confirmLimit(member, 'Fictional Earlier Staff').click();
+    await payout(member, 'Fictional Earlier Staff').waitFor();
+    assert.equal(dialogs.length, dialogCount + 1, 'the legacy payout must not be offered again');
+    assert.match(dialogs.at(-1), /Already paid: PHP 0\.00/);
+  } finally { await app.close(); }
+});
+
+test('a payment with a lost commit response recovers after reload and sign-out in its original workspace', { timeout: 120000 }, async () => {
+  const app = await financeFixture();
+  try {
+    const page = await app.open(await app.newContext());
+    const dossier = async () => {
+      await page.getByRole('button', { name: 'Patients', exact: true }).click();
+      await page.getByRole('row').filter({ hasText: 'Fictional Patient' }).click();
+      return page.getByRole('region', { name: 'Patient billing' });
+    };
+    const date = offset => new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Manila', dateStyle: 'short', timeStyle: 'short',
+    }).format(Date.now() - offset * 60_000).replace(' ', 'T');
+    await app.signIn(page, 'member');
+    let billing = await dossier();
+    await billing.getByRole('button', { name: 'Verify opening balance' }).click();
+    const opening = page.getByRole('dialog', { name: 'Verify opening balance' });
+    await opening.getByLabel('Checked against').selectOption('Paper ledger');
+    await opening.getByLabel('Balance as of (Asia/Manila)').fill(date(120));
+    await opening.getByRole('button', { name: 'Review update' }).click();
+    await opening.getByRole('button', { name: 'Confirm PHP 1,500.00' }).click();
+    await opening.waitFor({ state: 'hidden' });
+    await billing.getByRole('button', { name: 'Record payment', exact: true }).click();
+    const payment = page.getByRole('dialog', { name: 'Record payment' });
+    await payment.getByLabel('Amount received (PHP)').fill('500');
+    await payment.getByLabel('Received at (Asia/Manila)').fill(date(60));
+    await payment.getByRole('button', { name: 'Review update' }).click();
+    await page.evaluate(() => window.fixture.losePaymentResponse());
+    await payment.getByRole('button', { name: 'Confirm payment' }).click();
+    await payment.getByText(/payment response lost after commit/i).waitFor();
+    const payments = async (clinic = 'first') => (await app.rows('billingEntries', clinic)).filter(row => row.fields.kind.stringValue === 'payment');
+    const before = await payments();
+    assert.equal(before.length, 1);
+    const entryId = before[0].name.split('/').at(-1);
+
+    await page.reload();
+    await app.signIn(page, 'member');
+    billing = await dossier();
+    const retry = () => billing.getByRole('button', { name: 'Retry unconfirmed save' });
+    await retry().waitFor({ timeout: 5000 });
+    assert.equal(await billing.getByRole('button', { name: 'Record payment', exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Close dossier' }).click();
+    await page.getByRole('button', { name: /current clinic.*switch/i }).click();
+    await app.choose(page, 'second');
+    billing = await dossier();
+    await billing.getByRole('button', { name: 'Verify opening balance' }).waitFor();
+    assert.equal(await retry().count(), 0);
+    assert.deepEqual(await payments('second'), []);
+
+    const logout = async () => {
+      await page.getByRole('button', { name: 'Close dossier' }).click();
+      await page.getByRole('button', { name: 'Logout', exact: true }).click();
+    };
+    await logout();
+    await app.signIn(page, 'owner');
+    billing = await dossier();
+    await billing.getByRole('button', { name: 'Print receipt' }).waitFor();
+    assert.equal(await retry().count(), 0);
+    await logout();
+    await app.signIn(page, 'member');
+    billing = await dossier();
+    await retry().click();
+    await retry().waitFor({ state: 'hidden' });
+    assert.deepEqual(await payments(), before);
+    const downloading = page.waitForEvent('download');
+    await billing.getByRole('button', { name: 'Print receipt' }).click();
+    assert.equal((await downloading).suggestedFilename(), `payment-${entryId}.pdf`);
+    await billing.getByText('PHP 1,000.00', { exact: true }).waitFor();
+  } finally { await app.close(); }
+});
 
 test('real browser device cleanup uses only emulators', { timeout: 120000 }, async t => {
   const fixture = await startFixture();

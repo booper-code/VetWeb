@@ -6,8 +6,8 @@ import type { BillingReconciliation } from '@/lib/billing-reconciliation';
 import type { PatientRecord } from '@/types';
 
 export type BillingGateway = {
-  submit(operationId: string, draft: BillingOperation['draft'], patientId: string, expectedPatientRevision: number, patient?: PatientRecord): Promise<BillingCommit>;
-  pending(patientId: string): BillingOperation | null;
+  submit(operationId: string, draft: BillingOperation['draft'], patientId: string, expectedPatientRevision: number, patient?: PatientRecord): Promise<BillingCommit & { needsPaymentAcknowledgement?: true }>;
+  pending(patientId: string): Promise<BillingOperation | null>;
   history(patientId: string, after?: BillingCursor): Promise<BillingPage>;
   reconcile(patientId: string): Promise<BillingReconciliation>;
   receipt(patientId: string, entryId: string): Promise<PaymentReceipt>;
@@ -20,6 +20,7 @@ export function useBilling(patientId: string, gateway: BillingGateway, enabled: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<BillingOperation | null>(null);
+  const [postedPaymentId, setPostedPaymentId] = useState<string | null>(null);
   const request = useRef(0);
   const depth = useRef(1);
   const loadedDepth = useRef(1);
@@ -33,7 +34,16 @@ export function useBilling(patientId: string, gateway: BillingGateway, enabled: 
     setBusy(true);
     setError('');
     try {
-      if (!after) setPending(gateway.pending(patientId));
+      if (!after) {
+        try {
+          const unresolved = await gateway.pending(patientId);
+          if (request.current !== id) return;
+          setPending(unresolved);
+        } catch {
+          if (request.current !== id) return;
+          setError('Could not check for an unfinished billing save. Refresh billing before entering another payment.');
+        }
+      }
       const page = await gateway.history(patientId, after);
       if (request.current !== id) return;
       const incoming = [...page.entries];
@@ -66,10 +76,18 @@ export function useBilling(patientId: string, gateway: BillingGateway, enabled: 
     if (enabled) void Promise.resolve().then(() => { if (active) reloadPostedHistory(); });
     return () => { active = false; request.current += 1; };
   }, [enabled, patientId, postedSequence]);
+  useEffect(() => {
+    if (!enabled) return;
+    const reconnect = () => reloadPostedHistory();
+    window.addEventListener('online', reconnect);
+    return () => window.removeEventListener('online', reconnect);
+  }, [enabled]);
 
   return {
     entries: enabled ? entries : [],
-    pending: enabled ? pending : null, busy: enabled && busy, error: enabled ? error : '', hasMore: enabled && next !== null,
+    pending: enabled ? pending : null,
+    pendingPaymentPosted: enabled && postedPaymentId !== null && pending?.operationId === postedPaymentId,
+    busy: enabled && busy, error: enabled ? error : '', hasMore: enabled && next !== null,
     refresh: async (itemCodes: string[] = []) => {
       await gateway.refreshRecords(patientId, itemCodes);
       if (mounted.current) await load();
@@ -82,12 +100,26 @@ export function useBilling(patientId: string, gateway: BillingGateway, enabled: 
       try {
         const result = await gateway.submit(operationId, draft, patientId, expectedPatientRevision, patient);
         request.current += 1;
-        if (mounted.current) void load();
-        return result;
-      } finally {
         if (mounted.current) {
-          try { setPending(gateway.pending(patientId)); } catch { /* The clinic closed while the operation was pending. */ }
+          if (result.needsPaymentAcknowledgement) {
+            const posted = { clinicId: result.entry.clinicId, patientId, operationId, draft, expectedPatientRevision };
+            setPostedPaymentId(operationId);
+            setPending(current => current ?? posted);
+          } else {
+            setPostedPaymentId(id => id === operationId ? null : id);
+            setPending(current => current?.operationId === operationId ? null : current);
+          }
+          void load();
         }
+        return result;
+      } catch (error) {
+        if (mounted.current) {
+          try {
+            const unresolved = await gateway.pending(patientId);
+            if (mounted.current) setPending(unresolved);
+          } catch { /* The clinic closed or could not confirm the pending operation. */ }
+        }
+        throw error;
       }
     },
   };

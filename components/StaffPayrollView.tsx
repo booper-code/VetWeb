@@ -23,21 +23,26 @@ import type {
   StaffMember,
   StaffPayProfile
 } from '@/types';
+import { parsePhpMinor } from '@/lib/billing-values';
 import {
-  advanceBalanceForStaff,
   appendPayrollEntry,
-  basePayForPeriod,
   closePayrollPeriod,
+  confirmPayrollPayoutLimit,
   createPayrollPeriod,
   getPayrollHead,
   listPayProfiles,
   listPayrollEntries,
   listPayrollPeriods,
   listStaff,
+  loadReconciledPayrollAmount,
+  payrollBalanceForPeriod,
+  PayrollPayoutLimitError,
   saveStaffMember,
   verifyPayrollChain,
+  watchPayrollPayoutLimits,
   type ChainVerification,
-  type PayrollHead
+  type PayrollHead,
+  type PayrollPayoutLimit
 } from '@/lib/payroll';
 
 const currency = (value: number) =>
@@ -158,6 +163,11 @@ export const StaffPayrollView = ({
   const [periodStart, setPeriodStart] = useState(isoDate(startOfWeek()));
   const [periodEnd, setPeriodEnd] = useState(isoDate(new Date(startOfWeek().getTime() + 6 * 86400000)));
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
+  const [limitSnapshot, setLimitSnapshot] = useState<{
+    clinicId: string;
+    periodId: string;
+    limits: Record<string, PayrollPayoutLimit>;
+  } | null>(null);
 
   const [ledgerStaffId, setLedgerStaffId] = useState('');
   const [ledgerType, setLedgerType] = useState<PayrollEntryType>('advance');
@@ -219,6 +229,30 @@ export const StaffPayrollView = ({
   const activeStaff = useMemo(() => staff.filter(member => member.active), [staff]);
   const selectedPeriod = periods.find(period => period.id === selectedPeriodId) ?? null;
   const selectedPeriodIsOpen = selectedPeriod?.status === 'open';
+  const limits = limitSnapshot?.clinicId === clinicId && limitSnapshot.periodId === selectedPeriodId
+    ? limitSnapshot.limits
+    : null;
+  const hasUnpaidLimit = limits !== null && Object.values(limits).some(limit => limit.paidMinor < limit.approvedMinor);
+
+  useEffect(() => {
+    if (!clinicId || !selectedPeriodId || !canManagePayroll) return;
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+    const onError = (loadError: Error) => {
+      console.error('[Staff & payroll] Failed to load payout limits:', loadError);
+      if (active) {
+        setLimitSnapshot(null);
+        setError(previous => previous || 'Could not load confirmed payout limits.');
+      }
+    };
+    void watchPayrollPayoutLimits(clinicId, selectedPeriodId, confirmed => {
+      if (active) setLimitSnapshot(confirmed ? { clinicId, periodId: selectedPeriodId, limits: confirmed } : null);
+    }, onError).then(stop => {
+      if (active) unsubscribe = stop;
+      else stop();
+    }, onError);
+    return () => { active = false; unsubscribe?.(); };
+  }, [clinicId, selectedPeriodId, canManagePayroll]);
 
   const recentEntries = useMemo(
     () => [...entries].sort((a, b) => b.seq - a.seq).slice(0, 25),
@@ -339,8 +373,8 @@ export const StaffPayrollView = ({
   };
 
   const handleClosePeriod = async () => {
-    if (!clinicId || !selectedPeriod || !isCurrent()) return;
-    if (!window.confirm(`Close payroll for ${selectedPeriod.startDate} to ${selectedPeriod.endDate}? New entries can still be recorded, but the period is marked closed.`)) {
+    if (!clinicId || !selectedPeriod || !limits || hasUnpaidLimit || !isCurrent()) return;
+    if (!window.confirm(`Close payroll for ${selectedPeriod.startDate} to ${selectedPeriod.endDate}? No further salary payouts can be recorded for this period.`)) {
       return;
     }
 
@@ -361,13 +395,44 @@ export const StaffPayrollView = ({
     }
   };
 
+  const showLedger = async (nextEntries: PayrollEntry[], nextHead: PayrollHead | null) => {
+    const nextChain = await verifyPayrollChain(nextEntries, nextHead);
+    if (!isCurrent()) return;
+    setEntries(nextEntries);
+    setHead(nextHead);
+    setChain(nextChain);
+  };
+
+  const refreshLedger = async () => {
+    if (!clinicId || !isCurrent()) return;
+    try {
+      // Read the head after the entries so verification can detect an append
+      // that landed during the refresh.
+      const nextEntries = await listPayrollEntries(clinicId);
+      const nextHead = await getPayrollHead(clinicId);
+      await showLedger(nextEntries, nextHead);
+    } catch (refreshError) {
+      console.error('[Staff & payroll] Failed to refresh ledger:', refreshError);
+    }
+  };
+
+  const showSavedEntry = async (entry: PayrollEntry) => {
+    const nextHead = { seq: entry.seq, hash: entry.hash };
+    await showLedger([...entries, entry], nextHead);
+    if (entry.seq !== (head?.seq ?? 0) + 1) await refreshLedger();
+  };
+
   const handleAddLedgerEntry = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!clinicId || !user) return;
+    if (!clinicId || !user || !isCurrent()) return;
 
     const member = staff.find(item => item.id === ledgerStaffId);
     if (!member) {
       setError('Choose a staff member.');
+      return;
+    }
+    if (ledgerType === 'payout' && !selectedPeriodIsOpen) {
+      setError('Choose an open payroll period before recording a salary payout.');
       return;
     }
 
@@ -376,7 +441,7 @@ export const StaffPayrollView = ({
     try {
       const entry = await appendPayrollEntry({
         clinicId,
-        user,
+        actor: payrollActor,
         type: ledgerType,
         direction: ledgerType === 'adjustment' ? ledgerDirection : ledgerType === 'repayment' ? 'in' : 'out',
         staff: member,
@@ -385,56 +450,100 @@ export const StaffPayrollView = ({
         note: ledgerNote
       });
 
-      const nextEntries = [...entries, entry];
-      const nextHead = { seq: entry.seq, hash: entry.hash };
-      setEntries(nextEntries);
-      setHead(nextHead);
-      setChain(await verifyPayrollChain(nextEntries, nextHead));
+      await showSavedEntry(entry);
+      if (!isCurrent()) return;
       setLedgerAmount('');
       setLedgerNote('');
       triggerToast('Ledger entry recorded.');
     } catch (entryError) {
+      if (!isCurrent()) return;
       console.error('[Staff & payroll] Failed to append ledger entry:', entryError);
+      if (entryError instanceof PayrollPayoutLimitError) await refreshLedger();
       setError(entryError instanceof Error ? entryError.message : 'Could not record the ledger entry.');
     } finally {
       setIsWorking(false);
     }
   };
 
+  const handleConfirmPayoutLimit = async (member: StaffMember) => {
+    if (!clinicId || !user || !selectedPeriodIsOpen || !selectedPeriod || !limits || !isCurrent()) return;
+    const { approvedMinor, paidMinor, unassignedMinor, remaining } = payrollBalanceForPeriod(
+      profiles[member.id], selectedPeriod, entries, member.id
+    );
+    if (remaining <= 0) return;
+
+    setError('');
+    setIsWorking(true);
+    try {
+      let unassignedPaidMinor = 0;
+      const appliedMinor = unassignedMinor > 0 ? await loadReconciledPayrollAmount(clinicId, member.id, payrollActor) : 0;
+      const availableMinor = Math.max(unassignedMinor - appliedMinor, 0);
+      if (availableMinor > 0) {
+        const amount = window.prompt(
+          `${member.name} has ${currency(availableMinor / 100)} left to assign from older payouts without a period. `
+          + `Enter how much of those payouts belongs to ${selectedPeriod.startDate} to ${selectedPeriod.endDate}. Enter 0 if none.`
+        );
+        if (amount === null) return;
+        unassignedPaidMinor = parsePhpMinor(amount);
+        if (unassignedPaidMinor > availableMinor || paidMinor + unassignedPaidMinor > approvedMinor) {
+          setError('The reconciled amount cannot exceed the older unassigned payouts or the total pay for this period.');
+          return;
+        }
+      }
+      const reconciledPaidMinor = paidMinor + unassignedPaidMinor;
+      if (!window.confirm(
+        `Confirm ${currency(approvedMinor / 100)} total pay for ${member.name} (${selectedPeriod.startDate} to ${selectedPeriod.endDate})?\n`
+        + `Already paid: ${currency(reconciledPaidMinor / 100)}. Remaining: ${currency((approvedMinor - reconciledPaidMinor) / 100)}.\n`
+        + 'This locks the payout limit. It does not record a payment.'
+      )) return;
+
+      await confirmPayrollPayoutLimit(clinicId, selectedPeriod.id, member.id, {
+        approvedMinor, paidMinor: reconciledPaidMinor, unassignedPaidMinor
+      }, payrollActor);
+      if (isCurrent()) triggerToast(`Payout limit confirmed for ${member.name}.`);
+    } catch (confirmationError) {
+      if (!isCurrent()) return;
+      console.error('[Staff & payroll] Failed to confirm payout limit:', confirmationError);
+      await refreshLedger();
+      if (isCurrent()) setError(confirmationError instanceof Error ? confirmationError.message : 'Could not confirm the payout limit.');
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
   const handleRecordPayout = async (member: StaffMember) => {
-    if (!clinicId || !user || !selectedPeriod) return;
+    if (!clinicId || !user || !selectedPeriodIsOpen || !selectedPeriod || !isCurrent()) return;
 
-    const profile = profiles[member.id];
-    const base = basePayForPeriod(profile, selectedPeriod);
-    const advance = advanceBalanceForStaff(entries, member.id);
-    const net = Math.max(base - advance, 0);
+    const limit = limits?.[member.id];
+    if (!limit) return;
+    const remaining = (limit.approvedMinor - limit.paidMinor) / 100;
 
-    if (net <= 0) {
+    if (remaining <= 0) {
       triggerToast('Nothing to release for this staff member in this period.');
       return;
     }
-    if (!window.confirm(`Record a payout of ${currency(net)} to ${member.name}?`)) return;
+    if (!window.confirm(`Record a payout of ${currency(remaining)} to ${member.name}?`)) return;
 
     setIsWorking(true);
+    setError('');
     try {
       const entry = await appendPayrollEntry({
         clinicId,
-        user,
+        actor: payrollActor,
         type: 'payout',
         direction: 'out',
         staff: member,
-        amount: net,
+        amount: remaining,
         periodId: selectedPeriod.id,
         note: `Payroll ${selectedPeriod.startDate} to ${selectedPeriod.endDate}`
       });
-      const nextEntries = [...entries, entry];
-      const nextHead = { seq: entry.seq, hash: entry.hash };
-      setEntries(nextEntries);
-      setHead(nextHead);
-      setChain(await verifyPayrollChain(nextEntries, nextHead));
+      await showSavedEntry(entry);
+      if (!isCurrent()) return;
       triggerToast(`Payout recorded for ${member.name}.`);
     } catch (payoutError) {
+      if (!isCurrent()) return;
       console.error('[Staff & payroll] Failed to record payout:', payoutError);
+      if (payoutError instanceof PayrollPayoutLimitError) await refreshLedger();
       setError(payoutError instanceof Error ? payoutError.message : 'Could not record the payout.');
     } finally {
       setIsWorking(false);
@@ -715,11 +824,14 @@ export const StaffPayrollView = ({
                   <button
                     type="button"
                     onClick={handleClosePeriod}
-                    disabled={isWorking}
+                    disabled={isWorking || limits === null || hasUnpaidLimit}
                     className="rounded-xl border border-outline-soft px-3 py-2 text-xs font-bold text-content-secondary hover:bg-panel-subtle disabled:opacity-50"
                   >
                     Close period
                   </button>
+                )}
+                {selectedPeriodIsOpen && hasUnpaidLimit && (
+                  <span className="text-xs text-content-hint">Finish confirmed payouts before closing.</span>
                 )}
               </div>
             </div>
@@ -765,33 +877,36 @@ export const StaffPayrollView = ({
                       <th className="px-6 py-3 text-left">Basis</th>
                       <th className="px-6 py-3 text-right">Base pay</th>
                       <th className="px-6 py-3 text-right">Advances</th>
-                      <th className="px-6 py-3 text-right">Net</th>
+                      <th className="px-6 py-3 text-right">Paid</th>
+                      <th className="px-6 py-3 text-right">Remaining payable</th>
                       <th className="px-6 py-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-hairline">
                     {activeStaff.map(member => {
                       const profile = profiles[member.id];
-                      const base = basePayForPeriod(profile, selectedPeriod);
-                      const advance = advanceBalanceForStaff(entries, member.id);
-                      const net = base - advance;
+                      const calculated = payrollBalanceForPeriod(profile, selectedPeriod, entries, member.id);
+                      const limit = limits?.[member.id];
+                      const paid = (limit ? limit.paidMinor : calculated.paidMinor) / 100;
+                      const remaining = limit ? (limit.approvedMinor - limit.paidMinor) / 100 : calculated.remaining;
                       return (
                         <tr key={member.id}>
                           <td className="px-6 py-3 font-bold text-content-heading">{member.name}</td>
                           <td className="px-6 py-3 text-content-hint text-xs">
                             {profile ? `${profile.payBasis === 'monthly' ? 'Monthly' : 'Daily'} · ${currency(profile.rate)}` : 'No rate set'}
                           </td>
-                          <td className="px-6 py-3 text-right text-content-copy">{currency(base)}</td>
-                          <td className="px-6 py-3 text-right text-content-copy">{currency(advance)}</td>
-                          <td className={`px-6 py-3 text-right font-bold ${net < 0 ? 'text-danger-icon' : 'text-content-title'}`}>{currency(net)}</td>
+                          <td className="px-6 py-3 text-right text-content-copy">{currency(calculated.base)}</td>
+                          <td className="px-6 py-3 text-right text-content-copy">{currency(calculated.advance)}</td>
+                          <td className="px-6 py-3 text-right text-content-copy">{currency(paid)}</td>
+                          <td className="px-6 py-3 text-right font-bold text-content-title">{currency(remaining)}</td>
                           <td className="px-6 py-3 text-right">
                             <button
                               type="button"
-                              onClick={() => handleRecordPayout(member)}
-                              disabled={isWorking || net <= 0 || !selectedPeriodIsOpen}
+                              onClick={() => limit ? handleRecordPayout(member) : handleConfirmPayoutLimit(member)}
+                              disabled={isWorking || !limits || remaining <= 0 || !selectedPeriodIsOpen}
                               className="text-xs font-bold text-brand-text-strong hover:text-brand-text-max disabled:opacity-40 disabled:cursor-not-allowed"
                             >
-                              Record payout
+                              {limit ? 'Record payout' : 'Confirm payout limit'}
                             </button>
                           </td>
                         </tr>
@@ -801,7 +916,7 @@ export const StaffPayrollView = ({
                 </table>
               </div>
             ) : (
-              <p className="px-6 py-8 text-sm text-content-hint">Create a payroll period to compute base pay and net release.</p>
+              <p className="px-6 py-8 text-sm text-content-hint">Create a payroll period to compute base pay and remaining pay.</p>
             )}
           </div>
 
@@ -811,7 +926,7 @@ export const StaffPayrollView = ({
                 <Wallet className="w-5 h-5 text-brand-text" /> Cash in / out
               </h3>
               <p className="text-xs text-content-hint leading-relaxed">
-                Record advances before payday, repayments, payouts, or corrections. Every entry is appended to the ledger and cannot be edited.
+                Record advances, repayments, payouts, or corrections. Confirm the staff member’s payout limit above before recording a salary payout. Posted entries cannot be edited.
               </p>
 
               <label className="text-xs font-bold text-content-secondary block">
@@ -883,7 +998,7 @@ export const StaffPayrollView = ({
 
               <button
                 type="submit"
-                disabled={isWorking}
+                disabled={isWorking || (ledgerType === 'payout' && !selectedPeriodIsOpen)}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-teal-700 disabled:opacity-50"
               >
                 {isWorking && <Loader2 className="w-4 h-4 animate-spin" />}

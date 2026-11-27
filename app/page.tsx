@@ -9,7 +9,7 @@ import { useClinicPages } from '@/lib/useClinicPages';
 import { PageControls } from '@/components/PageControls';
 import { ConsultationHistory } from '@/components/ConsultationHistory';
 import { mutateClinicalRecord } from '@/lib/clinical-mutations';
-import { checkBillingReconciliation, commitBilling, loadBillingHistory, loadBillingRecords, loadPaymentReceipt, type BillingOperation, type BillingRecords } from '@/lib/billing';
+import { acknowledgeBillingPayment, checkBillingReconciliation, commitBilling, loadBillingHistory, loadBillingRecords, loadPaymentReceipt, loadUnconfirmedPayment, type BillingOperation, type BillingRecords } from '@/lib/billing';
 import { reconcileBillingLedger } from '@/lib/billing-reconciliation';
 import { createDemoBilling } from '@/lib/demo-billing';
 import { createDemoEndOfDayLoader, loadEndOfDayPage, type ClosePageLoader } from '@/lib/end-of-day';
@@ -671,6 +671,7 @@ export default function App() {
     return currentClinicId;
   };
   const pendingKey = (clinic: string, patientId: string) => JSON.stringify([sessionUser?.uid ?? 'demo', clinic, patientId]);
+  const billingActor = { uid: sessionUser?.uid ?? '', assertWorkspace: activeBillingClinic };
   const applyBillingRecords = (patientId: string, records: BillingRecords) => {
     const patient = patientFromDocument(patientId, records.patient);
     setPatients(rows => rows.map(row => row.id === patientId && (row.revision ?? 0) <= (patient.revision ?? 0) ? patient : row));
@@ -681,8 +682,10 @@ export default function App() {
     }));
   };
   const billingGateway: BillingGateway = {
-    pending(patientId) {
-      return pendingBilling.current.get(pendingKey(activeBillingClinic(), patientId)) ?? null;
+    async pending(patientId) {
+      const clinicId = activeBillingClinic();
+      const local = pendingBilling.current.get(pendingKey(clinicId, patientId));
+      return local ?? (clinicId === 'demo-clinic' ? null : await loadUnconfirmedPayment(clinicId, patientId, billingActor));
     },
     async submit(operationId, draft, patientId, expectedPatientRevision, selected) {
       const clinicId = activeBillingClinic();
@@ -700,27 +703,35 @@ export default function App() {
       try {
         result = clinicId === 'demo-clinic'
           ? (demoBilling.current ??= createDemoBilling()).commit(operation, patient, inventory, currentClinicName, sessionUser?.uid ?? 'demo')
-          : await commitBilling(operation);
+          : await commitBilling(operation, billingActor);
       } catch (error) {
-        if (error instanceof Error && error.name === 'ClinicalConflictError' && pendingBilling.current.get(key) === operation) {
+        if (error instanceof Error && (error.name === 'ClinicalConflictError' || error.name === 'UnconfirmedPaymentError')
+          && pendingBilling.current.get(key) === operation) {
           pendingBilling.current.delete(key);
         }
         throw error;
       }
       activeBillingClinic();
       if (pendingBilling.current.get(key) === operation) pendingBilling.current.delete(key);
+      // Acknowledge only now that this result is accepted in the current scope.
+      // A failed acknowledgement keeps the marker recoverable; it never turns
+      // a confirmed payment into an uncertain save.
       if (result.records) {
         applyBillingRecords(patientId, result.records);
-        return result;
+      } else {
+        setPatients(rows => rows.map(row => row.id === patientId && (row.revision ?? 0) <= result.patientRevision ? {
+          ...row, legacyBillingBalance: row.legacyBillingBalance === undefined ? row.balance : row.legacyBillingBalance,
+          balance: result.state.balanceMinor / 100, billing: result.state, revision: result.patientRevision,
+        } : row));
+        setInventory(rows => rows.map(row => {
+          const stock = result.stock.find(item => item.itemCode === row.itemCode);
+          return stock && (row.revision ?? 0) <= stock.revision ? { ...row, ...stock } : row;
+        }));
       }
-      setPatients(rows => rows.map(row => row.id === patientId && (row.revision ?? 0) <= result.patientRevision ? {
-        ...row, legacyBillingBalance: row.legacyBillingBalance === undefined ? row.balance : row.legacyBillingBalance,
-        balance: result.state.balanceMinor / 100, billing: result.state, revision: result.patientRevision,
-      } : row));
-      setInventory(rows => rows.map(row => {
-        const stock = result.stock.find(item => item.itemCode === row.itemCode);
-        return stock && (row.revision ?? 0) <= stock.revision ? { ...row, ...stock } : row;
-      }));
+      if (operation.draft.kind === 'payment' && clinicId !== 'demo-clinic') {
+        try { await acknowledgeBillingPayment(operation, billingActor); }
+        catch { return { ...result, needsPaymentAcknowledgement: true }; }
+      }
       return result;
     },
     async history(patientId, after) {

@@ -451,6 +451,41 @@ service cloud.firestore {
           && entry.patientId == patientId && entry.seq == next.seq && entry.recordedAt == request.time;
       }
 
+      // A posted payment can be recovered only by the account that submitted
+      // it, in the same clinic and patient. The marker is created with the
+      // payment and removed after the client reads the saved receipt.
+      match /billingPaymentRecovery/{uid}/patients/{patientId} {
+        function ownsRecovery() {
+          return canEditClinic(clinicId) && request.auth.uid == uid;
+        }
+
+        function matchesPostedPayment(data) {
+          let receipt = getAfter(/databases/$(database)/documents/clinics/$(clinicId)/billingEntries/$(data.operationId)).data;
+          return receipt.kind == 'payment'
+            && receipt.actorUid == uid
+            && receipt.patientId == patientId
+            && receipt.recordedAt == request.time
+            && receipt.amountMinor == data.draft.amountMinor
+            && receipt.method == data.draft.method
+            && receipt.occurredAtMs == data.draft.occurredAtMs;
+        }
+
+        allow get, delete: if ownsRecovery();
+        allow create: if ownsRecovery()
+          && request.resource.data.keys().hasOnly(['operationId', 'expectedPatientRevision', 'draft'])
+          && request.resource.data.operationId.matches('^[A-Za-z0-9-]{1,100}$')
+          && request.resource.data.expectedPatientRevision is int
+          && request.resource.data.expectedPatientRevision >= 0
+          && request.resource.data.draft.keys().hasOnly(['kind', 'amountMinor', 'method', 'occurredAtMs', 'reference', 'note'])
+          && request.resource.data.draft.kind == 'payment'
+          && request.resource.data.draft.get('reference', '') is string
+          && request.resource.data.draft.get('reference', '').size() <= 120
+          && request.resource.data.draft.get('note', '') is string
+          && request.resource.data.draft.get('note', '').size() <= 500
+          && matchesPostedPayment(request.resource.data);
+        allow list, update: if false;
+      }
+
       match /billingEntries/{entryId} {
         allow read: if canEditClinic(clinicId);
         allow create: if canEditClinic(clinicId) && validBillingEntry(request.resource.data, entryId);
@@ -773,6 +808,57 @@ service cloud.firestore {
         allow delete: if auditedMutation('payProfiles', staffId);
       }
 
+      function openPayrollPeriodAfter(periodId) {
+        return getAfter(/databases/$(database)/documents/clinics/$(clinicId)/payrollPeriods/$(periodId)).data.status == 'open';
+      }
+
+      function payrollLedgerPath(entryId) {
+        return /databases/$(database)/documents/clinics/$(clinicId)/payrollLedger/$(entryId);
+      }
+
+      function payrollPayoutLimitPath(periodId, staffId) {
+        return /databases/$(database)/documents/clinics/$(clinicId)/payrollPeriods/$(periodId)/payoutLimits/$(staffId);
+      }
+
+      function payrollSummaryPath(periodId) {
+        return /databases/$(database)/documents/clinics/$(clinicId)/payrollPeriods/$(periodId)/payoutState/summary;
+      }
+
+      function unpaidPayrollCount(path) {
+        return exists(path) ? get(path).data.unpaidCount : 0;
+      }
+
+      function changesUnpaidPayrollCount(periodId, staffId, delta) {
+        let path = payrollSummaryPath(periodId);
+        let summary = getAfter(path).data;
+        return summary.lastStaffId == staffId
+          && summary.unpaidCount == unpaidPayrollCount(path) + delta;
+      }
+
+      function payrollReconciliationPath(staffId) {
+        return /databases/$(database)/documents/clinics/$(clinicId)/payrollReconciliations/$(staffId);
+      }
+
+      function reconciledPayrollAmount(path) {
+        return exists(path) ? get(path).data.appliedMinor : 0;
+      }
+
+      function includesPayrollReconciliation(periodId, staffId, amount) {
+        let path = payrollReconciliationPath(staffId);
+        let next = getAfter(path).data;
+        return next.lastPeriodId == periodId && next.appliedMinor == reconciledPayrollAmount(path) + amount;
+      }
+
+      function validPayrollPayout(entryId, entry) {
+        let path = payrollPayoutLimitPath(entry.periodId, entry.staffId);
+        let before = get(path).data;
+        let after = getAfter(path).data;
+        return entry.direction == 'out'
+          && after.lastEntryId == entryId
+          && after.paidMinor > before.paidMinor
+          && entry.amount == (after.paidMinor - before.paidMinor) / 100.0;
+      }
+
       match /payrollPeriods/{periodId} {
         allow read: if isClinicMember(clinicId);
         allow create: if isClinicMember(clinicId)
@@ -789,8 +875,97 @@ service cloud.firestore {
           && request.resource.data.status == 'closed'
           && request.resource.data.closedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'closedAt', 'revision'])
+          && (!existsAfter(payrollSummaryPath(periodId)) || getAfter(payrollSummaryPath(periodId)).data.unpaidCount == 0)
           && auditedMutation('payrollPeriods', periodId);
         allow delete: if false;
+
+        match /payoutState/{summaryId} {
+          function validUnpaidCount(next) {
+            let summary = payrollSummaryPath(periodId);
+            let path = payrollPayoutLimitPath(periodId, next.lastStaffId);
+            let limit = getAfter(path).data;
+            let count = unpaidPayrollCount(summary);
+            return (!exists(path) && limit.paidMinor < limit.approvedMinor && next.unpaidCount == count + 1)
+              || (exists(path) && get(path).data.paidMinor < limit.approvedMinor
+                && limit.paidMinor == limit.approvedMinor && next.unpaidCount == count - 1);
+          }
+
+          allow get: if summaryId == 'summary' && isClinicMember(clinicId);
+          allow create, update: if summaryId == 'summary' && isClinicMember(clinicId)
+            && openPayrollPeriodAfter(periodId)
+            && request.resource.data.keys().hasOnly(['unpaidCount', 'lastStaffId'])
+            && request.resource.data.lastStaffId is string
+            && request.resource.data.unpaidCount is int
+            && request.resource.data.unpaidCount >= 0
+            && validUnpaidCount(request.resource.data);
+          allow list, delete: if false;
+        }
+
+        match /payoutLimits/{staffId} {
+          function recordsNewPayout(next) {
+            let path = payrollLedgerPath(next.lastEntryId);
+            let entry = getAfter(path).data;
+            return !exists(path)
+              && entry.type == 'payout'
+              && entry.periodId == periodId
+              && entry.staffId == staffId
+              && entry.createdAt == request.time;
+          }
+
+          allow read: if isClinicMember(clinicId);
+          // Members confirm the approved total and reconcile earlier payments
+          // once. Firestore enforces each subsequent increment against it.
+          allow create: if isClinicMember(clinicId)
+            && openPayrollPeriodAfter(periodId)
+            && exists(/databases/$(database)/documents/clinics/$(clinicId)/staff/$(staffId))
+            && request.resource.data.keys().hasOnly(['approvedMinor', 'paidMinor', 'unassignedPaidMinor', 'lastEntryId', 'confirmedBy', 'confirmedAt'])
+            && request.resource.data.approvedMinor is int
+            && request.resource.data.approvedMinor > 0
+            && request.resource.data.approvedMinor <= 9007199254740991
+            && request.resource.data.paidMinor is int
+            && request.resource.data.paidMinor >= 0
+            && request.resource.data.paidMinor <= request.resource.data.approvedMinor
+            && request.resource.data.unassignedPaidMinor is int
+            && request.resource.data.unassignedPaidMinor >= 0
+            && request.resource.data.unassignedPaidMinor <= request.resource.data.paidMinor
+            && (request.resource.data.unassignedPaidMinor == 0
+              || includesPayrollReconciliation(periodId, staffId, request.resource.data.unassignedPaidMinor))
+            && (request.resource.data.paidMinor == request.resource.data.approvedMinor
+              || changesUnpaidPayrollCount(periodId, staffId, 1))
+            && request.resource.data.lastEntryId == ''
+            && request.resource.data.confirmedBy == request.auth.uid
+            && request.resource.data.confirmedAt == request.time;
+          allow update: if isClinicMember(clinicId)
+            && openPayrollPeriodAfter(periodId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidMinor', 'lastEntryId'])
+            && request.resource.data.paidMinor is int
+            && request.resource.data.paidMinor > resource.data.paidMinor
+            && request.resource.data.paidMinor <= resource.data.approvedMinor
+            && (request.resource.data.paidMinor < resource.data.approvedMinor
+              || changesUnpaidPayrollCount(periodId, staffId, -1))
+            && request.resource.data.lastEntryId is string
+            && request.resource.data.lastEntryId.size() > 0
+            && recordsNewPayout(request.resource.data);
+          allow delete: if false;
+        }
+      }
+
+      match /payrollReconciliations/{staffId} {
+        function recordsLegacyReconciliation(next) {
+          let path = payrollPayoutLimitPath(next.lastPeriodId, staffId);
+          let limit = getAfter(path).data;
+          return !exists(path) && limit.unassignedPaidMinor > 0
+            && next.appliedMinor == reconciledPayrollAmount(payrollReconciliationPath(staffId)) + limit.unassignedPaidMinor;
+        }
+
+        allow get: if isClinicMember(clinicId);
+        allow create, update: if isClinicMember(clinicId)
+          && request.resource.data.keys().hasOnly(['appliedMinor', 'lastPeriodId'])
+          && request.resource.data.lastPeriodId is string
+          && request.resource.data.appliedMinor is int
+          && request.resource.data.appliedMinor <= 9007199254740991
+          && recordsLegacyReconciliation(request.resource.data);
+        allow list, delete: if false;
       }
 
       // Head of the ledger hash chain. Mutable metadata, but the entries
@@ -832,7 +1007,9 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time
           && request.resource.data.prevHash is string
           && request.resource.data.hash is string
-          && request.resource.data.hash.size() == 64;
+          && request.resource.data.hash.size() == 64
+          && (request.resource.data.type != 'payout'
+            || (request.resource.data.periodId is string && validPayrollPayout(entryId, request.resource.data)));
         allow update, delete: if false;
       }
     }

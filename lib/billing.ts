@@ -8,6 +8,7 @@ import {
 } from '@/lib/billing-values';
 
 export type BillingOperation = { clinicId: string; patientId: string; operationId: string; expectedPatientRevision: number; draft: BillingDraft };
+type BillingActor = { uid: string; assertWorkspace: () => void };
 type ReceiptValues = { clinicName: string; patientName: string; occurredAtMs: number; businessDayMs: number; timeZone: typeof BILLING_TIME_ZONE; method: PaymentMethod };
 export type PaymentReceipt = ReceiptValues & { id: string; amountMinor: number; balanceAfterMinor: number; reversed: boolean };
 type EntryValues = { id: string; clinicId: string; patientId: string; actorUid: string; recordedAtMs: number; seq: number; balanceBeforeMinor: number; balanceAfterMinor: number; amountMinor: number; stockMoves: BillingStockMove[] };
@@ -29,12 +30,36 @@ const PAGE_SIZE = 25;
 const operationPattern = /^[A-Za-z0-9-]{1,100}$/;
 const pathSegment = (key: string) => typeof key === 'string' && key.length > 0 && key.length <= 200 && !key.includes('/') && key !== '.' && key !== '..';
 
-async function billingConnection(clinicId: string, patientId: string) {
+async function billingConnection(clinicId: string, patientId: string, actor?: BillingActor) {
   if (!pathSegment(clinicId) || clinicId === 'demo-clinic' || !pathSegment(patientId)) throw new Error('Choose an online clinic and patient.');
+  actor?.assertWorkspace();
   const { db, firestore: fs, auth } = await initializeFirebase();
   const uid = auth?.currentUser?.uid;
   if (!db || !fs || !uid) throw new Error('Sign in and connect before accessing billing.');
-  return { db, fs, uid, auth };
+  const assertCurrent = () => {
+    actor?.assertWorkspace();
+    if (auth.currentUser?.uid !== uid || (actor && actor.uid !== uid)) throw new Error('Billing access changed.');
+  };
+  assertCurrent();
+  return { db, fs, uid, auth, assertCurrent };
+}
+
+function paymentRecoveryRef({ db, fs, uid }: Awaited<ReturnType<typeof billingConnection>>, clinicId: string, patientId: string) {
+  return fs.doc(db, 'clinics', clinicId, 'billingPaymentRecovery', uid, 'patients', patientId);
+}
+
+export async function loadUnconfirmedPayment(clinicId: string, patientId: string, actor: BillingActor): Promise<BillingOperation | null> {
+  const connection = await billingConnection(clinicId, patientId, actor);
+  const snapshot = await connection.fs.getDocFromServer(paymentRecoveryRef(connection, clinicId, patientId));
+  connection.assertCurrent();
+  const data = snapshot.data();
+  if (!data) return null;
+  const { operationId, expectedPatientRevision, draft } = data;
+  return { clinicId, patientId, operationId, expectedPatientRevision, draft };
+}
+
+class UnconfirmedPaymentError extends Error {
+  name = 'UnconfirmedPaymentError';
 }
 
 const decoded = (id: string, { recordedAt, ...data }: DocumentData): BillingEntry =>
@@ -51,21 +76,28 @@ async function fingerprint(operation: BillingOperation): Promise<string> {
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export async function commitBilling(input: BillingOperation): Promise<BillingCommit> {
+export async function commitBilling(input: BillingOperation, actor?: BillingActor): Promise<BillingCommit> {
   const { clinicId, patientId, operationId, expectedPatientRevision, draft } = input;
   const idOkay = draft.kind === 'reversal'
     ? operationPattern.test(draft.originalEntryId) && operationId === `reverse_${draft.originalEntryId}`
     : operationPattern.test(operationId);
   if (!idOkay || !Number.isSafeInteger(expectedPatientRevision) || expectedPatientRevision < 0) throw new Error('Invalid reviewed billing operation.');
-  const { db, fs, uid } = await billingConnection(clinicId, patientId);
+  const connection = await billingConnection(clinicId, patientId, actor);
+  const { db, fs, uid, assertCurrent } = connection;
   const receiptRef = fs.doc(db, 'clinics', clinicId, 'billingEntries', operationId);
   const patientRef = fs.doc(db, 'clinics', clinicId, 'patients', patientId);
+  const recoveryRef = paymentRecoveryRef(connection, clinicId, patientId);
   const requestFingerprint = await fingerprint(input);
   const readInventory = async (tx: Transaction, itemCode: string) => {
     if (!pathSegment(itemCode)) throw new Error('Invalid billing item.');
     return (await tx.get(fs.doc(db, 'clinics', clinicId, 'inventory', itemCode))).data();
   };
   const result = await fs.runTransaction(db, async tx => {
+    assertCurrent();
+    const recovery = (await tx.get(recoveryRef)).data();
+    if (recovery && (draft.kind !== 'payment' || recovery.operationId !== operationId)) {
+      throw new UnconfirmedPaymentError('Retry the unconfirmed payment before starting a new billing entry.');
+    }
     const before = (await tx.get(patientRef)).data();
     if (!before) throw new ClinicalConflictError();
     const previous = (await tx.get(receiptRef)).data();
@@ -159,6 +191,7 @@ export async function commitBilling(input: BillingOperation): Promise<BillingCom
       stock.push({ itemCode, stock: revisedStock, revision: revision + 1, billingStockEntryId: operationId });
     }
     const stage = await prepareClinicalWrites(db, fs, tx, writes);
+    assertCurrent();
     stage(uid);
     tx.set(receiptRef, {
       ...details, clinicId, patientId, actorUid: uid, recordedAt: fs.serverTimestamp(), requestFingerprint,
@@ -167,11 +200,53 @@ export async function commitBilling(input: BillingOperation): Promise<BillingCom
         : resolved.kind === 'opening-correction' ? resolved.verifiedMinor : Math.abs(transition.deltaMinor),
       stockMoves: transition.stockMoves,
     });
+    if (draft.kind === 'payment') {
+      const { reference, note, ...payment } = draft;
+      tx.set(recoveryRef, {
+        operationId, expectedPatientRevision,
+        draft: { ...payment, ...(reference === undefined ? {} : { reference }), ...(note === undefined ? {} : { note }) },
+      });
+    }
     return { state, patientRevision: expectedPatientRevision + 1, stock };
   });
+  assertCurrent();
   const committed = (await fs.getDocFromServer(receiptRef)).data();
   if (!committed) throw new Error('The billing result could not be read. Retry the same review.');
+  assertCurrent();
+  // The marker is deliberately kept until the caller has accepted this result.
+  // Acknowledgement is a separate, scope-checked operation so a disconnect or
+  // context change here cannot leave an uncertain save without recovery.
   return { ...result, entry: decoded(operationId, committed) };
+}
+
+/**
+ * Clear the durable recovery marker only after the matching posted receipt has
+ * been accepted by the current scoped view. One bounded transaction: no write
+ * happens unless the receipt is this exact payment by this signed-in account in
+ * this clinic and patient. Repeat calls are safe; a failure before the delete
+ * commits leaves the marker available for recovery.
+ */
+export async function acknowledgeBillingPayment(operation: BillingOperation, actor: BillingActor): Promise<void> {
+  const { clinicId, patientId, operationId, draft } = operation;
+  if (draft.kind !== 'payment' || !operationPattern.test(operationId)) throw new Error('Only a posted payment can be acknowledged.');
+  const connection = await billingConnection(clinicId, patientId, actor);
+  const { db, fs, uid, assertCurrent } = connection;
+  const receiptRef = fs.doc(db, 'clinics', clinicId, 'billingEntries', operationId);
+  const recoveryRef = paymentRecoveryRef(connection, clinicId, patientId);
+  const requestFingerprint = await fingerprint(operation);
+  await fs.runTransaction(db, async tx => {
+    assertCurrent();
+    const posted = (await tx.get(receiptRef)).data();
+    assertCurrent();
+    if (!posted || posted.kind !== 'payment' || posted.patientId !== patientId
+      || posted.actorUid !== uid || posted.requestFingerprint !== requestFingerprint) {
+      throw new Error('No matching posted payment to acknowledge.');
+    }
+    const saved = (await tx.get(recoveryRef)).data();
+    assertCurrent();
+    if (!saved || saved.operationId !== operationId) return; // Already acknowledged, or another payment's marker.
+    tx.delete(recoveryRef);
+  });
 }
 
 export async function loadBillingRecords({ clinicId, patientId, itemCodes }: { clinicId: string; patientId: string; itemCodes: string[] }): Promise<BillingRecords> {

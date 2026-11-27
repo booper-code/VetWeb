@@ -57,6 +57,15 @@ npx firebase-tools@15.36.0 hosting:channel:deploy checkout --expires 30d --proje
 
 This does not update the shared site above. The preview URL is shareable, not access-controlled; do not enter real clinic records.
 
+For the payroll and checkout release, build and verify the isolated export
+before changing the backend. Publish the matching Firestore rules first, then
+immediately publish the app to the active preview channel. All channels on this
+Firebase project share those rules. Older app versions cannot post payouts after
+the rules update, and the new app needs the new rules to post payments. Have
+testers finish open saves before the update and reload the active preview after it.
+Check that one confirmed payout reaches the ledger and that recovering an
+interrupted checkout returns the original receipt without another payment.
+
 ### Inventory CSV release check
 
 On localhost, an ordinary clinic sign-in still uses the configured cloud
