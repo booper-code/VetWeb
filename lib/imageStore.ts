@@ -187,11 +187,20 @@ export const resolveStoredImageUrl = (value: string): Promise<string | null> => 
   });
 };
 
-/** Opens a signed image in a new tab without triggering the popup blocker. */
+/** Opens a patient image in a new tab without triggering the popup blocker. */
 export const openStoredImage = async (value: string): Promise<void> => {
   if (!isStoredImageKey(value)) {
     const safeUrl = safeDirectImageUrl(value);
     if (!safeUrl) throw new Error('This image URL is not supported.');
+    if (isDataUrl(safeUrl)) {
+      // Browsers block top-level navigation to data URLs, even for raster images.
+      const [header, encoded] = safeUrl.split(',');
+      const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: header.slice(5, -7) }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return;
+    }
     window.open(safeUrl, '_blank', 'noopener,noreferrer');
     return;
   }

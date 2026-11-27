@@ -68,8 +68,15 @@ test('exported demo verifies a balance and records, receipts and reverses a paym
     await opening.waitFor({ state: 'hidden' });
     assert.equal(await section.getByRole('button', { name: 'Print receipt' }).count(), 0);
 
-    await section.getByRole('button', { name: 'Record payment', exact: true }).click();
+    const recordPayment = section.getByRole('button', { name: 'Record payment', exact: true });
+    await recordPayment.click();
     const payment = page.getByRole('dialog', { name: 'Record payment' });
+    await payment.waitFor();
+    await page.keyboard.press('Escape');
+    await payment.waitFor({ state: 'hidden' });
+    assert.equal(await section.isVisible(), true);
+    assert.equal(await recordPayment.evaluate(element => document.activeElement === element), true);
+    await recordPayment.click();
     await payment.getByLabel('Amount received (PHP)').fill('500');
     await payment.getByLabel('Received at (Asia/Manila)').fill('2026-11-18T18:00');
     await payment.getByRole('button', { name: 'Review update' }).click();
@@ -81,8 +88,12 @@ test('exported demo verifies a balance and records, receipts and reverses a paym
     const box = await payment.boundingBox();
     assert.ok(box.x >= 0 && box.x + box.width <= 390);
     assert.equal(await payment.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
-    await payment.getByRole('button', { name: 'Confirm payment' }).click();
+    await payment.getByRole('button', { name: 'Confirm payment' }).evaluate(button => {
+      button.click();
+      button.click();
+    });
     await section.getByText('PHP 700.00', { exact: true }).waitFor();
+    assert.equal(await section.getByRole('button', { name: 'Print receipt' }).count(), 1);
     const downloading = page.waitForEvent('download');
     await section.getByRole('button', { name: 'Print receipt' }).click();
     const download = await downloading;

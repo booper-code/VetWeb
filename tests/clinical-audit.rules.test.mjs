@@ -417,6 +417,32 @@ test('clinical writes require atomic immutable audits and reject stale revisions
       assert.equal(result.missing, 1);
       assert.equal(result.changed, 1);
     });
+    await t.test('two authenticated staff sessions cannot overwrite the same stock revision', async () => {
+      const id = 'concurrent-stock';
+      const item = { clinicId, collection: 'inventory', id, action: 'save' };
+      selectClient('owner');
+      await mutateClinicalRecord({ ...item, expectedRevision: null, data: { itemCode: id, stock: 10 } });
+      selectClient('editor');
+      await mutateClinicalRecord({ ...item, expectedRevision: 1, data: { itemCode: id, stock: 9 } });
+      const attempts = [['owner', 8], ['editor', 7]].map(([role, stock]) => {
+        selectClient(role);
+        return mutateClinicalRecord({ ...item, expectedRevision: 2, data: { itemCode: id, stock } });
+      });
+      const results = await Promise.allSettled(attempts);
+      assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+      const winner = results.findIndex(result => result.status === 'fulfilled');
+      const { reason } = results[1 - winner];
+      // The emulator can reject a racing commit in rules before the SDK retries.
+      assert.ok(reason.name === 'ClinicalConflictError' || reason.code === 'permission-denied', String(reason));
+      const savedItem = (await fs.getDoc(ref(owner, 'inventory', id))).data();
+      assert.equal(savedItem.revision, 3);
+      assert.equal(savedItem.stock, winner === 0 ? 8 : 7);
+      selectClient(winner === 0 ? 'editor' : 'owner');
+      await assert.rejects(
+        () => mutateClinicalRecord({ ...item, expectedRevision: 2, data: { itemCode: id, stock: 6 } }),
+        { name: 'ClinicalConflictError' }
+      );
+    });
   } finally {
     delete globalThis.__auditHandles;
     await Promise.all(Object.values(clients).map(client => deleteApp(client.app)));

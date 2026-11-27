@@ -71,6 +71,7 @@ export const PatientRecordsView = ({
   const [isExporting, setIsExporting] = useState(false);
   const [isSavingPatient, setIsSavingPatient] = useState(false);
   const [pendingImages, setPendingImages] = useState(0);
+  const demoLabExtraction = aiEnabled && clinicId === 'demo-clinic';
 
   const handleExportPdf = async () => {
     setIsExporting(true);
@@ -950,7 +951,8 @@ const visiblePatients =
                       <div className="bg-panel-subtle p-4 rounded-xl border border-hairline flex items-center justify-between mt-4">
                         <div>
                           <span className="text-[10px] text-content-faint font-bold uppercase block">Ledger Balance (PHP)</span>
-                          <input type="number" step="0.01" className="w-32 p-1.5 bg-field-panel border border-field-outline rounded-lg text-sm font-black text-content-heading outline-none" value={editForm.balance} onChange={e => handleEditChange('balance', parseFloat(e.target.value) || 0)} />
+                          <p className="text-sm font-black text-content-heading">PHP {editForm.balance.toFixed(2)}</p>
+                          <p className="text-xs text-content-hint">Use Patient billing to record payments or correct the balance.</p>
                         </div>
                       </div>
                     </div>
@@ -1048,7 +1050,7 @@ const visiblePatients =
                                     </button>
 
                                     {/* MOCK AI EXTRACTION BUTTON */}
-                                    {aiEnabled && <button
+                                    {demoLabExtraction && <button
                                       type="button"
                                       onClick={() => {
                                         if (typeof triggerToast === 'function') {
@@ -1122,7 +1124,7 @@ const visiblePatients =
                               {/* Right: Metrics Key Values */}
                               <div className="col-span-2 flex flex-col">
                                 <div className="flex items-center justify-between mb-2">
-                                  <label className="text-[10px] font-bold text-content-faint uppercase">{aiEnabled ? 'Analyte Data (Manual or Demo)' : 'Analyte Data (Manual)'}</label>
+                                  <label className="text-[10px] font-bold text-content-faint uppercase">{demoLabExtraction ? 'Analyte Data (Manual or Demo)' : 'Analyte Data (Manual)'}</label>
                                   <button 
                                     type="button"
                                     onClick={() => {
@@ -1142,7 +1144,7 @@ const visiblePatients =
                                 <div className="bg-panel border border-outline-soft rounded-xl p-3 flex-1 overflow-y-auto max-h-48 space-y-2">
                                   {Object.keys(result.metrics || {}).length === 0 ? (
                                     <div className="flex h-full items-center justify-center text-xs text-content-faint italic text-center">
-                                      {aiEnabled ? 'Use the demo extraction for example data, or manually add metric rows.' : 'Manually add metric rows.'}
+                                      {demoLabExtraction ? 'Use the demo extraction for example data, or manually add metric rows.' : 'Manually add metric rows.'}
                                     </div>
                                   ) : (
                                     Object.entries(result.metrics || {}).map(([key, val]) => (
@@ -1219,7 +1221,9 @@ const visiblePatients =
                       </h4>
                       <span className="text-[10px] font-black tracking-widest uppercase bg-feature-wash text-feature-text px-2 py-0.5 rounded border border-feature-stroke">Gemini Output Window</span>
                     </div>
-                    <p className="text-xs text-feature-text-deep/60 mb-2">Paste a summary here. Demo extraction inserts example data only and does not analyze the image.</p>
+                    <p className="text-xs text-feature-text-deep/60 mb-2">
+                      Paste a summary here.{demoLabExtraction && ' Demo extraction inserts example data only and does not analyze the image.'}
+                    </p>
                     <textarea 
                       className="w-full p-4 bg-field-panel/90 border border-feature-stroke rounded-xl text-sm text-content-heading font-medium focus:ring-2 focus:ring-purple-500 outline-none resize-y min-h-[120px] shadow-sm"
                       placeholder="Waiting for AI synthesis of the blood work... (e.g. 'Elevated WBC suggests acute localized infection...')"
@@ -1353,7 +1357,8 @@ const visiblePatients =
                             
                             {/* Document Thumbnail */}
                             {result.imageUrl && (
-                              <div 
+                              <button
+                                type="button"
                                 className="w-full sm:w-32 h-32 flex-shrink-0 bg-slate-900 rounded-lg overflow-hidden relative cursor-pointer group shadow-sm border border-outline"
                                 onClick={() => {
                                   if (!result.imageUrl) return;
@@ -1362,13 +1367,13 @@ const visiblePatients =
                                     triggerToast(error instanceof Error ? error.message : 'Could not open the lab document.');
                                   });
                                 }}
-                                title="Click to enlarge"
+                                aria-label={`Enlarge ${result.testName}`}
                               >
                                 <StoredImage value={result.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="Lab Document" />
                                 <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                   <ZoomIn className="text-white w-6 h-6" />
                                 </div>
-                              </div>
+                              </button>
                             )}
 
                             {/* Data Breakdown */}

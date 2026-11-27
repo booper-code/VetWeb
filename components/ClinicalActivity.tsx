@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import { Activity, Loader2, PlusCircle, Stethoscope, X } from 'lucide-react';
 import type { Consultation, ConsultationDraft, InventoryItem, PatientRecord, TreatmentLine } from '@/types';
 import {
@@ -54,6 +54,7 @@ export const ClinicalActivity = ({
   const [lineNotes, setLineNotes] = useState('');
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const saving = useRef(false);
 
   const patientConsultations = useMemo(() => {
     const matching = consultations.filter(entry => consultationMatchesPatient(entry, patient));
@@ -82,13 +83,12 @@ export const ClinicalActivity = ({
       setError('Choose an inventory item or service first.');
       return;
     }
-    const whole = Math.trunc(quantity);
-    if (!Number.isSafeInteger(whole) || whole < 1) {
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
       setError('Use a whole positive quantity.');
       return;
     }
     const existing = lines.find(line => line.itemCode === selectedItem.itemCode);
-    const nextQuantity = (existing?.quantity ?? 0) + whole;
+    const nextQuantity = (existing?.quantity ?? 0) + quantity;
     if (isStockTreatment(selectedItem) && nextQuantity > selectedItem.stock) {
       setError(`Only ${selectedItem.stock} ${selectedItem.itemName} left in stock.`);
       return;
@@ -106,7 +106,7 @@ export const ClinicalActivity = ({
         itemCode: selectedItem.itemCode,
         itemName: selectedItem.itemName,
         category: selectedItem.category,
-        quantity: whole,
+        quantity,
         unitPrice: selectedItem.sellingPrice,
         dose,
         notes: lineNotes
@@ -121,10 +121,15 @@ export const ClinicalActivity = ({
   const removeLine = (id: string) => setLines(previous => previous.filter(line => line.id !== id));
 
   const handleSave = async () => {
-    if (!canEdit || isSaving) return;
+    if (!canEdit || saving.current) return;
+    if (itemCode || dose.trim() || lineNotes.trim()) {
+      setError('Choose a treatment item and click Add line, or clear the unfinished line before saving.');
+      return;
+    }
+    const visitTime = new Date(occurredAt);
     const draft: ConsultationDraft = {
       patientId: patient.id,
-      occurredAt: new Date(occurredAt).toISOString(),
+      occurredAt: Number.isFinite(visitTime.getTime()) ? visitTime.toISOString() : '',
       type,
       notes: notes.trim(),
       appointmentId,
@@ -137,6 +142,7 @@ export const ClinicalActivity = ({
       setError(invalid);
       return;
     }
+    saving.current = true;
     setIsSaving(true);
     setError('');
     try {
@@ -149,6 +155,7 @@ export const ClinicalActivity = ({
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'The treatment record was not saved.');
     } finally {
+      saving.current = false;
       setIsSaving(false);
     }
   };
@@ -341,8 +348,12 @@ export const ClinicalActivity = ({
           <article className="rounded-xl border border-outline-soft p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <p className="text-sm font-bold text-content-title">{entry.type}</p>
+                <h5 className="text-sm font-bold text-content-title break-words">
+                  {entry.treatments?.[0]?.itemName || entry.type}
+                  {entry.treatments && entry.treatments.length > 1 && ` + ${entry.treatments.length - 1} more`}
+                </h5>
                 <p className="text-[11px] text-content-hint mt-0.5">
+                  {!!entry.treatments?.length && `Visit type: ${entry.type} · `}
                   Visit {entry.occurredAt ? new Date(entry.occurredAt).toLocaleString() : entry.date || 'time not recorded'}
                   {entry.staffName ? ` · ${entry.staffName}` : ''}
                 </p>
@@ -362,9 +373,10 @@ export const ClinicalActivity = ({
             {entry.treatments && entry.treatments.length > 0 && (
               <ul className="mt-2 flex flex-wrap gap-1.5">
                 {entry.treatments.map(line => (
-                  <li key={line.id} className="rounded-md bg-panel-subtle border border-outline-soft px-2 py-1 text-[11px] font-semibold text-content-copy">
+                  <li key={line.id} className="min-w-0 break-words rounded-md bg-panel-subtle border border-outline-soft px-2 py-1 text-[11px] font-semibold text-content-copy">
                     {line.itemName} × {line.quantity}
                     {line.dose ? ` · ${line.dose}` : ''}
+                    {line.notes ? ` · ${line.notes}` : ''}
                   </li>
                 ))}
               </ul>

@@ -41,8 +41,8 @@ const longestPlan = {
 };
 const planReply = plan => Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(plan) }] } }] });
 
-test('Manila schedule and its next-day refinement have explicit dates, even without a provider reply', async t => {
-  useConfig(t, geminiConfig());
+test('Manila schedule and its next-day refinement work without a saved provider', async t => {
+  useConfig(t, null);
   t.mock.method(Date, 'now', () => Date.parse('2026-11-22T17:00:00Z'));
   const calls = captureFetch(t, () => new Response(null, { status: 503 }));
   const prompt = 'List scheduled appointments for today.';
@@ -56,6 +56,16 @@ test('Manila schedule and its next-day refinement have explicit dates, even with
   ]);
   assert.deepEqual(direct, tomorrow);
   assert.equal(tomorrow.plan.filter[2].value, '2026-11-24T16:00:00.000Z');
+  assert.equal(calls.length, 0);
+});
+
+test('a question outside the local planner still requires provider setup', async t => {
+  useConfig(t, null);
+  const calls = captureFetch(t, () => new Response(null, { status: 503 }));
+  await assert.rejects(
+    () => planWorkspaceClinicQuery('Write a short poem about clouds.', [], signal),
+    /AI chat is not set up/,
+  );
   assert.equal(calls.length, 0);
 });
 

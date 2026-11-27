@@ -166,6 +166,10 @@ test('static-export demo appointment workflow works without Firebase/R2, includi
     assert.equal(printedCanvas, 'rgb(246, 248, 251)', 'printing a dossier should not use the dark canvas');
     await page.emulateMedia({ media: 'screen' });
     await page.getByRole('button', { name: 'Close Clinical Dossier', exact: true }).click();
+    const inventory = navigation.getByRole('button', { name: 'Inventory', exact: true });
+    await inventory.click();
+    assert.equal(await search.inputValue(), '', 'opening a linked patient must not filter the inventory catalog');
+    assert.match(await page.getByText(/^\d+ Items Listed$/).innerText(), /^[1-9]\d* Items Listed$/);
     await appointments.click();
     await refineSchedule.click();
     await card.getByRole('button', { name: 'Edit appointment for Dobby', exact: true }).click();
@@ -178,6 +182,16 @@ test('static-export demo appointment workflow works without Firebase/R2, includi
     await card.waitFor();
     assert.match(await card.innerText(), /Actual visit:/);
     assert.match(await card.innerText(), /completed/);
+    await card.getByRole('button', { name: 'Record treatment & stock', exact: true }).click();
+    await page.getByRole('button', { name: 'Save treatment', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Close dossier', exact: true }).click();
+    await inventory.click();
+    assert.equal(await search.inputValue(), '', 'opening linked treatment must not filter the inventory catalog');
+    assert.match(await page.getByText(/^\d+ Items Listed$/).innerText(), /^[1-9]\d* Items Listed$/);
+    await appointments.click();
+    await refineSchedule.click();
+    await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('all');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.locator('main').evaluate(main => [document.documentElement, main]
       .every(element => element.scrollWidth <= element.clientWidth + 1)), true, 'mobile appointment page must not overflow horizontally');

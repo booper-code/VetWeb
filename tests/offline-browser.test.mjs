@@ -942,9 +942,27 @@ test('clinic work is audited, scoped, and fresh across open Owner and Member vie
     await watchingBilling.getByText('Synthetic balance verified in another session').waitFor();
     await remote.page.getByRole('button', { name: 'Record treatment', exact: true }).click();
     await remote.page.getByLabel('Actual visit time').fill('2025-05-03T09:30');
+    const treatmentItem = remote.page.getByLabel('Treatment item');
+    await treatmentItem.selectOption('SRV-VACC');
+    await remote.page.getByLabel('Line note').fill('Synthetic service detail');
+    await remote.page.getByRole('button', { name: 'Add line', exact: true }).click();
+    await treatmentItem.selectOption('MED-AMX500');
+    await remote.page.getByRole('button', { name: 'Add line', exact: true }).click();
     await remote.page.getByLabel('Clinical notes').fill('Synthetic treatment saved in another session');
     await remote.page.getByRole('button', { name: 'Save treatment', exact: true }).click();
-    await viewer.page.getByText('Synthetic treatment saved in another session', { exact: true }).waitFor();
+    const savedVisit = viewer.page.locator('article').filter({ hasText: 'Synthetic treatment saved in another session' });
+    await savedVisit.getByRole('heading', { name: /Vaccination service/ }).waitFor();
+    await savedVisit.getByText(/Synthetic service detail/).waitFor();
+    await savedVisit.getByText(/Amoxicillin 500 mg capsule × 1/).waitFor();
+    assert.equal((await list('inventory')).find(row => row.name.endsWith('/MED-AMX500')).fields.stock.integerValue, '119');
+    await remote.page.getByRole('button', { name: 'Edit Dossier Details' }).click();
+    await remote.page.getByRole('button', { name: '+ Add Lab Printout', exact: true }).click();
+    const labPixels = await remote.page.evaluate(() => document.createElement('canvas').toDataURL().split(',')[1]);
+    await remote.page.getByText('Upload Lab Printout', { exact: true }).locator('..').locator('input[type=file]')
+      .setInputFiles({ name: 'fixture.png', mimeType: 'image/png', buffer: Buffer.from(labPixels, 'base64') });
+    await remote.page.getByRole('img', { name: 'Lab Printout', exact: true }).waitFor();
+    assert.equal(await remote.page.getByRole('button', { name: 'Demo extraction (example data)' }).count(), 0);
+    await remote.page.getByRole('button', { name: 'Cancel Editing' }).click();
     await remote.page.getByRole('button', { name: 'Close dossier', exact: true }).click();
     await commitFixtures([{
       ...write(`${clinic}/patients/synthetic-milo`, { name: 'Fictional Milo updated', status: 'Discharged' }),

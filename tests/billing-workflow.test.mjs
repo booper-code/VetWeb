@@ -146,6 +146,24 @@ test('mismatch confirmation posts an opening, not a payment', async () => {
   } finally { await app.close(); }
 });
 
+test('repeated confirmation while a payment response is pending submits only once', async () => {
+  const response = Promise.withResolvers();
+  const app = await setup({ patient: { ...base, billing: state }, onSubmit: () => response.promise });
+  try {
+    await app.click('Record payment');
+    await app.fill('Amount received (PHP)', '500');
+    await app.fill('Received at (Asia/Manila)', '2026-11-19T10:00');
+    await app.click('Review update');
+    const confirm = [...app.doc.querySelectorAll('dialog button')]
+      .find(button => button.textContent.trim() === 'Confirm payment');
+    await act(() => { confirm.click(); confirm.click(); });
+    assert.equal(app.submissions.length, 1);
+    assert.equal(confirm.disabled, true);
+    await act(() => response.resolve());
+    assert.equal(app.doc.querySelector('dialog'), null);
+  } finally { await app.close(); }
+});
+
 test('an uncertain payment save retains the exact reviewed intent for retry', async () => {
   let calls = 0;
   const app = await setup({ patient: { ...base, billing: state, balance: 1200 },

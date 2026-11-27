@@ -865,7 +865,7 @@ export default function App() {
     const patient = await loadAppointmentPatient(id, stillOpen, freshRecord);
     if (!patient) return;
     setTreatmentLink(null);
-    setPatientToOpen(patient); setSearchQuery(patient.id); setActiveTab('patients');
+    setPatientToOpen(patient); setSearchQuery(''); setActiveTab('patients');
   };
 
   const openAppointmentTreatment = async (
@@ -880,7 +880,7 @@ export default function App() {
       appointmentId: appointment.id,
       occurredAt: appointment.occurredAt || appointment.dueAt
     });
-    setPatientToOpen(patient); setSearchQuery(patient.id); setActiveTab('patients');
+    setPatientToOpen(patient); setSearchQuery(''); setActiveTab('patients');
   };
 
   const handleRecordVisit = () => {

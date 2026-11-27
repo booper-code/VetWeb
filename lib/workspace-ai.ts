@@ -420,7 +420,7 @@ export async function planWorkspaceClinicQuery(
   history: readonly ClinicPlanTurn[],
   signal: AbortSignal,
 ): Promise<PlannedClinicAction> {
-  const { config, provider, identity } = resolveSetup();
+  const identity = workspaceAIConfigIdentity();
   // The first plan turn after a reset or a saved-setup change starts with no
   // context; a later turn reuses only the plans recorded under this identity.
   const turns = lastPlanIdentity === identity ? history : [];
@@ -437,6 +437,7 @@ export async function planWorkspaceClinicQuery(
     const local = planLocalClinicRequest(prompt, previous);
     if (local) return local;
   }
+  const { config, provider } = resolveSetup();
   const system = PLAN_INSTRUCTIONS + '\nPrevious plans (nonsensitive; do not repeat any answer): ' + JSON.stringify(previous);
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
   const request = (problem?: string) => sendClinicPlanRequest(
